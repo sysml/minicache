@@ -1,0 +1,3 @@
+[submodule "mini-os"]
+	path = mini-os
+	url = git@server4:joao/mini-os.git
