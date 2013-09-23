@@ -11,7 +11,7 @@
 #include "ring.h"
 #include "mempool.h"
 #include "pktbuf.h"
-#include "netdev.h"
+#include "nmdev.h"
 #include "blkdev.h"
 #include "hexdump.h"
 
@@ -71,12 +71,12 @@ struct _args {
   size_t chunk_pktlen; /* pktlen of a chunk packet */
 } args;
 
-static inline void receive(struct netdev *nd, struct ring *txfifo, struct mempool *pktpool)
+static inline void receive(struct nmdev *nm, struct ring *txfifo, struct mempool *pktpool)
 {
   /* TODO */
 }
 
-static inline void transmit(struct netdev *nd, struct ring *txfifo)
+static inline void transmit(struct nmdev *nm, struct ring *txfifo)
 {
   uint32_t burstlen;
   struct pktbuf *txburst[MAX_TX_BURST_LEN];
@@ -86,7 +86,7 @@ static inline void transmit(struct netdev *nd, struct ring *txfifo)
   if (likely(burstlen > 0)) {
   	ring_dequeue_multiple(txfifo, (void **) txburst, burstlen); /* does not fail, because here is the only point
 																 where objects are picked from the ring */
-	netdev_xmit_burst(nd, txburst, burstlen);
+	nmdev_xmit_burst(nm, txburst, burstlen);
 	statistics_nb_sent_packets += burstlen;
   }
 }
@@ -307,7 +307,7 @@ int main(int argc, char **argv)
   struct mempool *iobpool;
   struct ring *rxfifo;
   struct ring *txfifo;
-  struct netdev *nd;
+  struct nmdev *nm;
   struct blkdev *bd;
   uint64_t ts_tick, ts_tock, ts_diff;
   uint64_t nb_rd_blks, nb_tx_pkts;
@@ -328,21 +328,21 @@ int main(int argc, char **argv)
    */
   ret = 1; /* error */
   printf("Opening network device %d\n", args.ndid);
-  nd = open_netdev((unsigned int) args.ndid);
-  if (!nd) {
+  nm = open_nmdev((unsigned int) args.ndid);
+  if (!nm) {
 	printf("Could not open network device (vif id: %d): %d\n", args.ndid, errno);
 	goto out;
   }
   printf("Network device has MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
-		 netdev_mac(nd)->addr[0], netdev_mac(nd)->addr[1], netdev_mac(nd)->addr[2],
-		 netdev_mac(nd)->addr[3], netdev_mac(nd)->addr[4], netdev_mac(nd)->addr[5]);
-  memcpy(args.src_mac.addr, netdev_mac(nd)->addr, ETHARP_HWADDR_LEN);
+		 nmdev_mac(nm)->addr[0], nmdev_mac(nm)->addr[1], nmdev_mac(nm)->addr[2],
+		 nmdev_mac(nm)->addr[3], nmdev_mac(nm)->addr[4], nmdev_mac(nm)->addr[5]);
+  memcpy(args.src_mac.addr, nmdev_mac(nm)->addr, ETHARP_HWADDR_LEN);
 
   printf("Opening block device %d\n", args.bdid);
   bd = open_blkdev((unsigned int) args.bdid, O_RDONLY);
   if (!bd) {
 	printf("Could not open block device (vbd id: %d): %d\n", args.bdid, errno);
-	goto out_close_nd;
+	goto out_close_nm;
   }
   printf("Block device has sector size of %llu bytes\n", blkdev_ssize(bd));
   printf("Block device has %llu sectors (%llu Mbytes)\n", blkdev_size(bd) / blkdev_ssize(bd), (blkdev_size(bd) >> 20));
@@ -409,7 +409,7 @@ int main(int argc, char **argv)
 	while (1) {
 	  //receive(nd, rxfifo, pktpool);                        /* puts received pkts (allocated from pktpool) to rxfifo */
 	  handle_indirect(rxfifo, bd, iobpool, txfifo, pktpool); /* transforms rx into submitted ioreqs, finished ioreqs produce a pkt (from pktpool) on txfifo */
-	  transmit(nd, txfifo);                                  /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
+	  transmit(nm, txfifo);                                  /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
 
 	  /* statistics */
 	  ts_tock = NOW();
@@ -468,7 +468,7 @@ int main(int argc, char **argv)
 	while (1) {
 	  //receive(nd, rxfifo, pktpool);               /* puts received pkts (allocated from pktpool) to rxfifo */
 	  handle_direct(rxfifo, bd, txfifo, pktpool);   /* transforms rx into submitted ioreqs, finished ioreqs produce a pkt (from pktpool) on txfifo */
-	  transmit(nd, txfifo);                         /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
+	  transmit(nm, txfifo);                         /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
 
 	  /* statistics */
 	  ts_tock = NOW();
@@ -512,8 +512,8 @@ int main(int argc, char **argv)
   free_ring(rxfifo);
  out_close_bd:
   close_blkdev(bd);
- out_close_nd:
-  close_netdev(nd);
+ out_close_nm:
+  close_nmdev(nm);
  out:
   return ret;
 }
