@@ -31,17 +31,13 @@
 #ifndef min
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 #endif
-static inline uint32_t min3(uint32_t x, uint32_t y, uint32_t z)
-{
-  uint32_t a = min(x, y);
-  return min(a, z);
-}
-static inline uint32_t min4(uint32_t w, uint32_t x, uint32_t y, uint32_t z)
-{
-  uint32_t a = min(w, x);
-  uint32_t b = min(y, z);
-  return min(a, b);
-}
+#ifndef min3
+#define min3(a, b ,c) (min(min((a), (b)), (c)))
+#endif
+#ifndef min4
+#define min4(a, b ,c, d) (min(min((a), (b)), min((c), (d))))
+#endif
+
 /* checks if a number is a power of two. Copied from BNX2X driver (Linux) */
 #ifndef POWER_OF_2
   #define POWER_OF_2(x)   ((0 != (x)) && (0 == ((x) & ((x)-1))))

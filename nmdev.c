@@ -13,14 +13,14 @@
 
 #include "nmdev.h"
 
-#define NM_BUFLEN 2048 /* TODO: Read this value from xenstore */
-
 struct nmdev *open_nmdev(unsigned int vif_id)
 {
     struct nmdev *nm;
     char path[256];
     char *xb_tmpmac;
     char *xb_errmsg;
+    unsigned int cur;
+    uint32_t i;
     
     nm = xmalloc(struct nmdev);
     if (!nm) {
@@ -28,6 +28,7 @@ struct nmdev *open_nmdev(unsigned int vif_id)
         goto err;
     }
 
+    /* Find device in xenstore and figure out its MAC */
     snprintf(path, sizeof(path), "/local/domain/%u/device/vale/%u/mac", xenbus_get_self_id(), vif_id);
     xb_errmsg = xenbus_read(XBT_NIL, path, &xb_tmpmac);
     if (xb_errmsg || (!xb_tmpmac)) {
@@ -46,6 +47,7 @@ struct nmdev *open_nmdev(unsigned int vif_id)
     /* open netmap device and map memory region */
     /*
      * FIXME: Select device specified by vif_id
+     *        By now, just the first available interface is used
      */
     nm->fd = open("/dev/netmap", O_RDWR);
     if (nm->fd < 0) {
@@ -67,6 +69,18 @@ struct nmdev *open_nmdev(unsigned int vif_id)
     nm->rxring.ring = NETMAP_RXRING(nm->priv, 0);
     nm->rxring.slots_infly = 0;
 
+    /* Reset flags on netmap slots */
+    cur = nm->txring.ring->cur;
+    for (i = 0; i < nm->txring.ring->num_slots; i++) {
+        nm->txring.ring->slot[cur].flags = 0;
+        cur = NETMAP_RING_NEXT(nm->txring.ring, cur);
+    }
+    cur = nm->rxring.ring->cur;
+    for (i = 0; i < nm->rxring.ring->num_slots; i++) {
+        nm->rxring.ring->slot[cur].flags = 0;
+        cur = NETMAP_RING_NEXT(nm->rxring.ring, cur);
+    }
+
     return nm;
 
 err_close_fd:
@@ -82,6 +96,9 @@ void close_nmdev(struct nmdev *nm)
 {
     if (!nm)
         return;
+
+    ASSERT(nm->txring.slots_infly == 0);
+    ASSERT(nm->rxring.slots_infly == 0);
 
     munmap(nm->priv, 0);
     close(nm->fd);
