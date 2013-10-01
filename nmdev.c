@@ -58,14 +58,17 @@ struct nmdev *open_nmdev(unsigned int vif_id)
         goto err_close_fd;
     }
     nm->nifp = (struct netmap_if *) nm->priv;
-    nm->txring = NETMAP_TXRING(nm->priv, 0);
-    nm->rxring = NETMAP_RXRING(nm->priv, 0);
     nm->pfd.fd = nm->fd;
+    nm->xinfo = &nm->priv->tx_desc;
     
+    /* Initialize netmap ring management */
+    nm->txring.ring = NETMAP_TXRING(nm->priv, 0);
+    nm->txring.slots_infly = 0;
+    nm->rxring.ring = NETMAP_RXRING(nm->priv, 0);
+    nm->rxring.slots_infly = 0;
+
     return nm;
 
-//err_munmap_priv:
-//    munmap(nm->priv, 0);
 err_close_fd:
     close(nm->fd);
 err_free_nm:
@@ -79,7 +82,7 @@ void close_nmdev(struct nmdev *nm)
 {
     if (!nm)
         return;
-    
+
     munmap(nm->priv, 0);
     close(nm->fd);
     free(nm);

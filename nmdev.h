@@ -14,17 +14,29 @@
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 
+struct nmdev_slot
+{
+    struct netmap_slot *slot;
+    void *bffr;
+};
 
+struct nmdev_ring 
+{
+    struct netmap_ring *ring;
+    uint32_t slots_infly;
+};
 
 struct nmdev
 {
     int fd;
     struct pollfd pfd;
     struct netmap_priv_d *priv;
+    struct netmap_xinfo *xinfo;
     struct netmap_if *nifp;
-    struct netmap_ring *txring;
-    struct netmap_ring *rxring;
     struct eth_addr mac;
+
+    struct nmdev_ring txring;
+    struct nmdev_ring rxring;
 };
 
 struct nmdev *open_nmdev(unsigned int vif_id);
@@ -32,47 +44,80 @@ void close_nmdev(struct nmdev *nm);
 
 #define nmdev_mac(nm) (&((nm)->mac))
 
-/* Returns the number of transmitted packets */
-static inline uint32_t nmdev_xmit_burst(struct nmdev *nm, struct pktbuf **pkts, uint32_t count)
+#define nmdev_avail_txslots(nm) ((nm)->txring.ring->avail - (nm)->txring.slots_infly)
+
+/*
+ * Picks a number of tx slots from netmap's rings
+ * The function returns the actual number of picked slots from netmap buffers
+ */
+static inline uint32_t nmdev_pick_txslots(struct nmdev *nm, struct nmdev_slot txslots[], uint32_t count)
 {
     uint32_t i;
-    struct netmap_slot *slot;
-    struct netmap_ring *txring;
-    struct netmap_xinfo *xinfo;
+    struct netmap_ring *ring;
     unsigned int cur;
-    void *bffr;
 
-    txring = nm->txring;
-    xinfo = &nm->priv->tx_desc;
-    count = min(count, nm->txring->avail);
-    
-    
-    /* copy packet buffers to netmap buffers */
-    cur = txring->cur;
-    for (i = 0; i < count; ++i) {
-        slot = &txring->slot[cur];
-        slot->len = pkts[i]->pktlen;
-        slot->flags = 0; /* clear flags */
+    ring = nm->txring.ring;
+    count = min(count, nmdev_avail_txslots(nm));
 
-        bffr = NETMAP_BUF(xinfo, cur);
-        pkt_copy(pkts[i]->p_obj.data, bffr, slot->len);    
-
-        cur = NETMAP_RING_NEXT(txring, cur);
+    /* pick available buffers */
+    cur = (ring->cur + nm->txring.slots_infly) % ring->num_slots;
+    for (i = 0; i < count; i++) {
+        txslots[i].slot = &ring->slot[cur];
+        txslots[i].bffr = NETMAP_BUF(nm->xinfo, cur);
+        cur = NETMAP_RING_NEXT(ring, cur);
     }
-    txring->avail -= count;
-    txring->cur = cur;
+    nm->txring.slots_infly += count;
+    return count;
+}
+
+/*
+ * Puts a tx packet buffer back to netmap and sent the packet out
+ */
+static inline void nmdev_xmit_txslots(struct nmdev *nm, uint32_t count)
+{
+    struct netmap_ring *ring;
+    
+    ASSERT(count <= nm->txring.slots_infly);
+
+    ring = nm->txring.ring;
+    ring->avail -= count;
+    ring->cur = (ring->cur + count) % ring->num_slots;
+    nm->txring.slots_infly -= count;
 
     /* trigger netmap to send */
     nm->pfd.events = (POLLOUT);
     poll(&nm->pfd, 1, 0);
-    
+}
+
+#define nmdev_avail_rxslots(nm) ((nm)->rxring.ring->avail - (nm)->rxring.slots_infly)
+
+//static inline nmdev_put_rxslot()
+//{
+//}
+//
+//static inline nmdev_recv_rxlot()
+//{
+//}
+
+/* Returns the number of transmitted packets */
+static inline uint32_t nmdev_xmit_burst(struct nmdev *nm, struct pktbuf **pkts, uint32_t count)
+{
+    struct nmdev_slot txslots[count];
+    uint32_t i;
+    count = min(count, nmdev_avail_txslots(nm));
+
+    nmdev_pick_txslots(nm, txslots, count);
+    for (i = 0; i < count; ++i) {
+        txslots[i].slot->len = pkts[i]->pktlen;
+        txslots[i].slot->flags = 0;
+        pkt_copy(pkts[i]->p_obj.data, txslots[i].bffr, pkts[i]->pktlen);
+    }
+    nmdev_xmit_txslots(nm, count);
     pktpool_put_multiple(pkts, count);
+
     return count;
 }
 
-static inline int nmdev_xmit(struct nmdev *nm, struct pktbuf *pkt)
-{
-    return (nmdev_xmit_burst(nm, &pkt, 1) ? 0 : -1);
-}
+#define nmdev_xmit(nm, pkt) (nmdev_xmit_burst((nm), &(pkt), 1) ? 0 : -1)
 
 #endif /* _NMDEV_H_ */
