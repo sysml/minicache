@@ -19,7 +19,7 @@
 #define TXFIFO_LEN 8192 /* can have 8191 elements */
 #define MAX_RX_BURST_LEN 16
 #define MAX_HANDLE_BURST_LEN 16
-#define MAX_TX_BURST_LEN 128
+#define MAX_TX_BURST_LEN 1023 /* netmap buffer size */
 #define PKTPOOL_SIZE 8192
 #define IOBPOOL_SIZE 1024
 #define PKTENCAP_HDRSIZE (sizeof(struct eth_hdr) + sizeof(struct ip_hdr) + sizeof(struct udp_hdr))
@@ -28,11 +28,15 @@
 #define PKT_TTL 2
 #define PRINT_STATISTICS_SEC 2 /* print statistics each ... second */
 
+
 #ifndef min
-#define min(x, y) (((x) < (y)) ? (x) : (y))
+#define min(a, b) \
+    ({ __typeof__ (a) __a = (a); \
+       __typeof__ (b) __b = (b); \
+       __a < __b ? __a : __b; })
 #endif
 #ifndef min3
-#define min3(a, b ,c) (min(min((a), (b)), (c)))
+#define min3(a, b, c) (min(min((a), (b)), (c)))
 #endif
 #ifndef min4
 #define min4(a, b ,c, d) (min(min((a), (b)), min((c), (d))))
@@ -76,14 +80,13 @@ static inline void transmit(struct nmdev *nm, struct ring *txfifo)
 {
   uint32_t burstlen;
   struct pktbuf *txburst[MAX_TX_BURST_LEN];
-  //burstlen = min3(MAX_TX_BURST_LEN, ring_count(txfifo), netdev_xmit_freebuf_count(nd));
-  burstlen = min(MAX_TX_BURST_LEN, ring_count(txfifo)); /* temporary */
+  burstlen = min3(MAX_TX_BURST_LEN, ring_count(txfifo), nmdev_avail_txbufs(nm));
 
   if (likely(burstlen > 0)) {
-  	ring_dequeue_multiple(txfifo, (void **) txburst, burstlen); /* does not fail, because here is the only point
-																 where objects are picked from the ring */
-	nmdev_xmit_burst(nm, txburst, burstlen);
-	statistics_nb_sent_packets += burstlen;
+      ring_dequeue_multiple(txfifo, (void **) txburst, burstlen); /* does not fail, because here is the only point
+                                                                     where objects are picked from the ring */
+      nmdev_xmit_burst(nm, txburst, burstlen);
+      statistics_nb_sent_packets += burstlen;
   }
 }
 
@@ -209,12 +212,15 @@ static int parse_args(int argc, char **argv) {
   args.bdid = 51712; /* xvda */
   IP4_ADDR((&args.src_ip), 192, 168, 10, 127);
   args.src_port = 6500;
-  args.dst_mac.addr[0] = 0x96;
-  args.dst_mac.addr[1] = 0x81;
-  args.dst_mac.addr[2] = 0x2f;
-  args.dst_mac.addr[3] = 0x8a;
-  args.dst_mac.addr[4] = 0x5b;
-  args.dst_mac.addr[5] = 0x99;
+  args.dst_mac.addr[0] = 0xA0;
+  args.dst_mac.addr[1] = 0x83;
+  args.dst_mac.addr[2] = 0xCC;
+  args.dst_mac.addr[3] = 0xEA;
+  args.dst_mac.addr[4] = 0x8E;
+  args.dst_mac.addr[5] = 0x43;
+  IP4_ADDR((&args.dst_ip), 192, 168, 10, 1);
+  args.dst_port = 6501;
+  args.ttl = PKT_TTL;
   IP4_ADDR((&args.dst_ip), 192, 168, 10, 1);
   args.dst_port = 6501;
   args.ttl = PKT_TTL;
