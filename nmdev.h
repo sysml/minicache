@@ -9,8 +9,6 @@
 #include <mini-os/events.h>
 
 #include "pktbuf.h"
-#include "debug.h"
-#include "hexdump.h"
 
 #ifndef min
 #define min(a, b) \
@@ -153,7 +151,7 @@ static inline uint32_t nmdev_pick_txbufs(struct nmdev *nm, struct nmbuf txbufs[]
     uint32_t i;
     unsigned int cur;
     unsigned int flags;
-    
+
     local_irq_save(flags);
     count = min(count, _nmdev_avail_txbufs(nm));
 
@@ -175,7 +173,7 @@ static inline uint32_t nmdev_pick_txbufs(struct nmdev *nm, struct nmbuf txbufs[]
 static inline void nmdev_put_txbufs(struct nmdev *nm, uint32_t count)
 {
     unsigned int flags;
-    
+
     ASSERT(count <= nm->txring.infly);
 
     local_irq_save(flags);
@@ -221,7 +219,7 @@ static inline uint32_t nmdev_pick_rxbufs(struct nmdev *nm, struct nmbuf rxbufs[]
 static inline void nmdev_put_rxbufs(struct nmdev *nm, uint32_t count)
 {
     unsigned int flags;
-    
+
     ASSERT(count <= nm->rxring.infly);
 
     local_irq_save(flags);
@@ -240,13 +238,12 @@ static inline uint32_t nmdev_xmit_burst(struct nmdev *nm, struct pktbuf **pkts, 
 {
     struct nmbuf txbufs[count];
     uint32_t i;
-       
+
     count = min(count, nmdev_avail_txbufs(nm));
     nmdev_pick_txbufs(nm, txbufs, count);
     for (i = 0; i < count; i++) {
         *(txbufs[i].len) = pkts[i]->pktlen;
         pkt_copy(pkts[i]->p_obj.data, txbufs[i].data, pkts[i]->pktlen);
-        //printh(txbufs[i].data, pkts[i]->pktlen); /*********************************************/
     }
     nmdev_put_txbufs(nm, count);
     nmdev_notify_xmit(nm); /* trigger netmap to send */
@@ -261,7 +258,7 @@ static inline uint32_t nmdev_recv_burst(struct nmdev *nm, struct pktbuf **pkts, 
 {
     struct nmbuf rxbufs[count];
     uint32_t i;
-    
+
     nmdev_notify_recv(nm); /* trigger netmap to receive */
     count = min3(count, nmdev_avail_rxbufs(nm), pktpool_free_count(pktpool));
     pktpool_pick_multiple(pktpool, pkts, count);
@@ -269,7 +266,6 @@ static inline uint32_t nmdev_recv_burst(struct nmdev *nm, struct pktbuf **pkts, 
     for (i = 0; i < count; i++) {
         pkts[i]->pktlen = *(rxbufs[i].len);
         pkt_copy(rxbufs[i].data, pkts[i]->p_obj.data, pkts[i]->pktlen);
-        //printh(rxbufs[i].data, pkts[i]->pktlen); /*********************************************/
     }
     nmdev_put_rxbufs(nm, count);
 
@@ -280,7 +276,7 @@ static inline struct pktbuf *nmdev_recv(struct nmdev *nm, struct mempool *pktpoo
 {
     struct pktbuf *pkt;
     uint32_t ret;
-    
+
     ret = nmdev_recv_burst(nm, &pkt, 1, pktpool);
     if (likely(ret))
         return pkt;

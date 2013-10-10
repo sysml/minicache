@@ -17,7 +17,7 @@ static int _nmdev_xmit_cb(struct netmap_ring *ring, void *argp)
 {
     struct nmdev *nm = argp;
     uint32_t diff;
-    
+
     diff = nm->txring.ring->avail - nm->txring._avail;
     nm->txring.avail += diff;
     if (nm->txring.chained) {      /* if there was another try to notify in the
