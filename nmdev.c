@@ -32,6 +32,7 @@ static int _nmdev_xmit_cb(struct netmap_ring *ring, void *argp)
     return 0;
 }
 
+#ifndef POLL_FD_RX
 static int _nmdev_recv_cb(struct netmap_ring *ring, void *argp)
 {
     struct nmdev *nm = argp;
@@ -47,7 +48,7 @@ static int _nmdev_recv_cb(struct netmap_ring *ring, void *argp)
     nm->rxring.isbusy = 0;
     return 0;
 }
-
+#endif
 
 struct nmdev *open_nmdev(unsigned int vif_id)
 {
@@ -100,6 +101,9 @@ struct nmdev *open_nmdev(unsigned int vif_id)
     nm->priv = (struct netmap_priv_d *) mmap_ptr;
     nm->nifp = (struct netmap_if *) mmap_ptr;
     nm->xinfo = &nm->priv->tx_desc;
+#ifdef POLL_FD_RX
+    nm->pfd.fd = nm->fd;
+#endif
 
     /* Initialize netmap ring management */
     nm->txring.ring      = NETMAP_TXRING(nm->priv, 0);
@@ -137,11 +141,13 @@ struct nmdev *open_nmdev(unsigned int vif_id)
         errno = -err;
         goto err_munmap;
     }
+#ifndef POLL_FD_RX
     err = netmap_regup(nm->priv, RX_CH, (RING_UPDATE_T) _nmdev_recv_cb, nm);
     if (err) {
         errno = -err;
         goto err_munmap;
     }
+#endif
 
     return nm;
 

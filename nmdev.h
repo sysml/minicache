@@ -1,14 +1,21 @@
 #ifndef _NMDEV_H_
 #define _NMDEV_H_
 
+//#define POLL_FD_RX /* uncomment this line to enable synchronous receiving */
+#define PKTBUF_IF /* uncomment this line to enable pktbuf.h interfaces */
+
 #include <netmap/netmap.h>
 #include <netmap/netmap_user.h>
 #include <netmap/netmap_kern.h>
 #include <netif/etharp.h>
 #include <mini-os/pkt_copy.h>
 #include <mini-os/events.h>
-
+#ifdef POLL_FD_RX
+#include <sys/poll.h>
+#endif
+#ifdef PKTBUF_IF
 #include "pktbuf.h"
+#endif
 
 #ifndef min
 #define min(a, b) \
@@ -26,7 +33,7 @@
 struct nmbuf
 {
     void *data;
-    size_t *len;
+    uint16_t *len;
 };
 
 struct _nmdev_ring 
@@ -34,13 +41,14 @@ struct _nmdev_ring
     struct netmap_ring *ring;
     uint32_t avail;  /* shadow copy of ring->avail (because of
                       * asynchronous operation) */
+    uint32_t cur;    /* shadow copy of ring->avail (because of
+                      * asynchronous operation) */
     uint32_t _avail; /* copy of submitted avail for comparison in
                       * callback */
     uint32_t infly;  /* number of buffers that are used by the user
                       * currently */
 
     /* copies to reduce number of indirect adressing */
-    uint32_t cur;
     uint32_t num_slots;
 
     int isbusy;     /* bool: backend is currently processing? */
@@ -54,6 +62,9 @@ struct nmdev
     struct netmap_xinfo *xinfo;
     struct netmap_if *nifp;
     struct eth_addr mac;
+#ifdef POLL_FD_RX
+    struct pollfd pfd;
+#endif
 
     struct _nmdev_ring txring;
     struct _nmdev_ring rxring;
@@ -86,19 +97,21 @@ void close_nmdev(struct nmdev *nm);
             _nmdev_do_notify_xmit(nm);                  \
         }                                               \
     } while(0)
-/*
+#ifdef POLL_FD_RX
+#define nmdev_notify_recv(nm)                           \
     do {                                                \
-        if (unlikely(nm->txring.isbusy))                \
-            (nm)->txring.chained = 1;                   \
-        else                                            \
-            _nmdev_do_notify_xmit(nm);                  \
+        (nm)->rxring.ring->avail = (nm)->rxring.avail;  \
+        (nm)->rxring.ring->cur   = (nm)->rxring.cur;    \
+        (nm)->pfd.events = (POLLIN);                    \
+        poll(&(nm)->pfd, 1, 0);                         \
+        (nm)->rxring.avail = (nm)->rxring.ring->avail;  \
     } while(0)
-*/
+#else
 #define _nmdev_do_notify_recv(nm)                       \
     do {                                                \
         (nm)->rxring.isbusy      = 1;                   \
         (nm)->rxring.ring->avail = (nm)->rxring.avail;  \
-        (nm)->txring.ring->cur   = (nm)->txring.cur;    \
+        (nm)->rxring.ring->cur   = (nm)->rxring.cur;    \
         (nm)->rxring._avail      = (nm)->rxring.avail;  \
         wmb();                                          \
         (nm)->priv->rx_desc.lock = 1;                   \
@@ -116,14 +129,7 @@ void close_nmdev(struct nmdev *nm);
             _nmdev_do_notify_recv(nm);                  \
         }                                               \
     } while(0)
-/*
-    do {                                                \
-        if (unlikely(nm->rxring.isbusy))                \
-            (nm)->rxring.chained = 1;                   \
-        else                                            \
-            _nmdev_do_notify_recv(nm);                  \
-    } while(0)
-*/
+#endif
 #define nmdev_notify(nm)                                \
     do {                                                \
         nmdev_notify_xmit(nm);                          \
@@ -159,7 +165,7 @@ static inline uint32_t nmdev_pick_txbufs(struct nmdev *nm, struct nmbuf txbufs[]
     cur = (nm->txring.cur + nm->txring.infly) % nm->txring.num_slots;
     for (i = 0; i < count; i++) {
         txbufs[i].data = NETMAP_BUF(nm->xinfo, cur);
-        txbufs[i].len  = (size_t *) &(nm->txring.ring->slot[cur].len);
+        txbufs[i].len  = (uint16_t *) &(nm->txring.ring->slot[cur].len);
         cur = NETMAP_RING_NEXT(nm->txring.ring, cur);
     }
     nm->txring.infly += count;
@@ -187,11 +193,15 @@ static inline void nmdev_put_txbufs(struct nmdev *nm, uint32_t count)
 static inline uint32_t nmdev_avail_rxbufs(struct nmdev *nm)
 {
     uint32_t ret;
-    unsigned int flags;
 
+#ifndef POLL_FD_RX
+    unsigned int flags;
     local_irq_save(flags);
+#endif
     ret = _nmdev_avail_rxbufs(nm);
+#ifndef POLL_FD_RX
     local_irq_restore(flags);
+#endif
     return ret;
 }
 
@@ -199,36 +209,46 @@ static inline uint32_t nmdev_pick_rxbufs(struct nmdev *nm, struct nmbuf rxbufs[]
 {
     uint32_t i;
     unsigned int cur;
-    unsigned int flags;
 
+#ifndef POLL_FD_RX
+    unsigned int flags;
     local_irq_save(flags);
+#endif
     count = min(count, _nmdev_avail_rxbufs(nm));
 
     /* pick available buffers */
     cur = (nm->rxring.cur + nm->rxring.infly) % nm->rxring.num_slots;
     for (i = 0; i < count; i++) {
         rxbufs[i].data = NETMAP_BUF(nm->xinfo, cur);
-        rxbufs[i].len  = (size_t *) &(nm->rxring.ring->slot[cur].len);
+        rxbufs[i].len  = (uint16_t *) &(nm->rxring.ring->slot[cur].len);
         cur = NETMAP_RING_NEXT(nm->rxring.ring, cur);
     }
     nm->rxring.infly += count;
+#ifndef POLL_FD_RX
     local_irq_restore(flags);
+#endif
     return count;
 }
 
 static inline void nmdev_put_rxbufs(struct nmdev *nm, uint32_t count)
 {
+#ifndef POLL_FD_RX
     unsigned int flags;
-
+#endif
     ASSERT(count <= nm->rxring.infly);
 
+#ifndef POLL_FD_RX
     local_irq_save(flags);
+#endif
     nm->rxring.avail -= count;
     nm->rxring.infly -= count;
     nm->rxring.cur    = (nm->rxring.cur + count) % nm->rxring.num_slots;
+#ifndef POLL_FD_RX
     local_irq_restore(flags);
+#endif
 }
 
+#ifdef PKTBUF_IF
 /********************************************
  * netdev.c/netdev.h like interfaces
  */
@@ -246,7 +266,7 @@ static inline uint32_t nmdev_xmit_burst(struct nmdev *nm, struct pktbuf **pkts, 
         pkt_copy(pkts[i]->p_obj.data, txbufs[i].data, pkts[i]->pktlen);
     }
     nmdev_put_txbufs(nm, count);
-    nmdev_notify_xmit(nm); /* trigger netmap to send */
+    nmdev_notify_xmit(nm); /* trigger backend to send */
     pktpool_put_multiple(pkts, count);
 
     return count;
@@ -259,7 +279,7 @@ static inline uint32_t nmdev_recv_burst(struct nmdev *nm, struct pktbuf **pkts, 
     struct nmbuf rxbufs[count];
     uint32_t i;
 
-    nmdev_notify_recv(nm); /* trigger netmap to receive */
+    nmdev_notify_recv(nm); /* trigger backend to receive */
     count = min3(count, nmdev_avail_rxbufs(nm), pktpool_free_count(pktpool));
     pktpool_pick_multiple(pktpool, pkts, count);
     nmdev_pick_rxbufs(nm, rxbufs, count);
@@ -282,5 +302,6 @@ static inline struct pktbuf *nmdev_recv(struct nmdev *nm, struct mempool *pktpoo
         return pkt;
     return NULL;
 }
+#endif /* PKTBUF_IF */
 
 #endif /* _NMDEV_H_ */

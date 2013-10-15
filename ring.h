@@ -55,20 +55,12 @@ struct ring {
 struct ring *alloc_ring(uint32_t aize);
 void free_ring(struct ring *r);
 
-static inline int ring_full(struct ring *r)
-{
-  return (((r->enq_idx + 1) & r->mask) == r->deq_idx);
-}
-
-static inline int ring_empty(struct ring *r)
-{
-  return (r->enq_idx == r->deq_idx);
-}
-
-static inline uint32_t ring_count(struct ring *r)
-{
-  return ((r->size + r->enq_idx - r->deq_idx) & r->mask);
-}
+#define ring_full(r) ((((r)->enq_idx + 1) & (r)->mask) == (r)->deq_idx)
+#define ring_empty(r) ((r)->enq_idx == (r)->deq_idx)
+/* number of used slots */
+#define ring_count(r) (((r)->size + (r)->enq_idx - (r)->deq_idx) & (r)->mask)
+/* number of available slots */
+#define ring_avail(r) (((r)->mask + (r)->deq_idx - (r)->enq_idx) & (r)->mask)
 
 /*
  * multi-producer safe lock-free enqueue
