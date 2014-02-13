@@ -121,7 +121,7 @@ static void handle_cb(struct blkdev *bd, uint64_t sector, size_t nb_sectors, int
     }
     
     for (i = 0; i < args.nb_chunks; i++) {
-	pkt_copy(ioo_args->pkts[i]->p_obj.data, (void *)((uintptr_t) ioo->data + i * args.chunklen), args.chunklen);
+	pkt_copy((void *)((uintptr_t) ioo->data + i * args.chunklen), ioo_args->pkts[i]->p_obj.data, args.chunklen);
 	ioo_args->pkts[i]->pktlen = args.chunk_pktlen;
 	pktbuf_encap_udp_nocheck(ioo_args->pkts[i], &args.src_mac, &args.dst_mac, &args.src_ip, &args.dst_ip, args.src_port, args.dst_port, args.ttl, args.pchksum);
     }
