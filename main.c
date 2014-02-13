@@ -6,14 +6,14 @@
 #include <errno.h>
 #include <getopt.h>
 #include <kernel.h>
+#include <ring.h>
+#include <mempool.h>
+#include <hexdump.h>
+#include <nm_wrap.h>
 #include <pkt_copy.h>
 
-#include "ring.h"
-#include "mempool.h"
 #include "pktbuf.h"
-#include "nmdev.h"
 #include "blkdev.h"
-#include "hexdump.h"
 
 #define RXFIFO_LEN 1024 /* can have 1023 elements */
 #define TXFIFO_LEN 8192 /* can have 8191 elements */
@@ -22,8 +22,8 @@
 #define MAX_HANDLE_BURST_LEN 16
 #define PKTPOOL_SIZE 8192
 #define IOBPOOL_SIZE 1024
-#define PKTENCAP_HDRSIZE (sizeof(struct eth_hdr) + sizeof(struct ip_hdr) + sizeof(struct udp_hdr))
-#define MAX_PKTPAYLOAD (1536 - PKTENCAP_HDRSIZE)
+
+#define MAX_PKTPAYLOAD (1536 - PKTUDPENCAP_HDRSIZE)
 #define MIN_PKTIOPAYLOAD 64 /* minimum I/O load in a packet (set to 64 because of pktcopy) */
 #define PKT_TTL 2
 #define PRINT_STATISTICS_SEC 1 /* print statistics each ... second */
@@ -69,35 +69,46 @@ struct _args {
     size_t chunk_pktlen; /* pktlen of a chunk packet */
 } args;
 
-static inline void receive(struct nmdev *nm, struct ring *rxfifo)
+static inline void receive(struct nmw *nm, struct ring *rxfifo)
 {
     uint32_t burstlen, i;
     struct nmbuf rxbufs[MAX_RX_BURST_LEN];
     
-    nmdev_notify_recv(nm);
-    burstlen = min3(MAX_RX_BURST_LEN, ring_avail(rxfifo), nmdev_avail_rxbufs(nm));
+    nmw_notify_rx(nm);
+    burstlen = min3(MAX_RX_BURST_LEN, ring_avail(rxfifo), nmw_avail_rxbufs(nm));
     
     if (burstlen > 0) {
-        nmdev_pick_rxbufs(nm, rxbufs, burstlen);
+        nmw_pick_rxbufs(nm, rxbufs, burstlen);
         for (i = 0; i < burstlen; i++) {
             printf("Received %u bytes:\n", *(rxbufs[i].len));
             printh(rxbufs[i].data, (size_t) *(rxbufs[i].len));
         }
-        nmdev_put_rxbufs(nm, burstlen);
+        nmw_put_rxbufs(nm, burstlen);
     }
     
 }
 
-static inline void transmit(struct nmdev *nm, struct ring *txfifo)
+static inline void transmit(struct nmw *nm, struct ring *txfifo)
 {
-    uint32_t burstlen;
+    uint32_t burstlen, i;
+    uint16_t curpktlen;
+    uint16_t maxpktlen = nmw_bufsize(nm);
     struct pktbuf *txburst[MAX_TX_BURST_LEN];
-    burstlen = min3(MAX_TX_BURST_LEN, ring_count(txfifo), nmdev_avail_txbufs(nm));
+    struct nmbuf txbufs[MAX_TX_BURST_LEN];
+    burstlen = min3(MAX_TX_BURST_LEN, ring_count(txfifo), nmw_avail_txbufs(nm));
     
     if (likely(burstlen > 0)) {
         ring_dequeue_multiple(txfifo, (void **) txburst, burstlen); /* does not fail, because here is the only point
                                                                        where objects are picked from the ring */
-        nmdev_xmit_burst(nm, txburst, burstlen);
+        nmw_pick_txbufs(nm, txbufs, burstlen);
+        for (i = 0; i < burstlen; i++) {
+            curpktlen = min(txburst[i]->pktlen, maxpktlen);
+            *txbufs[i].len = curpktlen;
+	    pkt_copy(txburst[i]->p_obj.data, txbufs[i].data, curpktlen);
+        }
+        nmw_put_txbufs(nm, burstlen);
+        nmw_notify_tx(nm);
+        pktpool_put_multiple(txburst, burstlen);
         statistics_nb_sent_packets += burstlen;
     }
 }
@@ -191,7 +202,6 @@ static int parse_args(int argc, char **argv) {
     args.ttl = PKT_TTL;
     IP4_ADDR((&args.dst_ip), 192, 168, 10, 1);
     args.dst_port = 6501;
-    args.ttl = PKT_TTL;
     
     args.blksize = 512;
     
@@ -256,7 +266,7 @@ int main(int argc, char **argv)
     struct mempool *iobpool;
     struct ring *rxfifo;
     struct ring *txfifo;
-    struct nmdev *nm;
+    struct nmw *nm;
     struct blkdev *bd;
     uint64_t ts_tick, ts_tock, ts_diff;
     uint64_t nb_rd_blks, nb_tx_pkts;
@@ -277,15 +287,15 @@ int main(int argc, char **argv)
      */
     ret = 1; /* error */
     printf("Opening network device %d\n", args.ndid);
-    nm = open_nmdev((unsigned int) args.ndid);
+    nm = open_nmw((unsigned int) args.ndid);
     if (!nm) {
 	printf("Could not open network device (vif id: %d): %d\n", args.ndid, errno);
 	goto out;
     }
     printf("Network device has MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
-           nmdev_mac(nm)->addr[0], nmdev_mac(nm)->addr[1], nmdev_mac(nm)->addr[2],
-           nmdev_mac(nm)->addr[3], nmdev_mac(nm)->addr[4], nmdev_mac(nm)->addr[5]);
-    memcpy(args.src_mac.addr, nmdev_mac(nm)->addr, ETHARP_HWADDR_LEN);
+           nmw_mac(nm)[0], nmw_mac(nm)[1], nmw_mac(nm)[2],
+           nmw_mac(nm)[3], nmw_mac(nm)[4], nmw_mac(nm)[5]);
+    memcpy(args.src_mac.addr, nmw_mac(nm), ETHARP_HWADDR_LEN);
     
     printf("Opening block device %d\n", args.bdid);
     bd = open_blkdev((unsigned int) args.bdid, O_RDONLY);
@@ -317,7 +327,7 @@ int main(int argc, char **argv)
     
     printf("Info: Using %u packets per I/O request (blocksize: %llu B; %llu B per packet) with a total payload of %llu B\n", args.nb_chunks, args.blksize, args.chunklen, args.chunk_pktlen);
     printf("Allocating packet buffer pool\n");
-    pktpool = alloc_pktpool(PKTPOOL_SIZE, args.chunk_pktlen, 0, PKTENCAP_HDRSIZE, 0);
+    pktpool = alloc_pktpool(PKTPOOL_SIZE, args.chunk_pktlen, 0, PKTUDPENCAP_HDRSIZE, 0);
     if (!pktpool) {
         printf("Could not allocate packet buffer pool 'pktpool': %d\n", errno);
         goto out_free_txfifo;
@@ -352,7 +362,7 @@ int main(int argc, char **argv)
            "/\\nb packets");
     ts_tick = NOW();
     while (1) {
-        receive(nm, rxfifo);                          /* puts received pkts (allocated from pktpool) to rxfifo */
+	//receive(nm, rxfifo);                          /* puts received pkts (allocated from pktpool) to rxfifo */
         handle(rxfifo, bd, iobpool, txfifo, pktpool); /* transforms rx into submitted ioreqs, finished ioreqs produce a pkt (from pktpool) on txfifo */
         transmit(nm, txfifo);                         /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
         
@@ -365,9 +375,9 @@ int main(int argc, char **argv)
             printf("%d;%llu;%llu;%llu;%llu;%llu;%llu;%d;%llu;%llu;%llu.%09llu;%llu.%09llu;%llu;%llu\n",
                    args.bdid, /* vdb ID */
                    args.blksize, /* block size */
-                   args.chunk_pktlen + PKTENCAP_HDRSIZE + 4, /* packet size (incl. CRC) */
+                   args.chunk_pktlen + PKTUDPENCAP_HDRSIZE + 4, /* packet size (incl. CRC) */
                    args.nb_chunks, /* packets per block */
-                   PKTENCAP_HDRSIZE, /* packet: hdr length */
+                   PKTUDPENCAP_HDRSIZE, /* packet: hdr length */
                    args.chunklen, /* packet: block data length */
                    args.addpayload, /* packet: additional payload */
                    args.pchksum ? 1 : 0, /* packet: UDP checksum */
@@ -396,7 +406,7 @@ int main(int argc, char **argv)
  out_close_bd:
     close_blkdev(bd);
  out_close_nm:
-    close_nmdev(nm);
+    close_nmw(nm);
  out:
     return ret;
 }

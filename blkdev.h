@@ -2,8 +2,8 @@
 #define _BLKDEV_H_
 
 #include <mini-os/blkfront.h>
+#include <mempool.h>
 #include <fcntl.h>
-#include "mempool.h"
 
 #define MAX_DISKSIZE (1ll << 40) /* 1 TB */
 

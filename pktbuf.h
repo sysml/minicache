@@ -10,7 +10,7 @@
 #include <lwip/ip_addr.h>
 #include <lwip/udp.h>
 #include <lwip/sockets.h>
-#include "mempool.h"
+#include <mempool.h>
 
 struct pktbuf {
   struct mempool_obj p_obj; /* surrounding memory pool object (NOTE: has to be the first element of this struct for simple type casting) */
@@ -61,6 +61,16 @@ static inline void pktbuf_prepend_nocheck(struct pktbuf *pkt, size_t len)
 #define pktbuf_append_nocheck(pkt, len) \
   mempool_obj_append_nocheck((struct mempool_obj *)(pkt), (len))
 
+
+/**
+ * Encapsulates a packet buffer with a Ethernet-IPv4-UDP packet header
+ */
+#if ETH_PAD_SIZE
+  #define PKTUDPENCAP_HDRSIZE ((uint16_t)(sizeof(struct eth_hdr) - ETH_PAD_SIZE + sizeof(struct ip_hdr) + sizeof(struct udp_hdr)))
+#else
+  #define PKTUDPENCAP_HDRSIZE ((uint16_t)(sizeof(struct eth_hdr) + sizeof(struct ip_hdr) + sizeof(struct udp_hdr)))
+#endif
+
 void _pktbuf_do_encap_udp(void *buf, size_t buflen, size_t payload_len,
 						  const struct eth_addr *src_mac, const struct eth_addr *dst_mac,
 						  const struct ip_addr *src_ip, const struct ip_addr *dst_ip,
@@ -76,7 +86,7 @@ static inline int pktbuf_encap_udp(struct pktbuf *pkt, const struct eth_addr *sr
   size_t pktlen;
 
   pktlen = pkt->pktlen;
-  ret = pktbuf_prepend(pkt, sizeof(struct eth_hdr) + sizeof(struct ip_hdr) + sizeof(struct udp_hdr));
+  ret = pktbuf_prepend(pkt, PKTUDPENCAP_HDRSIZE);
   if (unlikely(ret))
 	return ret;
   _pktbuf_do_encap_udp(pkt->p_obj.data, pkt->p_obj.len, pktlen, src_mac, dst_mac, src_ip, dst_ip, src_port, dst_port, ttl, calc_payload_chksum);
@@ -89,7 +99,7 @@ static inline void pktbuf_encap_udp_nocheck(struct pktbuf *pkt, const struct eth
 											uint8_t ttl, int calc_payload_chksum)
 {
   size_t pktlen = pkt->pktlen;
-  pktbuf_prepend_nocheck(pkt, sizeof(struct eth_hdr) + sizeof(struct ip_hdr) + sizeof(struct udp_hdr));
+  pktbuf_prepend_nocheck(pkt, PKTUDPENCAP_HDRSIZE);
   _pktbuf_do_encap_udp(pkt->p_obj.data, pkt->p_obj.len, pktlen, src_mac, dst_mac, src_ip, dst_ip, src_port, dst_port, ttl, calc_payload_chksum);
 }
 

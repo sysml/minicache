@@ -9,6 +9,7 @@
 #include <kernel.h>
 #include <errno.h>
 
+#include <lwip/ip.h>
 #include "pktbuf.h"
 
 #define IPV4_VERSION 4
@@ -42,11 +43,18 @@ void _pktbuf_do_encap_udp(void *buf, size_t buflen, size_t payload_len,
 						  uint8_t ttl, int calc_payload_chksum)
 {
   size_t hdr_len;
+  struct eth_hdr *eh;
+  struct ip_hdr *ip;
+  struct udp_hdr *udp;
 
-  struct eth_hdr *eh = buf;
-  struct ip_hdr *ip = (void *)((uintptr_t) eh + sizeof(*eh));
-  struct udp_hdr *udp = (void *)((uintptr_t) ip + sizeof(*ip));
-  hdr_len = sizeof(*eh) + sizeof(*ip) + sizeof(*udp);
+#if ETH_PAD_SIZE
+  eh = buf - ETH_PAD_SIZE; /* drop the padding word */
+#else
+  eh = buf;
+#endif
+  ip = (void *)((uintptr_t) eh + sizeof(*eh));
+  udp = (void *)((uintptr_t) ip + sizeof(*ip));
+  hdr_len = PKTUDPENCAP_HDRSIZE;
 
   ASSERT(buflen >= hdr_len + payload_len); /* buffer is too small */
   ASSERT(payload_len <= UINT16_MAX); /* maximum length */
@@ -57,9 +65,14 @@ void _pktbuf_do_encap_udp(void *buf, size_t buflen, size_t payload_len,
   eh->type = htons(ETHTYPE_IP);
 
   /* IPv4 header */
-  IPH_VHLTOS_SET(ip, IPV4_VERSION, 5, IPTOS_LOWDELAY);
+  IPH_VHL_SET(ip, IPV4_VERSION, 5);
+  IPH_TOS_SET(ip, IPTOS_LOWDELAY);
   ip->_id = 0;
+#if ETH_PAD_SIZE
+  ip->_len = ntohs(hdr_len + payload_len - sizeof(*eh) + ETH_PAD_SIZE);
+#else
   ip->_len = ntohs(hdr_len + payload_len - sizeof(*eh));
+#endif
   ip->_id = 0;
   ip->_offset = htons(IP_DF); /* Don't fragment */
   IPH_TTL_SET(ip, ttl);
