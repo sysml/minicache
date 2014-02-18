@@ -9,6 +9,7 @@
 #include <sched.h>
 #include <pkt_copy.h>
 #include <mempool.h>
+#include <shell.h>
 
 #include <ipv4/lwip/ip_addr.h>
 #include <netif/etharp.h>
@@ -29,7 +30,6 @@
 #include <lwip-netfront.h>
 #endif
 
-#include "shell.h"
 #include "httpd.h"
 
 #ifdef CONFIG_LWIP_SINGLETHREADED
