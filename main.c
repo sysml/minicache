@@ -29,6 +29,7 @@
 #include <lwip-netfront.h>
 #endif
 
+#include "shell.h"
 #include "httpd.h"
 
 #ifdef CONFIG_LWIP_SINGLETHREADED
@@ -56,6 +57,19 @@ struct _args {
 
 static volatile int shall_halt = 0;
 static volatile int shall_suspend = 0;
+
+static int halt(FILE *cio, int argc, char *argv[])
+{
+    shall_halt = 1;
+    return SH_CLOSE; /* special return code: closes the shell session */
+}
+
+static int suspend(FILE *cio, int argc, char *argv[])
+{
+    shall_suspend = 1;
+    return 0;
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -153,8 +167,14 @@ int main(int argc, char *argv[])
     if (args.dhclient)
         dhcp_start(&netif);
 
+    printf("Starting shell...\n");
+    init_shell(1, 4); /* enable a local session + 4 telnet sessions */
     printf("Starting httpd...\n");
     init_httpd();
+
+    /* add custom commands to the shell */
+    shell_register_cmd("halt", halt);
+    shell_register_cmd("suspend", suspend);
 
     /* -----------------------------------
      * Processing loop
@@ -202,6 +222,8 @@ int main(int argc, char *argv[])
     printf("System is going to halt now\n");
     printf("Stopping httpd...\n");
     exit_httpd();
+    printf("Stopping shell...\n");
+    exit_shell();
     printf("Stopping networking...\n");
     netif_set_down(&netif);
     netif_remove(&netif);
