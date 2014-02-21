@@ -9,7 +9,6 @@
 #include <sched.h>
 #include <pkt_copy.h>
 #include <mempool.h>
-#include <shell.h>
 
 #include <ipv4/lwip/ip_addr.h>
 #include <netif/etharp.h>
@@ -31,6 +30,7 @@
 #endif
 
 #include "httpd.h"
+#include "shell.h"
 
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
         dhcp_start(&netif);
 
     printf("Starting shell...\n");
-    init_shell(1, 4); /* enable a local session + 4 telnet sessions */
+    init_shell(0, 4); /* no local session + 4 telnet sessions */
     printf("Starting httpd...\n");
     init_httpd();
 
@@ -179,6 +179,7 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * Processing loop
      * ----------------------------------- */
+    printf("Minicache is up.\n");
     while(likely(!shall_halt)) {
 #ifdef CONFIG_LWIP_SINGLETHREADED
         /* NIC handling loop (single threaded lwip) */
@@ -192,7 +193,7 @@ int main(int argc, char *argv[])
         TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
         TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
         TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
-        TIMED(now, ts_dns,     DNS_TMR_INTERVAL, dns_tmr);
+        TIMED(now, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
         if (args.dhclient) {
 	        TIMED(now, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
 	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
