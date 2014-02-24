@@ -53,7 +53,51 @@ struct _args {
     struct ip_addr  gw;
     struct ip_addr  dns0;
     struct ip_addr  dns1;
+
+    unsigned int    startup_delay;
 } args;
+
+
+static int parse_args_setval_int(int *out, const char *buf)
+{
+	if (sscanf(buf, "%d", out) != 1)
+		return -1;
+	return 0;
+}
+
+static int parse_args(struct _args *args, int argc, char *argv[])
+{
+    int opt;
+    int ret;
+    int ival;
+
+    /* default arguments */
+    memset(args, 0, sizeof(*args));
+    IP4_ADDR(&args->ip,   10,  10,  10,  1);
+    IP4_ADDR(&args->mask, 255, 255, 255, 0);
+    IP4_ADDR(&args->gw,   0,   0,   0,   0);
+    IP4_ADDR(&args->dns0, 0,   0,   0,   0);
+    IP4_ADDR(&args->dns1, 0,   0,   0,   0);
+    args->dhclient = 0;
+    args->startup_delay = 0;
+
+     while ((opt = getopt(argc, argv, "s:")) != -1) {
+         switch(opt) {
+         case 's': /* startup delay */
+              ret = parse_args_setval_int(&ival, optarg);
+              if (ret < 0 || ival < 0) {
+	           printf("invalid delay specified\n");
+	           return -1;
+              }
+              args->startup_delay = (unsigned int) ival;
+              break;
+         default:
+	      return -1;
+         }
+     }
+
+     return 0;
+}
 
 static volatile int shall_halt = 0;
 static volatile int shall_suspend = 0;
@@ -86,12 +130,25 @@ int main(int argc, char *argv[])
     uint64_t ts_dhcp_coarse = 0;
 #endif
 
-    IP4_ADDR(&args.ip,   10,  10,  10,  1); /* default */
-    IP4_ADDR(&args.mask, 255, 255, 255, 0); /* default */
-    IP4_ADDR(&args.gw,   0,   0,   0,   0); /* default */
-    IP4_ADDR(&args.dns0, 0,   0,   0,   0); /* default */
-    IP4_ADDR(&args.dns1, 0,   0,   0,   0); /* default */
-    args.dhclient = 0;                      /* default */
+    /* -----------------------------------
+     * argument parsing
+     * ----------------------------------- */
+    if (parse_args(&args, argc, argv) < 0) {
+	    printf("Argument parsing error!\n" \
+	           "Please check your arguments");
+	    goto out;
+    }
+    if (args.startup_delay) {
+	    unsigned int s;
+	    printf("Startup delay");
+	    fflush(stdout);
+	    for (s = 0; s < args.startup_delay; ++s) {
+		    printf(".");
+		    fflush(stdout);
+		    msleep(1000);
+	    }
+	    printf("\n");
+    }
 
     /* -----------------------------------
      * filesystem initialization
