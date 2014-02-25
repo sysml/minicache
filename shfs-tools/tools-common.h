@@ -31,32 +31,28 @@ extern bool force;
 
 #define D_L0		1
 #define D_L1		2
-#define D_L2		3
-#define D_MAX		D_L2
+#define D_MAX		D_L1
 
 
 /*
  * Argument parsing helper
  */
-static inline void parse_args_setval_str(char** target, const char* value)
+static inline int parse_args_setval_str(char** out, const char* buf)
 {
-	if (*target)
-		free(*target);
-	*target = strdup(value);
-	if (!*target)
-		die();
-}
+	if (*out)
+		free(*out);
+	*out = strdup(buf);
+	if (!*out) {
+		*out = NULL;
+		return -ENOMEM;
+	}
 
-static inline int parse_args_setval_int(int* target, const char* value)
-{
-	if (sscanf(optarg, "%d", target) != 1)
-		return -EINVAL;
 	return 0;
 }
 
-static inline long parse_args_setval_long(long* target, const char* value)
+static inline int parse_args_setval_int(int* out, const char* buf)
 {
-	if (sscanf(optarg, "%ld", target) != 1)
+	if (sscanf(optarg, "%d", out) != 1)
 		return -EINVAL;
 	return 0;
 }
@@ -74,18 +70,13 @@ struct disk *open_disk(const char *path, int mode);
 void close_disk(struct disk *d);
 
 /*
- * Summary
+ * Misc
  */
 void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
                             struct shfs_hdr_config *hdr_config);
-
-/*
- * Sanity checks
- */
-chk_t min_disk_size_chk(struct shfs_hdr_common *hdr_common,
-                        struct shfs_hdr_config *hdr_config);
-uint64_t min_disk_size(struct shfs_hdr_common *hdr_common,
-                       struct shfs_hdr_config *hdr_config);
-
+chk_t metadata_size(struct shfs_hdr_common *hdr_common,
+                    struct shfs_hdr_config *hdr_config);
+chk_t avail_space(struct shfs_hdr_common *hdr_common,
+                  struct shfs_hdr_config *hdr_config);
 
 #endif /* _TOOLS_COMMON_ */

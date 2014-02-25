@@ -25,10 +25,24 @@ typedef uint64_t chk_t;
 /* hash function */
 #define SHFUNC_SHA1      0
 
+/*
+ * Helper
+ */
+#ifndef ALIGN_UP
+/* Note: align has to be a power of 2 */
+#define ALIGN_UP(size, align)  (((size) + (align) - 1) & ~((align) - 1))
+#endif
+#ifndef DIV_ROUND_UP
+#define DIV_ROUND_UP(num, div) (((num) + (div) - 1) / (div))
+#endif
+#ifndef POWER_OF_2
+#define POWER_OF_2(x)          ((0 != x) && (0 == (x & (x-1))))
+#endif
 
 /**
  * Common SHFS header
  * (on chunk no. 0)
+ * Note: character strings fields are not necessarily null-terminated
  */
 #define BOOT_AREA_LENGTH 1024
 #define SHFS_MAGIC0 'S'
@@ -38,7 +52,6 @@ typedef uint64_t chk_t;
 #define SHFSv1_VERSION0 0x1
 #define SHFSv1_VERSION1 0x0
 
-/* note: character strings are not necessarily null-terminated */
 struct shfs_hdr_common {
 	uint8_t            magic[4];
 	uint8_t            version[2]; /* little endian */
@@ -46,13 +59,13 @@ struct shfs_hdr_common {
 	char               vol_name[16];
 	uint8_t            vol_byteorder;
 	uint8_t            vol_encoding;
-	uint32_t           vol_chunksize; /* at least 4096, max 32 KiB */
+	uint32_t           vol_chunksize; /* chunksize = stripesize * member_count */
 	chk_t              vol_size;
 	uint64_t           vol_creation_ts;
-	uint8_t            member_uuid[16];
+	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
-	uint32_t           member_stripe_size; /* <= chunksize; chunksize is multiple of it */
-	struct {
+	uint32_t           member_stripe_size; /* at least 512, max 32 KiB */
+	struct {           /* uuid's of all disk members */
 		uint8_t    uuid[16];
 	}                  member[16];
 } __attribute__((packed));
@@ -73,19 +86,35 @@ struct shfs_hdr_config {
 
 /**
  * SHFS entry (container description)
+ * Note: character strings fields are not necessarily null-terminated
  */
 struct shfs_hentry {
-	uint64_t           hash[8];
-	chk_t              start;
-	uint64_t           len; /* in bytes */
+	uint64_t           hash[8]; /* 512 bits */
+	chk_t              chunk;
+	uint32_t           offset; /* byte offset, usually 0 */
+	uint64_t           len; /* length (bytes) */
+	char               mime[128]; /* internet media type */
 	uint64_t           ts_creation;
 	uint64_t           ts_laccess;
 	uint64_t           access_count;
-	char               mime[64];
 	char               name[256];
 } __attribute__((packed));
 
-/* up aligned hentry => chunksize becomes a multiple of it */
-#define SHFS_HENTRY_SIZE(chunksize) ((chunksize) / ((chunksize) / sizeof(struct shfs_hentry)))
+#define BYTES_TO_CHUNKS(bytes,  chunksize) DIV_ROUND_UP((bytes), (chunksize))
+#define CHUNKS_TO_BYTES(chunks, chunksize) ((uint64_t) (chunks) * (uint64_t) (chunksize))
+
+#define SHFS_HENTRY_ALIGN 64 /* has to be a power of 2 */
+#define SHFS_HENTRY_SIZE ALIGN_UP(sizeof(struct shfs_hentry), SHFS_HENTRY_ALIGN)
+#define SHFS_HENTRIES_PER_CHUNK(chunksize) ((chunksize) / SHFS_HENTRY_SIZE)
+
+#define SHFS_HTABLE_NB_ENTRIES(hdr_config) \
+	((hdr_config)->htable_entries_per_bucket * (hdr_config)->htable_bucket_count)
+#define SHFS_HTABLE_SIZE_CHUNKS(hdr_config, chunksize) \
+	DIV_ROUND_UP(SHFS_HTABLE_NB_ENTRIES((hdr_config)), SHFS_HENTRIES_PER_CHUNK((chunksize)))
+
+#define SHFS_HTABLE_CHUNK_NO(hentry_no, hentries_per_chunk) \
+	((hentry_no) / (hentries_per_chunk))
+#define SHFS_HTABLE_ENTRY_OFFSET(hentry_no, hentries_per_chunk) \
+	(((hentry_no) % (hentries_per_chunk)) * SHFS_HENTRY_SIZE)
 
 #endif /* _SHFS_DEFS_H_ */

@@ -66,7 +66,6 @@ static int parse_args(int argc, char **argv, struct args *args)
  */
 {
 	int opt, opt_index = 0;
-	int ret;
 
 	/*
 	 * set default values
@@ -137,13 +136,17 @@ static void mkfs(struct disk *d, struct args *args)
 	uuid_t uu_d, uu_vol;
 	void * chk0;
 	void * chk1;
+	off_t htable_base;
+	off_t htable_bak_base;
+	off_t hentry_offset;
 	struct shfs_hdr_common *hdr_common;
 	struct shfs_hdr_config *hdr_config;
 	struct shfs_hentry     *hentry;
-	size_t hentry_len;
 	uint32_t nb_hentries_per_chk;
 	uint32_t nb_hentries;
 	uint32_t i;
+	uint32_t status_i;
+	uint64_t mdata_size;
 
 	/*
 	 * Fillout headers / init entries
@@ -153,9 +156,8 @@ static void mkfs(struct disk *d, struct args *args)
 	hentry = calloc(1, sizeof(*hentry));
 	if (!chk0 || !chk1 || !hentry)
 		die();
-	hentry_len = SHFS_HENTRY_SIZE(args->chunksize);
 
-	/* chunk0 */
+	/* chunk0: common header */
 	hdr_common = chk0 + BOOT_AREA_LENGTH;
 	hdr_common->magic[0] = SHFS_MAGIC0;
 	hdr_common->magic[1] = SHFS_MAGIC1;
@@ -185,10 +187,9 @@ static void mkfs(struct disk *d, struct args *args)
 		hdr_common->member_uuid[i] = uu_d[i];
 	hdr_common->member_count = 1;
 	hdr_common->member_stripe_size = args->chunksize;
-	for (i = 0; i < 16; i++)
-		hdr_common->member[0].uuid[i] = uu_d[i];
+	memcpy(hdr_common->member[0].uuid, hdr_common->member_uuid, 16);
 
-	/* chunk1 */
+	/* chunk1: config header */
 	hdr_config = chk1;
 	hdr_config->htable_ref = 2;
 	hdr_config->htable_bak_ref = 0; /* disable htable backup */
@@ -198,15 +199,16 @@ static void mkfs(struct disk *d, struct args *args)
 	hdr_config->htable_entries_per_bucket = args->entries_per_bucket;
 	hdr_config->allocator = args->allocator;
 
-	/* hentry */
-	/* NONE */
+	/* hentry defaults */
+	/* NONE: everything zero'ed */
 
 	/*
 	 * Check
 	 */
-	if (min_disk_size(hdr_common, hdr_config) > d->size)
-		dief("%s is to small: %ld Bytes required but %ld Bytes available\n",
-		     args->devpath, min_disk_size(hdr_common, hdr_config), d->size);
+	mdata_size = CHUNKS_TO_BYTES(metadata_size(hdr_common, hdr_config), hdr_common->vol_chunksize);
+	if (mdata_size > d->size)
+		dief("%s is to small: Disk label requires %ld Bytes but only %ld Bytes are available\n",
+		     args->devpath, mdata_size, d->size);
 
 	/*
 	 * Summary
@@ -217,8 +219,10 @@ static void mkfs(struct disk *d, struct args *args)
 		size_t n = 2;
 		int num_rlin_bytes;
 
-		printf("Warning: Existing data will be lost!\n");
-		printf("Continue and write to disk? [yN] ");
+		printf("\n");
+		printf("Shall this label be written to the device?\n");
+		printf("Be warned that all existing data will be lost!\n");
+		printf("Continue? [yN] ");
 		num_rlin_bytes = getline(&rlin, &n, stdin);
 
 		if (num_rlin_bytes < 0)
@@ -234,18 +238,47 @@ static void mkfs(struct disk *d, struct args *args)
 	 * Write htable entries
 	 */
 	nb_hentries = hdr_config->htable_entries_per_bucket * hdr_config->htable_bucket_count;
-	printf("Writing table entries... [%ld/%ld]", 0, nb_hentries);
+	htable_base =  hdr_config->htable_ref * hdr_common->vol_chunksize;
+	htable_bak_base =  hdr_config->htable_ref * hdr_common->vol_chunksize;
+	nb_hentries_per_chk = SHFS_HENTRIES_PER_CHUNK(hdr_common->vol_chunksize);
+	status_i = 64;
+	if (verbosity == D_MAX)
+		status_i = 1;
+
+	printf("\n");
 	fflush(stdout);
-	lseek(d->fd, (hdr_common->vol_chunksize * hdr_config->htable_ref), SEEK_SET);
 	for (i = 0; i < nb_hentries; i++) {
-		if (i % 64 == 0) {
+		hentry_offset = htable_base + \
+			CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), hdr_common->vol_chunksize) + \
+			SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
+		if (i % status_i == 0) {
 			printf("\rWriting table entries... [%ld/%ld]", i, nb_hentries);
+			dprintf(D_L0, " (@0x%08x)", hentry_offset);
 			fflush(stdout);
 		}
+		lseek(d->fd, hentry_offset, SEEK_SET);
 		write(d->fd, hentry, sizeof(*hentry));
-		lseek(d->fd, hentry_len - sizeof(*hentry), SEEK_CUR);
 	}
-	printf("\rWriting table entries... [%ld/%ld]\n", nb_hentries, nb_hentries);
+	printf("\rWriting table entries... [%ld/%ld]                   \n",
+	       nb_hentries, nb_hentries);
+
+	if (hdr_config->htable_bak_ref) {
+		printf("\n");
+		for (i = 0; i < nb_hentries; i++) {
+			hentry_offset = htable_bak_base + \
+				CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), hdr_common->vol_chunksize) + \
+				SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
+			if (i % status_i == 0) {
+				printf("\rWriting backup table entries... [%ld/%ld]",  i, nb_hentries);
+				dprintf(D_L0, " (@0x%08x)", hentry_offset);
+				fflush(stdout);
+			}
+			lseek(d->fd, hentry_offset, SEEK_SET);
+			write(d->fd, hentry, sizeof(*hentry));
+		}
+		printf("\rWriting backup table entries... [%ld/%ld]                   \n",
+		       nb_hentries, nb_hentries);
+	}
 
 	/*
 	 * Write headers
