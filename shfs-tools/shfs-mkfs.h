@@ -13,7 +13,7 @@ struct args {
 
 	uint8_t  encoding;
 	char     volname[17]; /* null-terminated */
-	uint32_t chunksize;
+	uint32_t stripesize;
 
 	uint8_t  allocator;
 	uint8_t  hashfunc;

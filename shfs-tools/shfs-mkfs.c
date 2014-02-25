@@ -79,7 +79,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->volname[6]  = 'd';
 	args->volname[7]  = '\0';
 	args->volname[17] = '\0';
-	args->chunksize = 4096;
+	args->stripesize = 4096;
 	args->allocator = SALLOC_BESTFIT;
 	args->hashfunc = SHFUNC_SHA1;
 	args->hashlen = 8; /* 512 bits */
@@ -147,12 +147,13 @@ static void mkfs(struct disk *d, struct args *args)
 	uint32_t i;
 	uint32_t status_i;
 	uint64_t mdata_size;
+	uint64_t chunksize;
 
 	/*
 	 * Fillout headers / init entries
 	 */
-	chk0 = calloc(1, (size_t) args->chunksize);
-	chk1 = calloc(1, (size_t) args->chunksize);
+	chk0 = calloc(1, (size_t) args->stripesize);
+	chk1 = calloc(1, (size_t) args->stripesize);
 	hentry = calloc(1, sizeof(*hentry));
 	if (!chk0 || !chk1 || !hentry)
 		die();
@@ -177,8 +178,6 @@ static void mkfs(struct disk *d, struct args *args)
 #warning "Could not detected byte-order"
 #endif
 	hdr_common->vol_encoding = SENC_UNSPECIFIED;
-	hdr_common->vol_chunksize = args->chunksize;
-	hdr_common->vol_size = (chk_t) (d->size / (uint64_t) args->chunksize);
 	hdr_common->vol_creation_ts = 0; /* TO BE DONE */
 
 	/* setup striping as single disk, only */
@@ -186,8 +185,12 @@ static void mkfs(struct disk *d, struct args *args)
 	for (i = 0; i < 16; i++)
 		hdr_common->member_uuid[i] = uu_d[i];
 	hdr_common->member_count = 1;
-	hdr_common->member_stripe_size = args->chunksize;
+	hdr_common->member_stripesize = args->stripesize;
 	memcpy(hdr_common->member[0].uuid, hdr_common->member_uuid, 16);
+
+	/* calculate volume and chunk size */
+	chunksize = SHFS_CHUNKSIZE(hdr_common);
+	hdr_common->vol_size = (chk_t) (d->size / chunksize);
 
 	/* chunk1: config header */
 	hdr_config = chk1;
@@ -205,7 +208,7 @@ static void mkfs(struct disk *d, struct args *args)
 	/*
 	 * Check
 	 */
-	mdata_size = CHUNKS_TO_BYTES(metadata_size(hdr_common, hdr_config), hdr_common->vol_chunksize);
+	mdata_size = CHUNKS_TO_BYTES(metadata_size(hdr_common, hdr_config), chunksize);
 	if (mdata_size > d->size)
 		dief("%s is to small: Disk label requires %ld Bytes but only %ld Bytes are available\n",
 		     args->devpath, mdata_size, d->size);
@@ -238,9 +241,9 @@ static void mkfs(struct disk *d, struct args *args)
 	 * Write htable entries
 	 */
 	nb_hentries = hdr_config->htable_entries_per_bucket * hdr_config->htable_bucket_count;
-	htable_base =  hdr_config->htable_ref * hdr_common->vol_chunksize;
-	htable_bak_base =  hdr_config->htable_ref * hdr_common->vol_chunksize;
-	nb_hentries_per_chk = SHFS_HENTRIES_PER_CHUNK(hdr_common->vol_chunksize);
+	htable_base = CHUNKS_TO_BYTES(hdr_config->htable_ref, chunksize);
+	htable_bak_base = CHUNKS_TO_BYTES(hdr_config->htable_ref, chunksize);
+	nb_hentries_per_chk = SHFS_HENTRIES_PER_CHUNK(chunksize);
 	status_i = 64;
 	if (verbosity == D_MAX)
 		status_i = 1;
@@ -249,7 +252,7 @@ static void mkfs(struct disk *d, struct args *args)
 	fflush(stdout);
 	for (i = 0; i < nb_hentries; i++) {
 		hentry_offset = htable_base + \
-			CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), hdr_common->vol_chunksize) + \
+			CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), chunksize) + \
 			SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
 		if (i % status_i == 0) {
 			printf("\rWriting table entries... [%ld/%ld]", i, nb_hentries);
@@ -266,7 +269,7 @@ static void mkfs(struct disk *d, struct args *args)
 		printf("\n");
 		for (i = 0; i < nb_hentries; i++) {
 			hentry_offset = htable_bak_base + \
-				CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), hdr_common->vol_chunksize) + \
+				CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), chunksize) + \
 				SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
 			if (i % status_i == 0) {
 				printf("\rWriting backup table entries... [%ld/%ld]",  i, nb_hentries);
@@ -284,12 +287,12 @@ static void mkfs(struct disk *d, struct args *args)
 	 * Write headers
 	 */
 	printf("Writing config header...\n");
-	lseek(d->fd, hdr_common->vol_chunksize, SEEK_SET);
-	write(d->fd, chk1, hdr_common->vol_chunksize);
+	lseek(d->fd, chunksize, SEEK_SET);
+	write(d->fd, chk1, chunksize);
 
 	printf("Writing common header...\n");
 	lseek(d->fd, 0, SEEK_SET);
-	write(d->fd, chk0, hdr_common->vol_chunksize);
+	write(d->fd, chk0, chunksize);
 }
 
 int main(int argc, char **argv)
@@ -309,7 +312,7 @@ int main(int argc, char **argv)
 	printvar(args.devpath, "%s");
 	printvar(args.encoding, "%d");
 	printvar(args.volname, "%s");
-	printvar(args.chunksize, "%ld");
+	printvar(args.stripesize, "%ld");
 
 	printvar(args.hashfunc, "%d");
 	printvar(args.allocator, "%d");

@@ -59,12 +59,11 @@ struct shfs_hdr_common {
 	char               vol_name[16];
 	uint8_t            vol_byteorder;
 	uint8_t            vol_encoding;
-	uint32_t           vol_chunksize; /* chunksize = stripesize * member_count */
 	chk_t              vol_size;
 	uint64_t           vol_creation_ts;
+	uint32_t           member_stripesize; /* at least 4 KiB, at most 32 KiB */
 	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
-	uint32_t           member_stripe_size; /* at least 512, max 32 KiB */
 	struct {           /* uuid's of all disk members */
 		uint8_t    uuid[16];
 	}                  member[16];
@@ -103,6 +102,7 @@ struct shfs_hentry {
 #define BYTES_TO_CHUNKS(bytes,  chunksize) DIV_ROUND_UP((bytes), (chunksize))
 #define CHUNKS_TO_BYTES(chunks, chunksize) ((uint64_t) (chunks) * (uint64_t) (chunksize))
 
+#define SHFS_CHUNKSIZE(hdr_common) ((hdr_common)->member_stripesize * (uint32_t) ((hdr_common)->member_count))
 #define SHFS_HENTRY_ALIGN 64 /* has to be a power of 2 */
 #define SHFS_HENTRY_SIZE ALIGN_UP(sizeof(struct shfs_hentry), SHFS_HENTRY_ALIGN)
 #define SHFS_HENTRIES_PER_CHUNK(chunksize) ((chunksize) / SHFS_HENTRY_SIZE)

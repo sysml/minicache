@@ -79,24 +79,26 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
                             struct shfs_hdr_config *hdr_config)
 {
 	char     volname[17];
+	uint64_t chunksize;
 	uint64_t hentry_size;
 	uint64_t htable_size;
 	chk_t    htable_size_chks;
 	uint32_t htable_total_entries;
 	uint8_t  m;
 
+	chunksize            = SHFS_CHUNKSIZE(hdr_common);
 	hentry_size          = SHFS_HENTRY_SIZE;
 	htable_total_entries = SHFS_HTABLE_NB_ENTRIES(hdr_config);
-	htable_size_chks     = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, hdr_common->vol_chunksize);
-	htable_size          = CHUNKS_TO_BYTES(htable_size_chks, hdr_common->vol_chunksize);
+	htable_size_chks     = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, chunksize);
+	htable_size          = CHUNKS_TO_BYTES(htable_size_chks, chunksize);
 
-	printf("SHFS version:     0x%02x%02x\n",
+	printf("SHFS version:       0x%02x%02x\n",
 	       hdr_common->version[1],
 	       hdr_common->version[0]);
 	strncpy(volname, hdr_common->vol_name, 16);
 	volname[17] = '\0';
-	printf("Volume name:      %s\n", volname);
-	printf("Volume UUID:      %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
+	printf("Volume name:        %s\n", volname);
+	printf("Volume UUID:        %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
 	       hdr_common->vol_uuid[0],  hdr_common->vol_uuid[1],
 	       hdr_common->vol_uuid[2],  hdr_common->vol_uuid[3],
 	       hdr_common->vol_uuid[4],  hdr_common->vol_uuid[5],
@@ -105,27 +107,30 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	       hdr_common->vol_uuid[10], hdr_common->vol_uuid[11],
 	       hdr_common->vol_uuid[12], hdr_common->vol_uuid[13],
 	       hdr_common->vol_uuid[14], hdr_common->vol_uuid[15]);
-	printf("Chunksize:        %ld KiB\n",
-	       hdr_common->vol_chunksize / 1024);
-	printf("Volume size:      %ld KiB\n",
-	       (hdr_common->vol_chunksize * hdr_common->vol_size) / 1024);
+	printf("Chunksize:          %lu KiB\n",
+	       chunksize / 1024);
+	printf("Volume size:        %lu KiB\n",
+	       (chunksize * hdr_common->vol_size) / 1024);
 
-	printf("Hash function:    %s (%ld bits)\n", "SHA-1", hdr_config->hlen * 8 * 8);
-	printf("Hash table:       %ld entries in %ld buckets\n" \
-	       "                  %ld chunks (%ld KiB)\n" \
-	       "                  %s\n",
+	printf("Hash function:      %s (%ld bits)\n",
+	       (hdr_config->hfunc == SHFUNC_SHA1 ? "SHA-1" : "Unknown"),
+	       hdr_config->hlen * 8 * 8);
+	printf("Hash table:         %lu entries in %ld buckets\n" \
+	       "                    %lu chunks (%ld KiB)\n" \
+	       "                    %s\n",
 	       htable_total_entries, hdr_config->htable_bucket_count,
 	       htable_size_chks, htable_size / 1024,
 	       hdr_config->htable_bak_ref ? "2nd copy enabled" : "No copy");
-	printf("Entry size:       %ld Bytes (raw: %ld Bytes)\n", hentry_size, sizeof(struct shfs_hentry));
-	printf("Metadata total:   %ld chunks\n", metadata_size(hdr_common, hdr_config));
-	printf("Available space:  %ld chunks\n", avail_space(hdr_common, hdr_config));
+	printf("Entry size:         %lu Bytes (raw: %ld Bytes)\n", hentry_size, sizeof(struct shfs_hentry));
+	printf("Metadata total:     %lu chunks\n", metadata_size(hdr_common, hdr_config));
+	printf("Available space:    %lu chunks\n", avail_space(hdr_common, hdr_config));
 
 	printf("\n");
-	printf("Volume members:   %d device(s)\n", hdr_common->member_count);
+	printf("Member stripe size: %u KiB\n", hdr_common->member_stripesize / 1024);
+	printf("Volume members:     %u device(s)\n", hdr_common->member_count);
 	for (m = 0; m < hdr_common->member_count; m++) {
-		printf("  Member %d:\n", m);
-		printf("    UUID: %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
+		printf("  Member %2d UUID:   %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
+		       m,
 		       hdr_common->member[m].uuid[0], hdr_common->member[m].uuid[1],
 		       hdr_common->member[m].uuid[2], hdr_common->member[m].uuid[3],
 		       hdr_common->member[m].uuid[4], hdr_common->member[m].uuid[5],
@@ -140,10 +145,12 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 chk_t metadata_size(struct shfs_hdr_common *hdr_common,
                     struct shfs_hdr_config *hdr_config)
 {
+	uint64_t chunksize;
 	chk_t    htable_size_chks;
 	chk_t    ret = 0;
 
-	htable_size_chks = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, hdr_common->vol_chunksize);
+	chunksize        = SHFS_CHUNKSIZE(hdr_common);
+	htable_size_chks = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, chunksize);
 
 	ret += 1; /* chunk0 (common hdr) */
 	ret += 1; /* chunk1 (config hdr) */
