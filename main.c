@@ -31,8 +31,10 @@
 
 #include "httpd.h"
 #include "shell.h"
+#include "shfs.h"
 #include "shfs_tools.h"
 
+#define MAX_NB_VBD 16
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
 /* runs (func) a command on a timeout */
@@ -55,9 +57,10 @@ struct _args {
     struct ip_addr  dns0;
     struct ip_addr  dns1;
 
+    unsigned int    nb_vbds;
+    unsigned int    vbd_id[16];
     unsigned int    startup_delay;
 } args;
-
 
 static int parse_args_setval_int(int *out, const char *buf)
 {
@@ -79,6 +82,8 @@ static int parse_args(struct _args *args, int argc, char *argv[])
     IP4_ADDR(&args->gw,   0,   0,   0,   0);
     IP4_ADDR(&args->dns0, 0,   0,   0,   0);
     IP4_ADDR(&args->dns1, 0,   0,   0,   0);
+    args->nb_vbds = 1;
+    args->vbd_id[0] = 51712; /* xvda */
     args->dhclient = 0;
     args->startup_delay = 0;
 
@@ -100,13 +105,22 @@ static int parse_args(struct _args *args, int argc, char *argv[])
      return 0;
 }
 
-static volatile int shall_halt = 0;
+static volatile int shall_shutdown = 0;
+static volatile int shall_reboot = 0;
 static volatile int shall_suspend = 0;
 
 static int halt(FILE *cio, int argc, char *argv[])
 {
-    shall_halt = 1;
+    shall_reboot = 0;
+    shall_shutdown = 1;
     return SH_CLOSE; /* special return code: closes the shell session */
+}
+
+static int reboot(FILE *cio, int argc, char *argv[])
+{
+    shall_reboot = 1;
+    shall_shutdown = 1;
+    return SH_CLOSE;
 }
 
 static int suspend(FILE *cio, int argc, char *argv[])
@@ -115,14 +129,37 @@ static int suspend(FILE *cio, int argc, char *argv[])
     return 0;
 }
 
+void app_shutdown(unsigned reason)
+{
+    switch (reason) {
+    case SHUTDOWN_poweroff:
+	    printf("Poweroff requested\n", reason);
+	    shall_reboot = 0;
+	    shall_shutdown = 1;
+	    break;
+    case SHUTDOWN_reboot:
+	    printf("Reboot requested: %d\n", reason);
+	    shall_reboot = 1;
+	    shall_shutdown = 1;
+	    break;
+    case SHUTDOWN_suspend:
+	    printf("Suspend requested: %d\n", reason);
+	    shall_suspend = 1;
+	    break;
+    default:
+	    printf("Unknown shutdown action requested: %d. Ignoring\n", reason);
+	    break;
+    }
+}
 
 int main(int argc, char *argv[])
 {
     struct _args args;
     struct netif netif;
+    struct blkdev *bd[MAX_NB_VBD];
+    unsigned int i;
 #ifdef CONFIG_LWIP_SINGLETHREADED
     uint64_t now;
-
     uint64_t ts_tcp = 0;
     uint64_t ts_etharp = 0;
     uint64_t ts_ipreass = 0;
@@ -136,7 +173,7 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     if (parse_args(&args, argc, argv) < 0) {
 	    printf("Argument parsing error!\n" \
-	           "Please check your arguments");
+	           "Please check your arguments\n");
 	    goto out;
     }
     if (args.startup_delay) {
@@ -150,11 +187,6 @@ int main(int argc, char *argv[])
 	    }
 	    printf("\n");
     }
-
-    /* -----------------------------------
-     * filesystem initialization
-     * ----------------------------------- */
-    /* TO BE DONE */
 
     /* -----------------------------------
      * lwIP initialization
@@ -225,6 +257,28 @@ int main(int argc, char *argv[])
     if (args.dhclient)
         dhcp_start(&netif);
 
+    /* -----------------------------------
+     * filesystem initialization
+     * ----------------------------------- */
+    for (i = 0; i < MAX_NB_VBD; ++i)
+	    bd[i] = NULL;
+    for (i = 0; i < args.nb_vbds; ++i) {
+	    printf("Opening vbd %d...\n", args.vbd_id[i]);
+	    bd[i] = open_blkdev(args.vbd_id[i], O_RDONLY);
+	    if (!bd[i]) {
+		    printf("Could not open vbd %d\n", args.vbd_id[i]);
+		    goto out_close_bds;
+	    }
+    }
+    printf("Mounting cache filesystem...\n");
+    if (mount_shfs(bd, args.nb_vbds) < 0) {
+	    printf("Could not mount cache filesystem\n");
+	    goto out_close_bds;
+    }
+
+    /* -----------------------------------
+     * service initialization
+     * ----------------------------------- */
     printf("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
     printf("Starting httpd...\n");
@@ -232,6 +286,7 @@ int main(int argc, char *argv[])
 
     /* add custom commands to the shell */
     shell_register_cmd("halt", halt);
+    shell_register_cmd("reboot", reboot);
     shell_register_cmd("suspend", suspend);
     register_shfs_tools();
 
@@ -239,7 +294,7 @@ int main(int argc, char *argv[])
      * Processing loop
      * ----------------------------------- */
     printf("*** MiniCache is up and running ***\n");
-    while(likely(!shall_halt)) {
+    while(likely(!shall_shutdown)) {
 #ifdef CONFIG_LWIP_SINGLETHREADED
         /* NIC handling loop (single threaded lwip) */
 #ifdef CONFIG_NMWRAP
@@ -260,16 +315,16 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_LWIP_SINGLETHREADED */
         schedule(); /* yield CPU */
 
-        if (shall_suspend) {
+        if (unlikely(shall_suspend)) {
             printf("System is going to suspend now\n");
-            //netif_set_down(&netif);
-            //netif_remove(&netif);
+            netif_set_down(&netif);
+            netif_remove(&netif);
 
-            /* TODO: execute suspend  */
+            kernel_suspend();
 
             printf("System woke up from suspend\n");
-            //netif_set_default(&netif);
-            //netif_set_up(&netif);
+            netif_set_default(&netif);
+            netif_set_up(&netif);
             if (args.dhclient)
                 dhcp_start(&netif);
             shall_suspend = 0;
@@ -279,14 +334,27 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * Shutdown
      * ----------------------------------- */
-    printf("System is going to halt now\n");
+    if (shall_reboot)
+	    printf("System is going down to reboot now\n");
+    else
+	    printf("System is going down to halt now\n");
     printf("Stopping httpd...\n");
     exit_httpd();
     printf("Stopping shell...\n");
     exit_shell();
+    printf("Unmounting cache filesystem...\n");
+    unmount_shfs();
+ out_close_bds:
+    for (i = 0; i < args.nb_vbds; ++i)
+	    if (bd[i]) {
+		    printf("Closing vbd %d...\n", args.vbd_id[i]);
+		    close_blkdev(bd[i]);
+	    }
     printf("Stopping networking...\n");
     netif_set_down(&netif);
     netif_remove(&netif);
-out:
-    return 0;
+ out:
+    if (shall_reboot)
+	    kernel_poweroff(SHUTDOWN_reboot);
+    kernel_poweroff(SHUTDOWN_poweroff);
 }

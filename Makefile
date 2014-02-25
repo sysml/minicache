@@ -10,7 +10,7 @@ GCC_VERSION	?= 4.5.0
 verbose		?=
 stubdom		 = y
 
-CFLAGS          += -Winline -Wtype-limits -Wcast-align --param large-stack-frame=256 --param large-stack-frame-growth=16
+CFLAGS          += -Wunused -Winline -Wtype-limits -Wcast-align --param large-stack-frame=256 --param large-stack-frame-growth=16
 
 CONFIG_START_NETWORK		= n
 # use 'vale' for xenbus driver instead of 'vif'
@@ -55,7 +55,7 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o shell.o httpd.o fs.o fsdata.o blkdev.o shfs_tools.o
+STUB_APP_OBJS0  = main.o shell.o httpd.o fs.o fsdata.o blkdev.o shfs.o shfs_check.o shfs_tools.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk

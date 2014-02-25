@@ -74,20 +74,26 @@ void close_blkdev(struct blkdev *bd)
   free(bd);
 }
 
-void _blkdev_req_cb(struct blkfront_aiocb *aiocb, int ret)
+void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret)
 {
-  struct mempool_obj *robj;
-  struct _blkdev_req *req;
-  struct blkdev *bd;
-  void (*cb_func)(struct blkdev *bd, uint64_t sector, size_t nb_sectors, int write, int ret, void *argp);
+	struct mempool_obj *robj;
+	struct _blkdev_req *req;
+	struct blkdev *bd;
 
-  req = container_of(aiocb, struct _blkdev_req, aiocb);
-  robj = req->p_obj;
-  bd = req->bd;
-  cb_func = req->cb_func;
+	req = container_of(aiocb, struct _blkdev_req, aiocb);
+	robj = req->p_obj;
+	bd = req->bd;
 
-  if (cb_func)
-	cb_func(bd, req->sector, req->nb_sectors, req->write, ret, req->cb_func_argp); /* call callback */
+	if (req->cb)
+		req->cb(ret, req->cb_argp); /* user callback */
 
-  mempool_put(robj);
+	mempool_put(robj);
+}
+
+void _blkdev_sync_io_cb(int ret, void *argp)
+{
+	struct _blkdev_sync_io_sync *iosync = argp;
+
+	iosync->ret = ret;
+	up(&iosync->sem);
 }
