@@ -213,7 +213,7 @@ static void mkfs(struct disk *d, struct args *args)
 	 */
 	print_shfs_hdr_summary(hdr_common, hdr_config);
 	if (!force) {
-		char *rlin;
+		char *rlin = NULL;
 		size_t n = 2;
 		int num_rlin_bytes;
 
