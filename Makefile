@@ -33,7 +33,7 @@ CONFIG_NMWRAP_SYNCRX		= n
 ## Shell options
 ######################################
 _GITSHA1			= $(shell git rev-parse --short HEAD || echo "?")
-CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright\(C\) 2013-2014 NEC Laboratories Europe Ltd.\"" \
+CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\"" \
 				   -DSHELL_WELCOME="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\n\nType 'help' to get an overview of available commands\"" \
 				   -DSHELL_PROMPT="\"mc\#\"" \
 				   -DSHELL_DEBUG
@@ -55,7 +55,7 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o shell.o httpd.o fs.o fsdata.o blkdev.o
+STUB_APP_OBJS0  = main.o shell.o httpd.o fs.o fsdata.o blkdev.o shfs_tools.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk

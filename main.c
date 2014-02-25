@@ -31,6 +31,7 @@
 
 #include "httpd.h"
 #include "shell.h"
+#include "shfs_tools.h"
 
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
@@ -232,11 +233,12 @@ int main(int argc, char *argv[])
     /* add custom commands to the shell */
     shell_register_cmd("halt", halt);
     shell_register_cmd("suspend", suspend);
+    register_shfs_tools();
 
     /* -----------------------------------
      * Processing loop
      * ----------------------------------- */
-    printf("Minicache is up.\n");
+    printf("*** MiniCache is up and running ***\n");
     while(likely(!shall_halt)) {
 #ifdef CONFIG_LWIP_SINGLETHREADED
         /* NIC handling loop (single threaded lwip) */
