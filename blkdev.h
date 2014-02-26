@@ -16,6 +16,7 @@ struct blkdev {
   struct blkfront_info info;
   struct mempool *reqpool;
   char nname[128];
+  unsigned int vbd_id;
   int mode;
 };
 
@@ -30,7 +31,7 @@ struct _blkdev_req {
   void *cb_argp;
 };
 
-struct blkdev *open_blkdev(unsigned int vdb_id, int mode);
+struct blkdev *open_blkdev(unsigned int vbd_id, int mode);
 void close_blkdev(struct blkdev *bd);
 
 

@@ -22,7 +22,7 @@
 
 #define MAX_REQUESTS 16
 
-struct blkdev *open_blkdev(unsigned int vdb_id, int mode)
+struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 {
   struct blkdev *bd;
 
@@ -38,7 +38,8 @@ struct blkdev *open_blkdev(unsigned int vdb_id, int mode)
 	goto err_free_bd;
   }
 
-  snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", vdb_id);
+  bd->vbd_id = vbd_id;
+  snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", vbd_id);
 
   bd->dev = init_blkfront(bd->nname, &(bd->info));
   if (!bd->dev) {

@@ -133,7 +133,6 @@ static int parse_args(int argc, char **argv, struct args *args)
  ******************************************************************************/
 static void mkfs(struct disk *d, struct args *args)
 {
-	uuid_t uu_d, uu_vol;
 	void * chk0;
 	void * chk1;
 	off_t htable_base;
@@ -166,27 +165,23 @@ static void mkfs(struct disk *d, struct args *args)
 	hdr_common->magic[3] = SHFS_MAGIC3;
 	hdr_common->version[0] = SHFSv1_VERSION0;
 	hdr_common->version[1] = SHFSv1_VERSION1;
-	uuid_generate(uu_vol);
-	for (i = 0; i < 16; i++)
-		hdr_common->vol_uuid[i] = uu_vol[i];
+	uuid_generate(hdr_common->vol_uuid);
 	strncpy(hdr_common->vol_name, args->volname, 16);
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 	hdr_common->vol_byteorder = SBO_LITTLEENDIAN;
 #elif __BYTE_ORDER == __BIG_ENDIAN
 	hdr_common->vol_byteorder = SBO_BIGENDIAN;
 #else
-#warning "Could not detected byte-order"
+#warning "Could not detect byte-order"
 #endif
 	hdr_common->vol_encoding = SENC_UNSPECIFIED;
 	hdr_common->vol_creation_ts = 0; /* TO BE DONE */
 
 	/* setup striping as single disk, only */
-	uuid_generate(uu_d);
-	for (i = 0; i < 16; i++)
-		hdr_common->member_uuid[i] = uu_d[i];
+	uuid_generate(hdr_common->member_uuid);
 	hdr_common->member_count = 1;
 	hdr_common->member_stripesize = args->stripesize;
-	memcpy(hdr_common->member[0].uuid, hdr_common->member_uuid, 16);
+	uuid_copy(hdr_common->member[0].uuid, hdr_common->member_uuid);
 
 	/* calculate volume and chunk size */
 	chunksize = SHFS_CHUNKSIZE(hdr_common);

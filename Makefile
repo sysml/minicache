@@ -35,14 +35,15 @@ CONFIG_NMWRAP_SYNCRX		= n
 _GITSHA1			= $(shell git rev-parse --short HEAD || echo "?")
 CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\"" \
 				   -DSHELL_WELCOME="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\n\nType 'help' to get an overview of available commands\"" \
-				   -DSHELL_PROMPT="\"mc\#\"" \
-				   -DSHELL_DEBUG
+				   -DSHELL_PROMPT="\"mc\#\""
 
 ######################################
 ## Debugging options
 ######################################
 CONFIG_DEBUG			= y
 CONFIG_DEBUG_LWIP		= n
+CFLAGS				+= -DSHFS_DEBUG \
+				   -DSHELL_DEBUG
 
 ######################################
 ## MiniOS path

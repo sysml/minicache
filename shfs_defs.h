@@ -11,6 +11,11 @@
 #include <stdint.h>
 
 typedef uint64_t chk_t;
+#ifndef _UUID_UUID_H
+typedef uint8_t uuid_t[16];
+#endif /* _UUID_UUID_H */
+
+#define SHFS_MAX_NB_MEMBERS 32
 
 /* vol_byteorder */
 #define SBO_LITTLEENDIAN 0
@@ -24,6 +29,7 @@ typedef uint64_t chk_t;
 
 /* hash function */
 #define SHFUNC_SHA1      0
+
 
 /*
  * Helper
@@ -55,17 +61,17 @@ typedef uint64_t chk_t;
 struct shfs_hdr_common {
 	uint8_t            magic[4];
 	uint8_t            version[2]; /* little endian */
-	uint8_t            vol_uuid[16];
+	uuid_t             vol_uuid;
 	char               vol_name[16];
 	uint8_t            vol_byteorder;
 	uint8_t            vol_encoding;
 	chk_t              vol_size;
 	uint64_t           vol_creation_ts;
-	uint32_t           member_stripesize; /* at least 4 KiB, at most 32 KiB */
+	uint32_t           member_stripesize; /* at least 512 B (but chunksize 4 KiB), at most 32 KiB */
 	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
 	struct {           /* uuid's of all disk members */
-		uint8_t    uuid[16];
+		uuid_t    uuid;
 	}                  member[16];
 } __attribute__((packed));
 

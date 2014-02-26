@@ -7,7 +7,20 @@
 #ifndef _SHFS_TOOLS_H_
 #define _SHFS_TOOLS_H_
 
-/* registers shfs tools to micro shell */
+#include "shfs_defs.h"
+
+/**
+ * Registers shfs tools to micro shell
+ */
 int register_shfs_tools(void);
 
-#endif /* _SHFS_DEFS_H_ */
+/**
+ * Prints a uuid_t to a buffer (has to be at least 17 bytes long)
+ */
+void uuid_unparse(const uuid_t uu, char *out);
+
+int uuid_compare(const uuid_t uu1, const uuid_t uu2);
+int uuid_is_null(const uuid_t uu);
+void uuid_copy(uuid_t dst, const uuid_t src);
+
+#endif /* _SHFS_TOOLS_H_ */

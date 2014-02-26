@@ -85,6 +85,7 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	chk_t    htable_size_chks;
 	uint32_t htable_total_entries;
 	uint8_t  m;
+	char str_uuid[17];
 
 	chunksize            = SHFS_CHUNKSIZE(hdr_common);
 	hentry_size          = SHFS_HENTRY_SIZE;
@@ -98,15 +99,8 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	strncpy(volname, hdr_common->vol_name, 16);
 	volname[17] = '\0';
 	printf("Volume name:        %s\n", volname);
-	printf("Volume UUID:        %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
-	       hdr_common->vol_uuid[0],  hdr_common->vol_uuid[1],
-	       hdr_common->vol_uuid[2],  hdr_common->vol_uuid[3],
-	       hdr_common->vol_uuid[4],  hdr_common->vol_uuid[5],
-	       hdr_common->vol_uuid[6],  hdr_common->vol_uuid[7],
-	       hdr_common->vol_uuid[8],  hdr_common->vol_uuid[9],
-	       hdr_common->vol_uuid[10], hdr_common->vol_uuid[11],
-	       hdr_common->vol_uuid[12], hdr_common->vol_uuid[13],
-	       hdr_common->vol_uuid[14], hdr_common->vol_uuid[15]);
+	uuid_unparse(hdr_common->vol_uuid, str_uuid);
+	printf("Volume UUID:        %s\n", str_uuid);
 	printf("Chunksize:          %lu KiB\n",
 	       chunksize / 1024);
 	printf("Volume size:        %lu KiB\n",
@@ -129,16 +123,8 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	printf("Member stripe size: %u KiB\n", hdr_common->member_stripesize / 1024);
 	printf("Volume members:     %u device(s)\n", hdr_common->member_count);
 	for (m = 0; m < hdr_common->member_count; m++) {
-		printf("  Member %2d UUID:   %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
-		       m,
-		       hdr_common->member[m].uuid[0], hdr_common->member[m].uuid[1],
-		       hdr_common->member[m].uuid[2], hdr_common->member[m].uuid[3],
-		       hdr_common->member[m].uuid[4], hdr_common->member[m].uuid[5],
-		       hdr_common->member[m].uuid[6], hdr_common->member[m].uuid[7],
-		       hdr_common->member[m].uuid[8], hdr_common->member[m].uuid[9],
-		       hdr_common->member[m].uuid[10], hdr_common->member[m].uuid[11],
-		       hdr_common->member[m].uuid[12], hdr_common->member[m].uuid[13],
-		       hdr_common->member[m].uuid[14], hdr_common->member[m].uuid[15]);
+		uuid_unparse(hdr_common->member[m].uuid, str_uuid);
+		printf("  Member %2d UUID:   %s\n", m, str_uuid);
 	}
 }
 

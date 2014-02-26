@@ -10,7 +10,7 @@
 int shfs_detect_hdr0(void *chk0) {
 	struct shfs_hdr_common *hdr_common;
 
-	hdr_common = chk0 + BOOT_AREA_LENGTH;
+	hdr_common = (void *)((uint8_t *) chk0 + BOOT_AREA_LENGTH);
 
 	/* Check for SHFS magic */
 	if (hdr_common->magic[0] != SHFS_MAGIC0)
@@ -27,6 +27,20 @@ int shfs_detect_hdr0(void *chk0) {
 		return -2;
 	if (hdr_common->version[1] != SHFSv1_VERSION1)
 		return -2;
+
+	/* Check Endianess */
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+	if (hdr_common->vol_byteorder != SBO_LITTLEENDIAN)
+#elif __BYTE_ORDER == __BIG_ENDIAN
+	if (hdr_common->vol_byteorder != SBO_BIGENDIAN)
+#else
+#warning "Could not detect byte-order"
+#endif
+		return -3;
+
+	/* Briefly check member count */
+	if (hdr_common->member_count == 0 || hdr_common->member_count > SHFS_MAX_NB_MEMBERS)
+		return -4;
 
 	return 1; /* SHFSv1 detected */
 }
