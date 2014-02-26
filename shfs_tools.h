@@ -21,6 +21,7 @@ void uuid_unparse(const uuid_t uu, char *out);
 
 int uuid_compare(const uuid_t uu1, const uuid_t uu2);
 int uuid_is_null(const uuid_t uu);
+int uuid_is_zero(const uuid_t uu);
 void uuid_copy(uuid_t dst, const uuid_t src);
 
 #endif /* _SHFS_TOOLS_H_ */

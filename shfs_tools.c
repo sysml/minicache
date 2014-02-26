@@ -81,13 +81,18 @@ int uuid_compare(const uuid_t uu1, const uuid_t uu2)
 	return memcmp(uu1, uu2, sizeof(uuid_t));
 }
 
-int uuid_is_null(const uuid_t uu)
+int uuid_is_zero(const uuid_t uu)
 {
 	unsigned i;
 	for (i = 0; i < sizeof(uuid_t); ++i)
 		if (uu[i] != 0)
 			return 0;
 	return 1;
+}
+
+int uuid_is_null(const uuid_t uu)
+{
+	return (uu == NULL);
 }
 
 void uuid_copy(uuid_t dst, const uuid_t src)
