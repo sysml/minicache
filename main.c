@@ -243,14 +243,19 @@ static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
     if (ret < 0) {
 	    if (cio)
 		    fprintf(cio, "Could not mount cache filesystem\n");
-	    goto out;
+	    goto out_close_bds;
     }
     if (cio)
 	    fprintf(cio, "Done\n");
 
     _shfs_mounted = 1;
     ret = 0;
+    goto out;
 
+ out_close_bds:
+    for (i = 0; i < _nb_bds; ++i)
+	    close_blkdev(_bd[i]);
+    _nb_bds = 0;
  out:
     up(&_bd_mutex);
     return ret;
