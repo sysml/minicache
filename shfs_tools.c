@@ -32,6 +32,14 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	        shfs_vol.chunksize / 1024);
 	fprintf(cio, "Volume size:        %lu KiB\n",
 	        CHUNKS_TO_BYTES(shfs_vol.volsize, shfs_vol.chunksize) / 1024);
+	fprintf(cio, "Hash table:         %lu entries in %ld buckets\n" \
+	        "                    %lu chunks (%ld KiB)\n" \
+	        "                    %s\n",
+	        shfs_vol.htable_nb_entries, shfs_vol.htable_nb_buckets,
+	        shfs_vol.htable_len, CHUNKS_TO_BYTES(shfs_vol.htable_len, shfs_vol.chunksize) / 1024,
+	        shfs_vol.htable_bak_ref ? "2nd copy enabled" : "No copy");
+	fprintf(cio, "Entry size:         %lu Bytes (raw: %ld Bytes)\n",
+	        SHFS_HENTRY_SIZE, sizeof(struct shfs_hentry));
 
 	fprintf(cio, "\n");
 	fprintf(cio, "Member stripe size: %u KiB\n", shfs_vol.stripesize / 1024);
@@ -43,6 +51,8 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 		fprintf(cio, "    UUID:           %s\n", str_uuid);
 		fprintf(cio, "    Block size:     %u\n", blkdev_ssize(shfs_vol.member[m].bd));
 	}
+
+
 
  out:
 	up(&shfs_mount_lock);
