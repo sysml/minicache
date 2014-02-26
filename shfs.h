@@ -14,6 +14,8 @@
 
 #include "shfs_defs.h"
 
+#define MAX_NB_TRY_BLKDEVS 64
+
 struct vol_member {
 	struct blkdev *bd;
 	uuid_t uuid;
@@ -45,9 +47,17 @@ extern struct semaphore shfs_mount_lock;
 extern volatile int shfs_mounted;
 
 int init_shfs(void);
-int mount_shfs(struct blkdev *bd[], unsigned int count);
+int mount_shfs(unsigned int vbd_id[], unsigned int count);
 void umount_shfs(void);
 void exit_shfs(void);
+
+static inline void shfs_poll_blkdevs(void) {
+	unsigned int i;
+
+	if (likely(shfs_mounted))
+		for(i = 0; i < shfs_vol.nb_members; ++i)
+			blkdev_poll_req(shfs_vol.member[i].bd);
+}
 
 /**
  * Slow read: sequential & sync read of chunks

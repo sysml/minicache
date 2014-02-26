@@ -14,6 +14,7 @@
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
+#include "shfs_tools.h"
 
 volatile int shfs_mounted = 0;
 struct semaphore shfs_mount_lock;
@@ -25,71 +26,116 @@ int init_shfs(void) {
 	return 0;
 }
 
-static int load_vol_cconf(struct blkdev *bd[], unsigned int count)
+/**
+ * This function tries to open a blkdev and checks if it has a valid SHFS label
+ * On success, it returns the opened blkdev descriptor and the read disk chk0
+ *  on *chk0
+ * On errors, a null pointer is returned
+ *
+ * Note: chk0 has to be a buffer of 4096 bytes and be aligned to 4096 bytes
+ */
+static struct blkdev *shfs_checkopen_blkdev(unsigned int vbd_id, void *chk0)
 {
-	struct vol_member detected_member[count];
-	struct shfs_hdr_common *hdr_common;
+	struct blkdev *bd;
 	sector_t rlen;
-	void *chk0;
+	int ret;
+
+	bd = open_blkdev(vbd_id, O_RDWR);
+	if (!bd)
+		goto err_out;
+
+	if (blkdev_ssize(bd) > 4096 || blkdev_ssize(bd) < 512 ||
+	    !POWER_OF_2(blkdev_ssize(bd))) {
+		/* incompatible device */
+#ifdef SHFS_DEBUG
+		printf("Incompatible block size on vdb %u\n", vbd_id);
+#endif
+		goto err_close_bd;
+	}
+
+	/* read first chunk (considered as 4K) */
+	rlen = 4096 / blkdev_ssize(bd);
+	ret = blkdev_sync_read(bd, 0, rlen, chk0);
+	if (ret < 0) {
+#ifdef SHFS_DEBUG
+		printf("Could not read from vdb %u: %d\n", vbd_id, ret);
+#endif
+		errno = -ret;
+		goto err_close_bd;
+	}
+
+	/* Try to detect the SHFS disk label */
+	ret = shfs_detect_hdr0(chk0);
+	if (ret < 0) {
+#ifdef SHFS_DEBUG
+		printf("Invalid or unsupported SHFS label detected on vdb %u: %d\n", vbd_id, ret);
+#endif
+		errno = -ret;
+		goto err_close_bd;
+	}
+
+	return bd;
+
+ err_close_bd:
+	close_blkdev(bd);
+ err_out:
+	return NULL;
+}
+
+/**
+ * This function iterates over vbd_ids, tries to detect a SHFS label
+ * and does the low-level setup for mounting a volume
+ */
+static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
+{
+	struct blkdev *bd;
+	struct vol_member detected_member[MAX_NB_TRY_BLKDEVS];
+	struct shfs_hdr_common *hdr_common;
 	unsigned int i, m;
 	unsigned int nb_detected_members;
 	uint64_t min_member_size;
 	int ret = 0;
+	sector_t rlen;
+	void *chk0;
+	int inuse;
+
+	if (count > MAX_NB_TRY_BLKDEVS) {
+		ret = -EINVAL;
+		goto err_out;
+	}
 
 	chk0 = _xmalloc(4096, 4096);
 	if (!chk0) {
 		ret = -ENOMEM;
-		goto out;
+		goto err_out;
 	}
 
-	/* Iterate over vbds and try to find those with a SHFS disk label */
+	/* Iterate over vbds and try to find those with a valid SHFS disk label */
 	nb_detected_members = 0;
 	for (i = 0; i < count; i++) {
-		if (blkdev_ssize(bd[i]) > 4096 || blkdev_ssize(bd[i]) < 512 ||
-		    !POWER_OF_2(blkdev_ssize(bd[i]))) {
-			/* incompatible device */
-#ifdef SHFS_DEBUG
-			printf("Incompatible block size on vdb %u\n", bd[i]->vbd_id);
-#endif /* SHFS_DEBUG */
+		bd = shfs_checkopen_blkdev(vbd_id[i], chk0);
+		if (!bd) {
 			continue; /* try next device */
 		}
-		/* read first chunk (considered as 4K) */
-		rlen = 4096 / blkdev_ssize(bd[i]);
-		ret = blkdev_sync_read(bd[i], 0, rlen, chk0);
-		if (ret < 0) {
 #ifdef SHFS_DEBUG
-			printf("Could not read from vdb %u: %d\n", bd[i]->vbd_id, ret);
-#endif /* SHFS_DEBUG */
-			continue; /* try next disk */
-		}
-
-		/* Try to detect the SHFS disk label */
-		ret = shfs_detect_hdr0(chk0);
-		if (ret < 0) {
-#ifdef SHFS_DEBUG
-			printf("No valid or supported SHFS label detected on vdb %u: %d\n",
-			       bd[i]->vbd_id, ret);
-#endif /* SHFS_DEBUG */
-			continue; /* try next disk */
-		}
-#ifdef SHFS_DEBUG
-		printf("SHFSv1 label on vbd %u detected\n", bd[i]->vbd_id);
-#endif /* SHFS_DEBUG */
+		printf("SHFSv1 label on vbd %u detected\n", bd->vbd_id);
+#endif
+		/* chk0 now contains the first chunk read from disk */
 		hdr_common = (void *)((uint8_t *) chk0 + BOOT_AREA_LENGTH);
-		detected_member[nb_detected_members].bd = bd[i];
-		memcpy(detected_member[nb_detected_members].uuid, hdr_common->member_uuid, 16);
+		detected_member[nb_detected_members].bd = bd;
+		uuid_copy(detected_member[nb_detected_members].uuid, hdr_common->member_uuid);
 		nb_detected_members++;
 	}
 	if (nb_detected_members == 0) {
-		ret = -ENOENT;
-		goto out_free_chk0;
+		ret = -ENODEV;
+		goto err_free_chk0;
 	}
 
 	/* Load label from first detected member */
 	rlen = 4096 / blkdev_ssize(detected_member[0].bd);
 	ret = blkdev_sync_read(detected_member[0].bd, 0, rlen, chk0);
 	if (ret < 0)
-		goto out_free_chk0;
+		goto err_close_bds;
 	hdr_common = (void *)((uint8_t *) chk0 + BOOT_AREA_LENGTH);
 	memcpy(shfs_vol.uuid, hdr_common->vol_uuid, 16);
 	memcpy(shfs_vol.volname, hdr_common->vol_name, 16);
@@ -102,9 +148,9 @@ static int load_vol_cconf(struct blkdev *bd[], unsigned int count)
 	shfs_vol.nb_members = 0;
 	for (i = 0; i < hdr_common->member_count; i++) {
 		for (m = 0; m < nb_detected_members; ++m) {
-			if (memcmp(hdr_common->member[i].uuid, detected_member[m].uuid, 16) == 0) {
+			if (uuid_compare(hdr_common->member[i].uuid, detected_member[m].uuid) == 0) {
 				shfs_vol.member[shfs_vol.nb_members].bd = detected_member[m].bd;
-				memcpy(shfs_vol.member[shfs_vol.nb_members].uuid, detected_member[m].uuid, 16);
+				uuid_copy(shfs_vol.member[shfs_vol.nb_members].uuid, detected_member[m].uuid);
 				shfs_vol.nb_members++;
 				continue;
 			}
@@ -117,7 +163,7 @@ static int load_vol_cconf(struct blkdev *bd[], unsigned int count)
 		       shfs_vol.volname);
 #endif /* SHFS_DEBUG */
 		ret = -ENOENT;
-		goto out_free_chk0;
+		goto err_close_bds;
 	}
 
 	/* chunk and stripe size -> retrieve a device sector factor for each device */
@@ -128,7 +174,7 @@ static int load_vol_cconf(struct blkdev *bd[], unsigned int count)
 		       shfs_vol.volname);
 #endif /* SHFS_DEBUG */
 		ret = -ENOENT;
-		goto out_free_chk0;
+		goto err_close_bds;
 	}
 	for (i = 0; i < shfs_vol.nb_members; ++i) {
 		shfs_vol.member[i].sfactor = shfs_vol.stripesize / blkdev_ssize(shfs_vol.member[i].bd);
@@ -138,7 +184,7 @@ static int load_vol_cconf(struct blkdev *bd[], unsigned int count)
 			       shfs_vol.volname);
 #endif /* SHFS_DEBUG */
 			ret = -ENOENT;
-			goto out_free_chk0;
+			goto err_close_bds;
 		}
 	}
 
@@ -151,18 +197,41 @@ static int load_vol_cconf(struct blkdev *bd[], unsigned int count)
 			       i, shfs_vol.volname);
 #endif /* SHFS_DEBUG */
 			ret = -ENOENT;
-			goto out_free_chk0;
+			goto err_close_bds;
 		}
 	}
 
-	ret = 0;
+	/* clean-up: close non-used devices */
+	for (m = 0; m < nb_detected_members; ++m) {
+		inuse = 0;
+		for (i = 0; i < shfs_vol.nb_members; ++i) {
+			if (detected_member[m].bd == shfs_vol.member[i].bd) {
+				inuse = 1;
+				break;
+			}
+		}
+		if (!inuse)
+			close_blkdev(detected_member[m].bd);
+	}
 
- out_free_chk0:
 	xfree(chk0);
- out:
+	return 0;
+
+ err_close_bds:
+	for (m = 0; m < nb_detected_members; ++m)
+		close_blkdev(detected_member[m].bd);
+ err_free_chk0:
+	xfree(chk0);
+ err_out:
 	return ret;
 }
 
+/**
+ * This function loads the hash configuration from chunk 1
+ * (as defined in SHFS)
+ * This function can only be called, after load_vol_cconf
+ * established successfully the low-level setup of a volume
+ */
 static int load_vol_hconf(void)
 {
 	struct shfs_hdr_config *hdr_config;
@@ -196,12 +265,20 @@ static int load_vol_hconf(void)
 	return ret;
 }
 
+/**
+ * This function loads the hash table from the block device into memory
+ * Note: load_vol_hconf() and local_vol_cconf() has to called before
+ */
 static int load_vol_htable(void)
 {
 	return 0;
 }
 
-int mount_shfs(struct blkdev *bd[], unsigned int count)
+/**
+ * Mount a SHFS volume
+ * The volume is searched on the given list of VBD
+ */
+int mount_shfs(unsigned int vbd_id[], unsigned int count)
 {
 	int ret;
 
@@ -213,13 +290,13 @@ int mount_shfs(struct blkdev *bd[], unsigned int count)
 		goto out;
 	}
 
-	/* load common volume information */
-	ret = load_vol_cconf(bd, count);
+	/* load common volume information and open devices */
+	ret = load_vol_cconf(vbd_id, count);
 	if (ret < 0)
 		goto out;
 	shfs_mounted = 1;
 
-	/* load vol hash conf (uses shfs_sync_read_chunk) */
+	/* load hash conf (uses shfs_sync_read_chunk) */
 	ret = load_vol_hconf();
 	if (ret < 0) {
 		shfs_mounted = 0;
@@ -239,8 +316,16 @@ int mount_shfs(struct blkdev *bd[], unsigned int count)
 	return ret;
 }
 
+/**
+ * Unmounts a previously mounted SHFS volume
+ */
 void umount_shfs(void) {
+	unsigned int i;
+
 	down(&shfs_mount_lock);
+	if (shfs_mounted)
+		for(i = 0; i < shfs_vol.nb_members; ++i)
+			close_blkdev(shfs_vol.member[i].bd);
 	shfs_mounted = 0;
 	up(&shfs_mount_lock);
 }
@@ -277,4 +362,5 @@ int shfs_sync_read_chunk(chk_t start, chk_t len, void *buffer)
 }
 
 void exit_shfs(void) {
+	BUG_ON(shfs_mounted);
 }

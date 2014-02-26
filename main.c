@@ -165,10 +165,7 @@ void app_shutdown(unsigned reason)
 /**
  * VBD MGMT
  */
-struct blkdev *_bd[MAX_NB_VBD];
-static unsigned int _nb_bds = 0;
-static int _shfs_mounted = 0;
-struct semaphore _bd_mutex; /* serializes vbd functions */
+struct semaphore _vbd_lock;
 
 static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 {
@@ -176,106 +173,80 @@ static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
     unsigned int i ,j;
     int inuse;
 
-    down(&_bd_mutex);
+    down(&_vbd_lock);
     for (i = 0; i < args.nb_vbds; ++i) {
-	    /* device already open? */
+	    /* because blkfront does not support opening the same device for
+	     * multiple times, we need to check if a device was already
+	     * opened by SHFS */
 	    inuse = 0;
 	    bd = NULL;
-	    for (j = 0; j < _nb_bds; ++j) {
-		    if (_bd[j]->vbd_id == args.vbd_id[i]) {
-			    bd = _bd[j];
-			    inuse = 1;
-			    break;
+	    if (shfs_mounted)
+		    for (j = 0; j < shfs_vol.nb_members; ++j) {
+			    if (shfs_vol.member[j].bd->vbd_id == args.vbd_id[i]) {
+				    bd = shfs_vol.member[j].bd;
+				    inuse = 1;
+				    break;
+			    }
 		    }
-	    }
 	    if (!bd)
 		    bd = open_blkdev(args.vbd_id[i], O_RDONLY);
+
 	    if (bd) {
 		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
 		            args.vbd_id[i],
 		            blkdev_ssize(bd),
 		            blkdev_size(bd),
-		            inuse ? " (inuse)" : "");
+		            inuse ? ", inuse" : "");
 
 		    if (!inuse)
 			    close_blkdev(bd);
 	    }
     }
-    up(&_bd_mutex);
+    up(&_vbd_lock);
     return 0;
 }
 
 static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
 {
+    unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
+    unsigned int count;
     unsigned int i;
     int ret;
 
-    down(&_bd_mutex);
-    if (_shfs_mounted) {
-	    fprintf(cio, "A cache filesystem is already mounted. Please unmount it first\n");
-	    ret = -1;
-	    goto out;
+    if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
+	    fprintf(cio, "At most %u devices are supported\n", MAX_NB_TRY_BLKDEVS);
+	    return -1;
     }
-
-    _nb_bds = 0;
-    for (i = 0; i < args.nb_vbds; ++i) {
-	    if (cio)
-		    fprintf(cio, "Opening vbd %d...\n", args.vbd_id[i]);
-	    _bd[_nb_bds] = open_blkdev(args.vbd_id[i], O_RDWR);
-	    if (!_bd[_nb_bds]) {
-		    if (cio)
-			    fprintf(cio, "Could not open vbd %d\n", args.vbd_id[i]);
-	    } else {
-		    _nb_bds++;
+    if ((argc) == 1) {
+	    fprintf(cio, "Usage: %s [vbd_id]...\n", argv[0]);
+	    return -1;
+    }
+    for (i = 1; i < argc; ++i) {
+	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
+		    fprintf(cio, "Invalid argument %u\n", i);
+		    return -1;
 	    }
     }
+    count = argc - 1;
 
-    if (_nb_bds == 0) {
-	    if (cio)
-		    fprintf(cio, "No vbd available\n");
-	    ret = 1;
-	    goto out;
+    down(&_vbd_lock);
+    if (shfs_mounted) {
+	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
+	    up(&_vbd_lock);
+	    return -1;
     }
-
-    if (cio)
-	    fprintf(cio, "Trying to mount cache filesystem...\n");
-    ret = mount_shfs(_bd, _nb_bds);
-    if (ret < 0) {
-	    if (cio)
-		    fprintf(cio, "Could not mount cache filesystem\n");
-	    goto out_close_bds;
-    }
-    if (cio)
-	    fprintf(cio, "Done\n");
-
-    _shfs_mounted = 1;
-    ret = 0;
-    goto out;
-
- out_close_bds:
-    for (i = 0; i < _nb_bds; ++i)
-	    close_blkdev(_bd[i]);
-    _nb_bds = 0;
- out:
-    up(&_bd_mutex);
+    ret = mount_shfs(vbd_id, count);
+    if (ret < 0)
+	    fprintf(cio, "Mounting failed\n");
+    up(&_vbd_lock);
     return ret;
 }
 
 static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
 {
-    unsigned int i;
-
-    down(&_bd_mutex);
-    if (!_shfs_mounted)
-	    goto out;
+    down(&_vbd_lock);
     umount_shfs();
-    for (i = 0; i < _nb_bds; ++i)
-	    close_blkdev(_bd[i]);
-    _nb_bds = 0;
-    _shfs_mounted = 0;
-
- out:
-    up(&_bd_mutex);
+    up(&_vbd_lock);
     return 0;
 }
 
@@ -285,7 +256,6 @@ static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     struct netif netif;
-    unsigned int i;
     int ret;
 #ifdef CONFIG_LWIP_SINGLETHREADED
     uint64_t now;
@@ -297,7 +267,7 @@ int main(int argc, char *argv[])
     uint64_t ts_dhcp_coarse = 0;
 #endif
 
-    init_SEMAPHORE(&_bd_mutex, 1);
+    init_SEMAPHORE(&_vbd_lock, 1);
 
     /* -----------------------------------
      * argument parsing
@@ -393,7 +363,7 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     init_shfs();
     printf("Trying to mount cache filesystem...\n");
-    ret = shcmd_mount_shfs(NULL, 0, NULL);
+    ret = mount_shfs(args.vbd_id, args.nb_vbds);
     if (ret < 0)
 	    printf("ERROR: Could not mount cache filesystem\n");
 
@@ -420,11 +390,7 @@ int main(int argc, char *argv[])
     printf("*** MiniCache is up and running ***\n");
     while(likely(!shall_shutdown)) {
 	/* poll block devices */
-	if (trydown(&_bd_mutex) == 1) {
-		for (i = 0; i < _nb_bds; i++)
-			blkdev_poll_req(_bd[i]);
-		up(&_bd_mutex);
-	}
+	shfs_poll_blkdevs();
 #ifdef CONFIG_LWIP_SINGLETHREADED
         /* NIC handling loop (single threaded lwip) */
 #ifdef CONFIG_NMWRAP
@@ -473,7 +439,7 @@ int main(int argc, char *argv[])
     printf("Stopping shell...\n");
     exit_shell();
     printf("Unmounting cache filesystem...\n");
-    shcmd_umount_shfs(NULL, 0, NULL);
+    umount_shfs();
     exit_shfs();
     printf("Stopping networking...\n");
     netif_set_down(&netif);
