@@ -316,7 +316,8 @@ int main(int argc, char *argv[])
     if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                    nmwif_init, ethernet_input)) {
 #else
-    /* TODO: Non-nmwrap devices are not yet implemented for single-threaded! */
+    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                   netfrontif_init, ethernet_input)) {
 #endif /* CONFIG_NMWRAP */
 #else
 #ifdef CONFIG_NMWRAP
@@ -405,7 +406,7 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_NMWRAP
 	nmwif_handle(&netif, RXBURST_LEN);
 #else
-#error Handling a non-nmwrap vif in single-thread mode is not supported!
+	netfrontif_handle(&netif, RXBURST_LEN);
 #endif /* CONFIG_NMWRAP */
 	/* Process lwip network-related timers */
         now = NSEC_TO_MSEC(NOW());
