@@ -6,7 +6,7 @@
 #include <string.h>
 #include <errno.h>
 
-#include "../shfs_defs.h"
+#include "shfs_defs.h"
 
 typedef enum {
 	false = 0,

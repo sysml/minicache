@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "tools-common.h"
+#include "tools_common.h"
 
 struct disk *open_disk(const char *path, int mode)
 {

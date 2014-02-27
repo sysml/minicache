@@ -4,7 +4,7 @@
 #ifndef _SHFS_MKFS_
 #define _SHFS_MKFS_
 
-#include "tools-common.h"
+#include "tools_common.h"
 
 #define STR_VERSION "Simon's HashFS Tools: MakeFS v0.01"
 

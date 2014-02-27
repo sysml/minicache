@@ -8,7 +8,7 @@
 
 #include <uuid/uuid.h>
 
-#include "shfs-mkfs.h"
+#include "shfs_mkfs.h"
 
 unsigned int verbosity = 0;
 bool force = false;

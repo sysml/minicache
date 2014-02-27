@@ -11,9 +11,9 @@ LDLIBS += -luuid
 %: %.o
 	$(LD) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-shfs-mkfs: shfs-mkfs.o tools-common.o
+shfs_mkfs: shfs_mkfs.o tools_common.o
 
-all: shfs-mkfs
+all: shfs_mkfs
 
 clean:
-	$(RM) *.o *~ core shfs-mkfs
+	$(RM) *.o *~ core shfs_mkfs
