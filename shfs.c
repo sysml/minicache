@@ -91,7 +91,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	struct blkdev *bd;
 	struct vol_member detected_member[MAX_NB_TRY_BLKDEVS];
 	struct shfs_hdr_common *hdr_common;
-	unsigned int i, m;
+	unsigned int i, j, m;
 	unsigned int nb_detected_members;
 	uint64_t min_member_size;
 	int ret = 0;
@@ -149,6 +149,14 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	for (i = 0; i < hdr_common->member_count; i++) {
 		for (m = 0; m < nb_detected_members; ++m) {
 			if (uuid_compare(hdr_common->member[i].uuid, detected_member[m].uuid) == 0) {
+				/* found device but was this member already added (malformed label)? */
+				for (j = 0; j < shfs_vol.nb_members; ++j) {
+					if (uuid_compare(shfs_vol.member[j].uuid,
+					                 hdr_common->member[i].uuid) == 0) {
+						ret = -EEXIST;
+						goto err_close_bds;
+					}
+				}
 				shfs_vol.member[shfs_vol.nb_members].bd = detected_member[m].bd;
 				uuid_copy(shfs_vol.member[shfs_vol.nb_members].uuid, detected_member[m].uuid);
 				shfs_vol.nb_members++;
@@ -330,7 +338,7 @@ void umount_shfs(void) {
 	up(&shfs_mount_lock);
 }
 
-int shfs_sync_read_chunk(chk_t start, chk_t len, void *buffer)
+int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer)
 {
 	int ret;
 	chk_t end, c;
@@ -348,10 +356,10 @@ int shfs_sync_read_chunk(chk_t start, chk_t len, void *buffer)
 			start_sec = c * shfs_vol.member[m].sfactor;
 			len_sec = shfs_vol.member[m].sfactor;
 #ifdef SHFS_DEBUG
-			printf("blkdev_sync_read member=%u, start=%lxs, len=%lus, wptr=0x%p\n",
+			printf("blkdev_sync_io member=%u, start=%lxs, len=%lus, wptr=0x%p\n",
 			       m, start_sec, len_sec, wptr);
 #endif /* SHFS_DEBUG */
-			ret = blkdev_sync_read(shfs_vol.member[m].bd, start_sec, len_sec, wptr);
+			ret = blkdev_sync_io(shfs_vol.member[m].bd, start_sec, len_sec, write, wptr);
 			if (ret < 0)
 				return ret;
 			wptr += shfs_vol.stripesize;

@@ -210,7 +210,7 @@ static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
 {
     unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
     unsigned int count;
-    unsigned int i;
+    unsigned int i, j;
     int ret;
 
     if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
@@ -228,6 +228,15 @@ static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
 	    }
     }
     count = argc - 1;
+
+    /* search for duplicates in the list
+     * This is unfortunately a ugly & slow way doing it... */
+    for (i = 0; i < count; ++i)
+	    for (j = 0; j < count; ++j)
+		    if (i != j && vbd_id[i] == vbd_id[j]) {
+			    fprintf(cio, "Found duplicates in the list\n");
+			    return -1;
+		    }
 
     down(&_vbd_lock);
     if (shfs_mounted) {

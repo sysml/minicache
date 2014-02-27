@@ -60,8 +60,13 @@ static inline void shfs_poll_blkdevs(void) {
 }
 
 /**
- * Slow read: sequential & sync read of chunks
+ * Slow I/O: sequential sync I/O for volume chunks
+ * These functions are intended to be used during mount/umount time
  */
-int shfs_sync_read_chunk(chk_t start, chk_t len, void *buffer);
+int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer);
+#define shfs_sync_read_chunk(start, len, buffer) \
+	shfs_sync_io_chunk((start), (len), 0, (buffer))
+#define shfs_sync_write_chunk(start, len, buffer) \
+	shfs_sync_io_chunk((start), (len), 1, (buffer))
 
 #endif /* _SHFS_H_ */
