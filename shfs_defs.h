@@ -15,6 +15,13 @@ typedef uint64_t chk_t;
 typedef uint8_t uuid_t[16];
 #endif /* _UUID_UUID_H */
 
+typedef union {
+	uint8_t   u8[64];
+	uint16_t u16[32];
+	uint32_t u32[16];
+	uint64_t u64[8];
+} __attribute__((packed)) hash512_t;
+
 #define SHFS_MAX_NB_MEMBERS 32
 
 /* vol_byteorder */
@@ -83,7 +90,7 @@ struct shfs_hdr_config {
 	chk_t              htable_ref;
 	chk_t              htable_bak_ref; /* if 0 => no backup */
 	uint8_t            hfunc;
-	uint8_t            hlen; /* multiple of 64 bits */
+	uint8_t            hlen; /* num bytes of hash digest, can be 0 (= 0 bits) until 64 (= 512 bits) */
 	uint32_t           htable_bucket_count;
 	uint32_t           htable_entries_per_bucket;
 	uint8_t            allocator;
@@ -94,15 +101,15 @@ struct shfs_hdr_config {
  * Note: character strings fields are not necessarily null-terminated
  */
 struct shfs_hentry {
-	uint64_t           hash[8]; /* 512 bits */
+	hash512_t          hash; /* hash digest */
 	chk_t              chunk;
-	uint32_t           offset; /* byte offset, usually 0 */
+	uint64_t           offset; /* byte offset, usually 0 */
 	uint64_t           len; /* length (bytes) */
-	char               mime[128]; /* internet media type */
+	char               mime[64]; /* internet media type */
 	uint64_t           ts_creation;
 	uint64_t           ts_laccess;
 	uint64_t           access_count;
-	char               name[256];
+	char               name[128];
 } __attribute__((packed));
 
 #define BYTES_TO_CHUNKS(bytes,  chunksize) DIV_ROUND_UP((bytes), (chunksize))

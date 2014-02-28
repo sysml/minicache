@@ -390,8 +390,8 @@ int main(int argc, char *argv[])
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
     shell_register_cmd("lsvbd", shcmd_lsvbd);
-    shell_register_cmd("mount-shfs", shcmd_mount_shfs);
-    shell_register_cmd("umount-shfs", shcmd_umount_shfs);
+    shell_register_cmd("mount", shcmd_mount_shfs);
+    shell_register_cmd("umount", shcmd_umount_shfs);
     register_shfs_tools();
 
     /* -----------------------------------

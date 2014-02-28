@@ -52,7 +52,8 @@ static inline sector_t blkdev_sectors(struct blkdev *bd)
 
 /**
  * Async I/O
- * NOTE: target buffer needs to be aligned to device sector size
+ *
+ * Note: target buffer has to be aligned to device sector size
  */
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret);
 

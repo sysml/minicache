@@ -14,7 +14,12 @@
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
+#include "shfs_htable.h"
 #include "shfs_tools.h"
+
+#ifndef CACHELINE_SIZE
+#define CACHELINE_SIZE 64
+#endif
 
 volatile int shfs_mounted = 0;
 struct semaphore shfs_mount_lock;
@@ -239,6 +244,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
  * (as defined in SHFS)
  * This function can only be called, after load_vol_cconf
  * established successfully the low-level setup of a volume
+ * (required for chunk I/O)
  */
 static int load_vol_hconf(void)
 {
@@ -252,6 +258,9 @@ static int load_vol_hconf(void)
 		goto out;
 	}
 
+#ifdef SHFS_DEBUG
+	printf("Load SHFS configuration chunk\n");
+#endif /* SHFS_DEBUG */
 	ret = shfs_sync_read_chunk(1, 1, chk1);
 	if (ret < 0)
 		goto out_free_chk1;
@@ -279,7 +288,78 @@ static int load_vol_hconf(void)
  */
 static int load_vol_htable(void)
 {
+	struct shfs_hentry *hentry;
+	struct shfs_bentry *bentry;
+	void *tmp_chk;
+	chk_t tmp_chk_addr, cur_chk;
+	unsigned int i;
+	int ret;
+
+	/* allocate bucket table */
+#ifdef SHFS_DEBUG
+	printf("Allocating btable...\n");
+#endif /* SHFS_DEBUG */
+	shfs_vol.bt = shfs_alloc_btable(shfs_vol.htable_nb_buckets,
+	                                shfs_vol.htable_nb_entries_per_bucket,
+	                                shfs_vol.hlen);
+	if (!shfs_vol.bt) {
+		ret = -ENOMEM;
+		goto err_out;
+	}
+
+	/* allocate chunk cache reference table */
+#ifdef SHFS_DEBUG
+	printf("Allocating chunk cache reference table...\n");
+#endif /* SHFS_DEBUG */
+	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
+	if (!shfs_vol.htable_chunk_cache) {
+		ret = -ENOMEM;
+		goto err_free_btable;
+	}
+	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
+
+	/* load hash table chunk-wise and fill-out btable metadata */
+	tmp_chk = _xmalloc(shfs_vol.chunksize, 4096);
+	if (!tmp_chk) {
+		ret = -ENOMEM;
+		goto err_free_chunkcache;
+	}
+	tmp_chk_addr = 0;
+	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
+#ifdef SHFS_DEBUG
+		//		printf("Reading hash table entry [%u/%u]...\n", i, shfs_vol.htable_nb_entries);
+		//msleep(5);
+#endif /* SHFS_DEBUG */
+		cur_chk = shfs_vol.htable_ref + \
+			  SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
+		if (tmp_chk_addr != cur_chk) {
+			ret = shfs_sync_read_chunk(cur_chk, 1, tmp_chk);
+			if (ret < 0)
+				goto err_free_tmpchk;
+			tmp_chk_addr = cur_chk;
+		}
+
+		bentry = shfs_btable_pick(shfs_vol.bt, i);
+		bentry->chunk = cur_chk;
+		bentry->offset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
+		hentry = (struct shfs_hentry *)((uint8_t *) tmp_chk + bentry->offset);
+		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
+	}
+	xfree(tmp_chk);
+#ifdef SHFS_DEBUG
+		printf("\n");
+#endif /* SHFS_DEBUG */
+
 	return 0;
+
+ err_free_tmpchk:
+	xfree(tmp_chk);
+ err_free_chunkcache:
+	xfree(shfs_vol.htable_chunk_cache);
+ err_free_btable:
+	shfs_free_btable(shfs_vol.bt);
+ err_out:
+	return ret;
 }
 
 /**
@@ -331,9 +411,13 @@ void umount_shfs(void) {
 	unsigned int i;
 
 	down(&shfs_mount_lock);
-	if (shfs_mounted)
+	if (shfs_mounted) {
+		/* TODO: Free chunk caches */
+		xfree(shfs_vol.htable_chunk_cache);
+		shfs_free_btable(shfs_vol.bt);
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			close_blkdev(shfs_vol.member[i].bd);
+	}
 	shfs_mounted = 0;
 	up(&shfs_mount_lock);
 }
@@ -356,12 +440,16 @@ int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer)
 			start_sec = c * shfs_vol.member[m].sfactor;
 			len_sec = shfs_vol.member[m].sfactor;
 #ifdef SHFS_DEBUG
-			printf("blkdev_sync_io member=%u, start=%lxs, len=%lus, wptr=0x%p\n",
+			printf("blkdev_sync_io member=%u, start=%lus, len=%lus, wptr=%p\n",
 			       m, start_sec, len_sec, wptr);
 #endif /* SHFS_DEBUG */
 			ret = blkdev_sync_io(shfs_vol.member[m].bd, start_sec, len_sec, write, wptr);
-			if (ret < 0)
+			if (ret < 0) {
+#ifdef SHFS_DEBUG
+				printf("Error while reading from member %u: %d\n", m, ret);
+#endif /* SHFS_DEBUG */
 				return ret;
+			}
 			wptr += shfs_vol.stripesize;
 		}
 	}

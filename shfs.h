@@ -32,6 +32,8 @@ struct vol_info {
 	struct vol_member member[SHFS_MAX_NB_MEMBERS];
 	uint32_t stripesize;
 
+	struct shfs_btable *bt;
+	void **htable_chunk_cache;
 	chk_t htable_ref;
 	chk_t htable_bak_ref;
 	chk_t htable_len;
