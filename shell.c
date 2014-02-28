@@ -128,6 +128,7 @@ static struct shell *sh = NULL; /* will be initialized first */
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
+static int shcmd_time(FILE *cio, int argc, char *argv[]);
 static int shcmd_uptime(FILE *cio, int argc, char *argv[]);
 static int shcmd_who(FILE *cio, int argc, char *argv[]);
 static int shcmd_exit(FILE *cio, int argc, char *argv[]);
@@ -196,6 +197,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("exit",   shcmd_exit);
     shell_register_cmd("echo",   shcmd_echo);
     shell_register_cmd("who",    shcmd_who);
+    shell_register_cmd("time",   shcmd_time);
     shell_register_cmd("uptime", shcmd_uptime);
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
@@ -856,6 +858,43 @@ static int shcmd_echo(FILE *cio, int argc, char *argv[])
     fprintf(cio, "\n");
     return 0;
 }
+
+static int shcmd_time(FILE *cio, int argc, char *argv[])
+{
+    /* run a shell command while measuring its execution time */
+    int ret = 0;
+    int32_t cmdi;
+    uint64_t ts_start = 0;
+    uint64_t ts_end = 0;
+    uint64_t mins = 0;
+    uint64_t secs = 0;
+    uint64_t usecs = 0;
+
+    if (argc == 1) {
+        fprintf(cio, "Usage: %s [command] [[args]]...\n", argv[0]);
+        return -1;
+    }
+    cmdi = shell_get_cmd_index(argv[1]);
+    if (cmdi < 0) {
+        fprintf(cio, "%s: command not found\n", argv[1]);
+        goto out;
+    }
+
+    ts_start = NOW();
+    ret = sh->cmd_func[cmdi](cio, argc - 1, &argv[1]);
+    ts_end = NOW();
+
+    usecs = (ts_end - ts_start) / 1000l;
+    secs = usecs / 1000000l;
+    usecs %= 1000000l;
+    mins = secs / 60;
+    secs %= 60;
+
+ out:
+    fprintf(cio, "%s: command runtime %lum%lu.%06lus\n", argv[1], mins, secs, usecs);
+    return ret;
+}
+
 
 #ifdef SHELL_DEBUG
 static int shcmd_args(FILE *cio, int argc, char *argv[])
