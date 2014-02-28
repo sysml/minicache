@@ -13,7 +13,9 @@ LDLIBS += -luuid
 
 shfs_mkfs: shfs_mkfs.o tools_common.o
 
-all: shfs_mkfs
+shfs_admin: shfs_admin.o tools_common.o shfs_htable.o shfs_check.o
+
+all: shfs_mkfs shfs_admin
 
 clean:
-	$(RM) *.o *~ core shfs_mkfs
+	$(RM) *.o *~ core shfs_mkfs shfs_admin

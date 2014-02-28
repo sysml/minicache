@@ -62,6 +62,7 @@ static inline int parse_args_setval_int(int* out, const char* buf)
  */
 struct disk {
 	int fd;
+	char *path;
 	uint64_t size;
 	uint32_t blksize;
 };

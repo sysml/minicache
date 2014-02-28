@@ -74,7 +74,7 @@ struct shfs_hdr_common {
 	uint8_t            vol_encoding;
 	chk_t              vol_size;
 	uint64_t           vol_creation_ts;
-	uint32_t           member_stripesize; /* at least 512 B (but chunksize 4 KiB), at most 32 KiB */
+	uint32_t           member_stripesize; /* at least 4 KiB (because of first chunk), blkfront can handle at most 32 KiB */
 	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
 	struct {           /* uuid's of all disk members */

@@ -180,7 +180,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	}
 
 	/* chunk and stripe size -> retrieve a device sector factor for each device */
-	if (shfs_vol.stripesize > 32768 || shfs_vol.chunksize < 4096 ||
+	if (shfs_vol.stripesize > 32768 || shfs_vol.stripesize < 4096 ||
 	    !POWER_OF_2(shfs_vol.stripesize)) {
 #ifdef SHFS_DEBUG
 		printf("Stripe size invalid on volume '%s'\n",
@@ -326,10 +326,6 @@ static int load_vol_htable(void)
 	}
 	tmp_chk_addr = 0;
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-#ifdef SHFS_DEBUG
-		//		printf("Reading hash table entry [%u/%u]...\n", i, shfs_vol.htable_nb_entries);
-		//msleep(5);
-#endif /* SHFS_DEBUG */
 		cur_chk = shfs_vol.htable_ref + \
 			  SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
 		if (tmp_chk_addr != cur_chk) {
@@ -346,9 +342,6 @@ static int load_vol_htable(void)
 		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
 	}
 	xfree(tmp_chk);
-#ifdef SHFS_DEBUG
-		printf("\n");
-#endif /* SHFS_DEBUG */
 
 	return 0;
 

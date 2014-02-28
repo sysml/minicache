@@ -8,6 +8,8 @@
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
+#else
+#include <stdlib.h>
 #endif
 
 #ifndef CACHELINE_SIZE
@@ -155,6 +157,7 @@ struct shfs_bentry *shfs_btable_getfreeb(struct shfs_btable *bt, hash512_t h)
 	bucket_idx = _bucket_no(h, bt->hlen, bt->nb_buckets);
 	b = bt->b[bucket_idx];
 	for (i = 0; i < bt->nb_entries_per_bucket; ++i) {
+		/* TODO: Check for already existence (preserve unique entries) */
 		if (hash_is_zero(b->e[i].hash, bt->hlen)) {
 			return &b->e[i];
 		}

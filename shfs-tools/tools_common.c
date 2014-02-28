@@ -20,19 +20,25 @@ struct disk *open_disk(const char *path, int mode)
 		goto err_out;
 	}
 
-	d->fd = open(path, mode);
+	d->path = strdup(path);
+	if (!d->path) {
+		fatal();
+		goto err_free_d;
+	}
+
+	d->fd = open(d->path, mode);
 	if (d->fd < 0) {
 		eprintf("Could not open %s: %s\n", path , strerror(errno));
-		goto err_free_d;
+		goto err_free_path;
 	}
 
 	if (fstat(d->fd, &fd_stat) == -1) {
 		eprintf("Could not retrieve stats from %s: %s\n", path, strerror(errno));
-		goto err_free_d;
+		goto err_free_path;
 	}
 	if (!S_ISBLK(fd_stat.st_mode) && !S_ISREG(fd_stat.st_mode)) {
 		eprintf("%s is not a block device or a regular file\n", path);
-		goto err_free_d;
+		goto err_free_path;
 	}
 	if (!S_ISBLK(fd_stat.st_mode))
 		dprintf(D_L0, "Note: %s is not a block device\n", path);
@@ -47,7 +53,7 @@ struct disk *open_disk(const char *path, int mode)
 			err = ioctl(d->fd, BLKGETSIZE, &size32);
 			if (err) {
 				eprintf("Could not query device size from %s\n", path);
-				goto err_free_d;
+				goto err_free_path;
 			}
 			d->size = (uint64_t) size32;
 		}
@@ -62,6 +68,8 @@ struct disk *open_disk(const char *path, int mode)
 
 	return d;
 
+ err_free_path:
+	free(d->path);
  err_free_d:
 	free(d);
  err_out:
@@ -69,9 +77,10 @@ struct disk *open_disk(const char *path, int mode)
 }
 
 void close_disk(struct disk *d) {
-	dprintf(D_L0, "Syncing...\n");
+	dprintf(D_L0, "Syncing %s...\n", d->path);
 	fsync(d->fd); /* ignore errors */
 	close(d->fd);
+	free(d->path);
 	free(d);
 }
 
