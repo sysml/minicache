@@ -1,0 +1,25 @@
+# SHFS Tools
+
+The SHFS tools can be used to create and manage SHFS object stores.
+
+## Requirements
+
+In order to build the SHFS tools, you will need to have the following
+shared libraries installed:
+ * [libuuid](http://e2fsprogs.sourceforge.net)
+ * [libmhash](http://mhash.sourceforge.net)
+
+On Debian/Ubuntu you install them via:
+
+        apt-get install libmhash2 libmhash-dev libuuid1 uuid-dev
+
+## Build Instructions
+
+You build the SHFS tools with the following make command:
+
+        make all
+
+Alternatively, you can also build just a single tool by passing its executable
+name (e.g., shfs_mkfs) to make:
+
+        make shfs_mkfs
