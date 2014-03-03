@@ -51,7 +51,7 @@ struct shfs_bentry *shfs_btable_pick(struct shfs_btable *bt, unsigned int bentry
 struct shfs_bentry *shfs_btable_lookup(struct shfs_btable *bt, hash512_t h);
 
 /**
- * Serches for a free bucket entry for a hash value
+ * Searches for a free bucket entry for a given hash value
  */
 struct shfs_bentry *shfs_btable_getfreeb(struct shfs_btable *bt, hash512_t h);
 

@@ -1,8 +1,8 @@
 /*
  *
  */
-#ifndef _SHFS_MKFS_
-#define _SHFS_MKFS_
+#ifndef _SHFS_ADMIN_
+#define _SHFS_ADMIN_
 
 #include "tools_common.h"
 #include "shfs_defs.h"
@@ -15,7 +15,8 @@ enum action {
 	NONE = 0,
 	ADDFILE,
 	RMFILE,
-	DUMP
+	LSFILES,
+	SHOWINFO
 };
 
 struct job {
@@ -23,6 +24,8 @@ struct job {
 
 	enum action action;
 	char *path;
+	char *optstr0;
+	char *optstr1;
 };
 
 struct args {
@@ -48,6 +51,7 @@ struct vol_info {
 	struct vol_member member[SHFS_MAX_NB_MEMBERS];
 	uint32_t stripesize;
 
+	/* hash table */
 	struct shfs_btable *bt;
 	void **htable_chunk_cache;
 	chk_t htable_ref;
@@ -58,7 +62,11 @@ struct vol_info {
 	uint32_t htable_nb_entries_per_bucket;
 	uint32_t htable_nb_entries_per_chunk;
 	uint8_t hlen;
+
+	/* allocator */
+	uint8_t allocator;
+	struct shfs_alist *al;
 };
 
 
-#endif /* _SHFS_MKFS_ */
+#endif /* _SHFS_ADMIN_ */

@@ -11,7 +11,7 @@
 #include "shfs_mkfs.h"
 
 unsigned int verbosity = 0;
-bool force = false;
+int force = 0;
 
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
@@ -80,16 +80,16 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->volname[7]  = '\0';
 	args->volname[17] = '\0';
 	args->stripesize = 4096;
-	args->allocator = SALLOC_BESTFIT;
-	args->hashfunc = SHFUNC_SHA1;
-	args->hashlen = 8; /* 512 bits */
-	args->bucket_count = 2048;
+	args->allocator = SALLOC_FIRSTFIT;
+	args->hashfunc = SHFUNC_SHA;
+	args->hashlen = 32; /* 256 bits */
+	args->bucket_count = 4096;
 	args->entries_per_bucket = 16;
 
 	/*
 	 * Parse options
 	 */
-	while (true) {
+	while (1) {
 		opt = getopt_long(argc, argv, short_opts, long_opts, &opt_index);
 
 		if (opt == -1)    /* end of options */
@@ -108,7 +108,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 				verbosity++;
 			break;
 		case 'f': /* force */
-			force = true;
+			force = 1;
 			break;
 		default:
 			eprintf("Unrecognized option\n");

@@ -116,8 +116,8 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	       (chunksize * hdr_common->vol_size) / 1024);
 
 	printf("Hash function:      %s (%ld bits)\n",
-	       (hdr_config->hfunc == SHFUNC_SHA1 ? "SHA-1" : "Unknown"),
-	       hdr_config->hlen * 8 * 8);
+	       (hdr_config->hfunc == SHFUNC_SHA ? "SHA" : "Unknown"),
+	       hdr_config->hlen * 8);
 	printf("Hash table:         %lu entries in %ld buckets\n" \
 	       "                    %lu chunks (%ld KiB)\n" \
 	       "                    %s\n",

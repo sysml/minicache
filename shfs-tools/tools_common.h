@@ -8,26 +8,18 @@
 
 #include "shfs_defs.h"
 
-typedef enum {
-	false = 0,
-	true
-} bool;
-#define TRUE true
-#define FALSE false
-
-
 /*
  * Print helpers
  */
 extern unsigned int verbosity;
-extern bool force;
+extern int force;
 
 #define eprintf(...)		fprintf(stderr, __VA_ARGS__)
 #define fatal()			eprintf("%s\n", strerror(errno))
-#define dief(...)		do { eprintf(__VA_ARGS__); exit(EXIT_FAILURE); } while(false)
-#define die()			do { fatal(); exit(EXIT_FAILURE); } while(false)
-#define dprintf(LEVEL, ...)	do { if (verbosity >= (LEVEL)) fprintf(stderr, __VA_ARGS__); } while(false)
-#define printvar(VAR, FMT)	do { if (verbosity >= (D_MAX)) fprintf(stderr, #VAR ": "#FMT"\n", (VAR)); } while(false)
+#define dief(...)		do { eprintf(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
+#define die()			do { fatal(); exit(EXIT_FAILURE); } while(0)
+#define dprintf(LEVEL, ...)	do { if (verbosity >= (LEVEL)) fprintf(stderr, __VA_ARGS__); } while(0)
+#define printvar(VAR, FMT)	do { if (verbosity >= (D_MAX)) fprintf(stderr, #VAR ": "#FMT"\n", (VAR)); } while(0)
 
 #define D_L0		1
 #define D_L1		2
@@ -79,5 +71,12 @@ chk_t metadata_size(struct shfs_hdr_common *hdr_common,
                     struct shfs_hdr_config *hdr_config);
 chk_t avail_space(struct shfs_hdr_common *hdr_common,
                   struct shfs_hdr_config *hdr_config);
+static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
+{
+	uint8_t i;
+
+	for (i = 0; i < hlen; i++)
+		snprintf(out + (2*i), 3, "%02x", h.u8[i]);
+}
 
 #endif /* _TOOLS_COMMON_ */

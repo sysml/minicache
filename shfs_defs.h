@@ -32,10 +32,12 @@ typedef union {
 #define SENC_UNSPECIFIED 0
 
 /* allocator */
-#define SALLOC_BESTFIT   0
+#define SALLOC_FIRSTFIT   0
+#define SALLOC_BESTFIT   1
 
 /* hash function */
-#define SHFUNC_SHA1      0
+#define SHFUNC_SHA       0
+#define SHFUNC_MD5       1
 
 
 /*
@@ -90,7 +92,7 @@ struct shfs_hdr_config {
 	chk_t              htable_ref;
 	chk_t              htable_bak_ref; /* if 0 => no backup */
 	uint8_t            hfunc;
-	uint8_t            hlen; /* num bytes of hash digest, can be 0 (= 0 bits) until 64 (= 512 bits) */
+	uint8_t            hlen; /* num bytes of hash digest, max is 64 (= 512 bits) */
 	uint32_t           htable_bucket_count;
 	uint32_t           htable_entries_per_bucket;
 	uint8_t            allocator;
