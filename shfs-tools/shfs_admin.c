@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #include <uuid/uuid.h>
 #include <mhash.h>
@@ -21,7 +22,7 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:li";
+const char *short_opts = "h?vVfa:m:n:li";
 
 static struct option long_opts[] = {
 	{"help",	no_argument,		NULL,	'h'},
@@ -29,6 +30,8 @@ static struct option long_opts[] = {
 	{"verbose",	no_argument,		NULL,	'v'},
 	{"force",	no_argument,		NULL,	'f'},
 	{"add-file",	required_argument,	NULL,	'a'},
+	{"mime",	required_argument,	NULL,	'm'},
+	{"name",	required_argument,	NULL,	'n'},
 	{"ls",	        no_argument,            NULL,	'l'},
 	{"info",	no_argument,            NULL,	'i'},
 	{NULL, 0, NULL, 0} /* end of list */
@@ -50,6 +53,9 @@ static void print_usage(char *argv0)
 	printf("  -v, --verbose              increases verbosity level (max. %d times)\n", D_MAX);
 	printf("  -f, --force                suppresses warnings and user questions\n");
 	printf("  -a, --add-file [FILE]      add a file to the volume\n");
+	printf("  For each add-file token:\n");
+	printf("    -m, --mime [MIME]        sets the MIME type of a file\n");
+	printf("    -n, --name [NAME]        sets an additionally name to a file\n");
 	printf("  -l, --ls                   lists the volume contents\n");
 	printf("  -i, --info                 shows volume information\n");
 	/* printf("  -r, --rm-file [HASH]       Remove a file from the volume\n"); */
@@ -70,6 +76,10 @@ static void release_args(struct args *args)
 	while (cjob) {
 		if (cjob->path)
 			free(cjob->path);
+		if (cjob->optstr0)
+			free(cjob->optstr0);
+		if (cjob->optstr1)
+			free(cjob->optstr1);
 		njob = cjob->next;
 		free(cjob);
 		cjob = njob;
@@ -154,6 +164,22 @@ static int parse_args(int argc, char **argv, struct args *args)
 			if (parse_args_setval_str(&cjob->path, optarg) < 0)
 				die();
 			break;
+		case 'm': /* mime */
+			if (!cjob || cjob->action != ADDFILE) {
+				eprintf("Please set mime after an add-file token\n");
+				return -EINVAL;
+			}
+			if (parse_args_setval_str(&cjob->optstr0, optarg) < 0)
+				die();
+			break;
+		case 'n': /* name */
+			if (!cjob || cjob->action != ADDFILE) {
+				eprintf("Please set name after an add-file token\n");
+				return -EINVAL;
+			}
+			if (parse_args_setval_str(&cjob->optstr1, optarg) < 0)
+				die();
+			break;
 		case 'l': /* ls */
 			cjob = args_add_job(cjob, args);
 			cjob->action = LSFILES;
@@ -190,6 +216,19 @@ static int parse_args(int argc, char **argv, struct args *args)
 	return 0;
 }
 
+
+/******************************************************************************
+ * SIGNAL HANDLING                                                            *
+ ******************************************************************************/
+
+static volatile int cancel = 0;
+
+void sigint_handler(int signum) {
+	printf("Caught abort signal: Cancelling...\n");
+	cancel = 1;
+}
+
+
 /******************************************************************************
  * DISK I/O                                                                   *
  ******************************************************************************/
@@ -212,8 +251,14 @@ static int shfs_sync_io_chunk(chk_t start, chk_t len, int owrite, void *buffer)
 		for (m = 0; m < shfs_vol.nb_members; ++m) {
 			startb = c * shfs_vol.stripesize;
 			lenb = shfs_vol.stripesize;
-			dprintf(D_L1, "blkdev_sync_io member=%u, start=%lub, len=%lub, wptr=%p\n",
-			       m, startb, lenb, wptr);
+			dprintf(D_L1, "blkdev_sync_io member=%u, "
+			        "start=%lu (%lu KiB), "
+			        "len=%lu (%lu KiB), "
+			        "wptr=%p\n",
+			        m,
+			        start, startb / 1024,
+			        len, lenb / 1024,
+			        wptr);
 
 			if (lseek(shfs_vol.member[m].d->fd, startb, SEEK_SET) < 0) {
 				eprintf("Could not seek on %s: %s\n", shfs_vol.member[m].d->path, strerror(errno));
@@ -416,8 +461,8 @@ static void load_vol_htable(void)
 {
 	struct shfs_hentry *hentry;
 	struct shfs_bentry *bentry;
-	void *tmp_chk;
-	chk_t tmp_chk_addr, cur_chk;
+	void *chk_buf;
+	chk_t cur_chk, cur_htchk;
 	unsigned int i;
 	int ret;
 
@@ -431,34 +476,35 @@ static void load_vol_htable(void)
 
 	/* allocate chunk cache reference table */
 	dprintf(D_L0, "Allocating chunk cache reference table...\n");
-	shfs_vol.htable_chunk_cache = calloc(1, sizeof(void *) * shfs_vol.htable_len);
-	if (!shfs_vol.htable_chunk_cache)
+	shfs_vol.htable_chunk_cache_state = malloc(sizeof(int) * shfs_vol.htable_len);
+	shfs_vol.htable_chunk_cache       = calloc(1, sizeof(void *) * shfs_vol.htable_len);
+	if (!shfs_vol.htable_chunk_cache_state || !shfs_vol.htable_chunk_cache)
 		die();
 
 	/* load hash table chunk-wise and fill-out btable metadata */
-	dprintf(D_L0, "Reading-in hash table...\n");
-	tmp_chk = NULL; /* because htable cannot be at chunk 0,
-	                 * a buffer will be allocated in the loop */
-	tmp_chk_addr = 0;
+	dprintf(D_L0, "Reading hash table...\n");
+	chk_buf = NULL;
+	cur_chk = 0;
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		cur_chk = shfs_vol.htable_ref + \
-			  SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
-		if (tmp_chk_addr != cur_chk) {
-			tmp_chk_addr = cur_chk;
-			tmp_chk = malloc(shfs_vol.chunksize);
-			if (!tmp_chk)
+		cur_htchk = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
+		if (cur_chk != cur_htchk || !chk_buf) {
+			chk_buf = malloc(shfs_vol.chunksize);
+			if (!chk_buf)
 				die();
-			ret = shfs_sync_read_chunk(tmp_chk_addr, 1, tmp_chk);
+			ret = shfs_sync_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
 			if (ret < 0)
 				dief("An error occured while reading the hash table from the volume\n");
+			cur_chk = cur_htchk;
 
-			shfs_vol.htable_chunk_cache[tmp_chk_addr - shfs_vol.htable_ref] = tmp_chk;
+			/* register buffer to htable chunk cache */
+			shfs_vol.htable_chunk_cache[cur_htchk]       = chk_buf;
+			shfs_vol.htable_chunk_cache_state[cur_htchk] = 0x0;
 		}
 
 		bentry = shfs_btable_pick(shfs_vol.bt, i);
-		bentry->chunk = cur_chk;
-		bentry->offset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
-		hentry = (struct shfs_hentry *)((uint8_t *) tmp_chk + bentry->offset);
+		bentry->hentry_htchunk  = cur_htchk;
+		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
+		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf + bentry->hentry_htoffset);
 		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
 	}
 }
@@ -498,8 +544,8 @@ static void load_vol_alist(void)
 
 		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
 			hentry = (struct shfs_hentry *)
-				((uint8_t *) shfs_vol.htable_chunk_cache[bentry->chunk]
-				 + bentry->offset);
+				((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+				 + bentry->hentry_htoffset);
 			shfs_alist_register(shfs_vol.al,
 			                    hentry->chunk,
 			                    BYTES_TO_CHUNKS(hentry->offset + hentry->len,
@@ -535,16 +581,36 @@ void mount_shfs(char *path[], unsigned int count)
  * Unmounts a previously mounted SHFS volume
  */
 void umount_shfs(void) {
-	unsigned int i;
+  unsigned int i;
+  int ret;
 
-	shfs_free_alist(shfs_vol.al);
-	/* TODO: Write changed chunk caches back to disk */
-	for(i = 0; i < shfs_vol.htable_len; ++i)
-		free(shfs_vol.htable_chunk_cache[i]);
-	free(shfs_vol.htable_chunk_cache);
-	shfs_free_btable(shfs_vol.bt);
-	for(i = 0; i < shfs_vol.nb_members; ++i)
-		close_disk(shfs_vol.member[i].d);
+  shfs_free_alist(shfs_vol.al);
+  for(i = 0; i < shfs_vol.htable_len; ++i) {
+    if (shfs_vol.htable_chunk_cache_state[i] & CCS_MODIFIED) {
+      /* write buffer back to disk since it has been modified */
+      ret = shfs_sync_write_chunk(shfs_vol.htable_ref + i,
+                                  1,
+                                  shfs_vol.htable_chunk_cache[i]);
+      if (ret < 0)
+	dief("An error occured while writing back the hash table to the volume!\n"
+	     "The filesystem might be in a corrupted state right now\n");
+      if (shfs_vol.htable_bak_ref) {
+	ret = shfs_sync_write_chunk(shfs_vol.htable_bak_ref + i,
+	                            1,
+	                            shfs_vol.htable_chunk_cache[i]);
+	if (ret < 0)
+	  dief("An error occured while writing back the hash table to the volume!\n"
+	       "The filesystem might be in a corrupted state right now\n");
+      }
+    }
+    /* free buffer */
+    free(shfs_vol.htable_chunk_cache[i]);
+  }
+  free(shfs_vol.htable_chunk_cache);
+  free(shfs_vol.htable_chunk_cache_state);
+  shfs_free_btable(shfs_vol.bt);
+  for(i = 0; i < shfs_vol.nb_members; ++i)
+    close_disk(shfs_vol.member[i].d);
 }
 
 
@@ -634,22 +700,40 @@ static int actn_addfile(struct job *j)
 			ret = -1;
 			goto err_mhash_deinit;
 		}
+		if (cancel) {
+			ret = -2;
+			goto err_mhash_deinit;
+		}
 		mhash(td, tmp_chk, rlen); /* hash chunk */
 	}
 	mhash_deinit(td, &fhash);
+	if (verbosity >= D_L0) {
+		str_hash[(shfs_vol.hlen * 2)] = '\0';
+		hash_unparse(fhash, shfs_vol.hlen, str_hash);
+		printf("Hash of %s is: %s\n",
+		       j->path,
+		       str_hash);
+	}
+
 
 	/* find place in hash list and add entry
 	 * (still in-memory, will be written to device on umount) */
-	dprintf(D_L0, "Adding a hash table entry...\n", csize);
+	dprintf(D_L0, "Trying to add a hash table entry...\n", csize);
+	bentry = shfs_btable_lookup(shfs_vol.bt, fhash);
+	if (bentry) {
+		eprintf("An entry with the same hash already exists\n");
+		ret = -1;
+		goto err_free_tmp_chk;
+	}
 	bentry = shfs_btable_getfreeb(shfs_vol.bt, fhash);
 	if (!bentry) {
-		eprintf("Appropriate bucket in hash table is full\n");
+		eprintf("Target bucket of hash table is full\n");
 		ret = -1;
 		goto err_free_tmp_chk;
 	}
 	hentry = (struct shfs_hentry *)
-		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->chunk]
-		 + bentry->offset);
+		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		 + bentry->hentry_htoffset);
 	hash_copy(bentry->hash, fhash, shfs_vol.hlen);
 	hash_copy(hentry->hash, fhash, shfs_vol.hlen);
 	hentry->chunk = cchk;
@@ -664,6 +748,7 @@ static int actn_addfile(struct job *j)
 		memset(hentry->name, 0, sizeof(hentry->name));
 		strncpy(hentry->name, j->optstr1, sizeof(hentry->name));
 	}
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
 	/* copy file */
 	dprintf(D_L0, "Copying file contents...\n", csize);
@@ -694,18 +779,14 @@ static int actn_addfile(struct job *j)
 			goto err_free_tmp_chk;
 		}
 
+		if (cancel) {
+			ret = -2;
+			goto err_free_tmp_chk;
+		}
 	}
 
 	free(tmp_chk);
 	close(fd);
-
-	if (verbosity >= D_L0) {
-		str_hash[(shfs_vol.hlen * 2)] = '\0';
-		hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
-		printf("%s added with hash %s\n",
-		       j->path,
-		       str_hash);
-	}
 
 	return 0;
 
@@ -732,38 +813,50 @@ static int actn_ls(struct job *job)
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
+	char str_mime[sizeof(hentry->mime) + 1];
+	char str_name[sizeof(hentry->name) + 1];
 	unsigned int i;
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
+	str_name[sizeof(hentry->name)] = '\0';
 
 	if (shfs_vol.hlen <= 32)
-		printf("%-64s %12s %12s\n",
+		printf("%-64s %12s %12s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
-		       "Size (chk)");
+		       "Size (chk)",
+		       "MIME",
+		       "Name");
 	else
-		printf("%-128s %12s %12s\n",
+		printf("%-128s %12s %12s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
-		       "Size (chk)");
+		       "Size (chk)",
+		       "MIME",
+		       "Name");
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
 		bentry = shfs_btable_pick(shfs_vol.bt, i);
 		hentry = (struct shfs_hentry *)
-			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->chunk]
-			 + bentry->offset);
+			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+			 + bentry->hentry_htoffset);
 		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
-
 			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
+			strncpy(str_name, hentry->name, sizeof(hentry->name));
+			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 			if (shfs_vol.hlen <= 32)
-				printf("%-64s %12lu %12lu\n",
+				printf("%-64s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
-				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize));
+				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       str_mime,
+				       str_name);
 			else
-				printf("%-128s %12lu %12lu\n",
+				printf("%-128s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
-				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize));
+				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       str_mime,
+				       str_name);
 		}
 	}
 
@@ -836,6 +929,10 @@ int main(int argc, char **argv)
 	unsigned int failed;
 	int ret;
 
+	signal(SIGINT,  sigint_handler);
+	signal(SIGTERM, sigint_handler);
+	signal(SIGQUIT, sigint_handler);
+
 	/*
 	 * ARGUMENT PARSING
 	 */
@@ -848,10 +945,15 @@ int main(int argc, char **argv)
 	/*
 	 * MAIN
 	 */
+	if (cancel)
+		exit(-2);
 	mount_shfs(args.devpath, args.nb_devs);
 	failed = 0;
 	i = 0;
 	for (cjob = args.jobs; cjob != NULL; cjob = cjob->next) {
+		if (cancel)
+			break;
+
 		switch (cjob->action) {
 		case ADDFILE:
 			dprintf(D_L0, "*** Job %u: add-file\n", i);
@@ -875,7 +977,7 @@ int main(int argc, char **argv)
 		}
 
 		if (ret < 0) {
-			eprintf("Job %u failed: %d", i, ret);
+			eprintf("Job %u failed: %d\n", i, ret);
 			failed++;
 		}
 		i++;
@@ -883,6 +985,8 @@ int main(int argc, char **argv)
 	dprintf(D_L1, "*** %u jobs executed on volume '%s'\n", i, shfs_vol.volname);
 	umount_shfs();
 
+	if (cancel)
+		exit(-2);
 	if (failed)
 		eprintf("Some jobs failed\n");
 	/*

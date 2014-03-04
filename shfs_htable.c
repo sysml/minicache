@@ -22,7 +22,7 @@ struct shfs_btable *shfs_alloc_btable(uint32_t nb_buckets, uint32_t nb_entries_p
 {
 	size_t bt_size, b_size;
 	struct shfs_btable *bt;
-	unsigned int i, j;
+	unsigned int i;
 
 	bt_size = sizeof(*bt) + (sizeof(void *) * nb_buckets);
 #ifdef __MINIOS__
@@ -53,8 +53,6 @@ struct shfs_btable *shfs_alloc_btable(uint32_t nb_buckets, uint32_t nb_entries_p
 #ifdef __MINIOS__
 		memset(bt->b[i], 0, b_size);
 #endif
-		for (j = 0; j < nb_entries_per_bucket; ++j)
-			bt->b[i]->e[j].id = (i * nb_entries_per_bucket) + j;
 	}
 
 	return bt;

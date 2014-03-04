@@ -34,6 +34,7 @@ struct vol_info {
 
 	struct shfs_btable *bt;
 	void **htable_chunk_cache;
+	int *htable_chunk_cache_state;
 	chk_t htable_ref;
 	chk_t htable_bak_ref;
 	chk_t htable_len;
@@ -43,6 +44,10 @@ struct vol_info {
 	uint32_t htable_nb_entries_per_chunk;
 	uint8_t hlen;
 };
+
+/* htable_chunk_cache_state */
+#define CCS_LOADED   0x01
+#define CCS_MODIFIED 0x02
 
 extern struct vol_info shfs_vol;
 extern struct semaphore shfs_mount_lock;

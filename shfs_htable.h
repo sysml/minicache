@@ -14,9 +14,8 @@
  */
 struct shfs_bentry {
 	hash512_t hash;             /* if zero, this bucket entry is empty */
-	unsigned int id;
-	chk_t chunk;                /* addres to entry on vbd / chunk cache */
-	off_t offset;
+	chk_t hentry_htchunk;       /* relative chunk:offfset addres to entry in htable */
+	off_t hentry_htoffset;
 };
 
 /**

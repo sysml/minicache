@@ -290,8 +290,8 @@ static int load_vol_htable(void)
 {
 	struct shfs_hentry *hentry;
 	struct shfs_bentry *bentry;
-	void *tmp_chk;
-	chk_t tmp_chk_addr, cur_chk;
+	void *chk_buf;
+	chk_t cur_chk, cur_htchk;
 	unsigned int i;
 	int ret;
 
@@ -311,44 +311,59 @@ static int load_vol_htable(void)
 #ifdef SHFS_DEBUG
 	printf("Allocating chunk cache reference table...\n");
 #endif /* SHFS_DEBUG */
-	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
-	if (!shfs_vol.htable_chunk_cache) {
+	shfs_vol.htable_chunk_cache_state = _xmalloc(sizeof(int) * shfs_vol.htable_len, CACHELINE_SIZE);
+	if (!shfs_vol.htable_chunk_cache_state) {
 		ret = -ENOMEM;
 		goto err_free_btable;
 	}
-	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
+	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
+	if (!shfs_vol.htable_chunk_cache) {
+		ret = -ENOMEM;
+		goto err_free_chunkcachestate;
+	}
+	memset(shfs_vol.htable_chunk_cache_state, 0, sizeof(int *) * shfs_vol.htable_len);
 
 	/* load hash table chunk-wise and fill-out btable metadata */
-	tmp_chk = _xmalloc(shfs_vol.chunksize, 4096);
-	if (!tmp_chk) {
-		ret = -ENOMEM;
-		goto err_free_chunkcache;
-	}
-	tmp_chk_addr = 0;
+#ifdef SHFS_DEBUG
+	printf("Reading hash table...\n");
+#endif
+	chk_buf = NULL;
+	cur_chk = 0;
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		cur_chk = shfs_vol.htable_ref + \
-			  SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
-		if (tmp_chk_addr != cur_chk) {
-			ret = shfs_sync_read_chunk(cur_chk, 1, tmp_chk);
+		cur_htchk = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
+		if (cur_chk != cur_htchk || !chk_buf) {
+			chk_buf = _xmalloc(shfs_vol.chunksize, 4096);
+			if (!chk_buf) {
+				ret = -ENOMEM;
+				goto err_free_chunkcache;
+			}
+			ret = shfs_sync_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
 			if (ret < 0)
-				goto err_free_tmpchk;
-			tmp_chk_addr = cur_chk;
+				goto err_free_chunkcache;
+			cur_chk = cur_htchk;
+
+			/* register buffer to htable chunk cache */
+			shfs_vol.htable_chunk_cache[cur_htchk]       = chk_buf;
+			shfs_vol.htable_chunk_cache_state[cur_htchk] = CCS_LOADED;
 		}
 
 		bentry = shfs_btable_pick(shfs_vol.bt, i);
-		bentry->chunk = cur_chk;
-		bentry->offset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
-		hentry = (struct shfs_hentry *)((uint8_t *) tmp_chk + bentry->offset);
+		bentry->hentry_htchunk  = cur_htchk;
+		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
+		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf + bentry->hentry_htoffset);
 		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
 	}
-	xfree(tmp_chk);
 
 	return 0;
 
- err_free_tmpchk:
-	xfree(tmp_chk);
  err_free_chunkcache:
+	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
+		if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
+			xfree(shfs_vol.htable_chunk_cache[i]);
+	}
 	xfree(shfs_vol.htable_chunk_cache);
+ err_free_chunkcachestate:
+	xfree(shfs_vol.htable_chunk_cache_state);
  err_free_btable:
 	shfs_free_btable(shfs_vol.bt);
  err_out:
@@ -405,8 +420,12 @@ void umount_shfs(void) {
 
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
-		/* TODO: Free chunk caches */
+		for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
+			if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
+				xfree(shfs_vol.htable_chunk_cache[i]);
+		}
 		xfree(shfs_vol.htable_chunk_cache);
+		xfree(shfs_vol.htable_chunk_cache_state);
 		shfs_free_btable(shfs_vol.bt);
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			close_blkdev(shfs_vol.member[i].bd);

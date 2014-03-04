@@ -54,6 +54,7 @@ struct vol_info {
 	/* hash table */
 	struct shfs_btable *bt;
 	void **htable_chunk_cache;
+	int *htable_chunk_cache_state;
 	chk_t htable_ref;
 	chk_t htable_bak_ref;
 	chk_t htable_len;
@@ -68,5 +69,7 @@ struct vol_info {
 	struct shfs_alist *al;
 };
 
+/* chunk_cache_states */
+#define CCS_MODIFIED 0x02
 
 #endif /* _SHFS_ADMIN_ */
