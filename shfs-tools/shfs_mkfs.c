@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #include <uuid/uuid.h>
 
@@ -16,13 +17,17 @@ int force = 0;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVf";
+const char *short_opts = "h?vVfn:s:b:e:";
 
 static struct option long_opts[] = {
-	{"help",	no_argument,		NULL,	'h'},
-	{"version",	no_argument,		NULL,	'V'},
-	{"verbose",	no_argument,		NULL,	'v'},
-	{"force",	no_argument,		NULL,	'f'},
+	{"help",		no_argument,		NULL,	'h'},
+	{"version",		no_argument,		NULL,	'V'},
+	{"verbose",		no_argument,		NULL,	'v'},
+	{"force",		no_argument,		NULL,	'f'},
+	{"name",		required_argument,	NULL,	'n'},
+	{"stripesize",		required_argument,	NULL,	's'},
+	{"bucket-count",	required_argument,	NULL,	'b'},
+	{"entries-per-bucket",	required_argument,	NULL,	'e'},
 	{NULL, 0, NULL, 0} /* end of list */
 };
 
@@ -33,20 +38,28 @@ static inline void print_version()
 
 static void print_usage(char *argv0)
 {
-	printf("Usage: %s [OPTION]... [DEVICE]\n", argv0);
+	printf("Usage: %s [OPTION]... [DEVICE]...\n", argv0);
 	printf("Formats a device with SHFS.\n");
 	printf("\n");
 	printf("Mandatory arguments to long options are mandatory for short options too.\n");
-	printf("  -h, --help                 display this help and exit\n");
-	printf("  -V, --version              display program version and exit\n");
-	printf("  -v, --verbose              increase verbosity level (max. %d times)\n", D_MAX);
-	printf("  -f, --force                Suppress warnings and user questions\n");
+	printf("\n");
+	printf(" General option:\n");
+	printf("  -h, --help                       displays this help and exit\n");
+	printf("  -V, --version                    displays program version and exit\n");
+	printf("  -v, --verbose                    increases verbosity level (max. %d times)\n", D_MAX);
+	printf("  -f, --force                      suppresses user questions\n");
+	printf("\n");
+	printf(" Volume settings:\n");
+	printf("  -n, --name [NAME]                sets volume name to NAME\n");
+	printf("  -s, --stripesize [BYTES]         sets the stripesize for each volume member\n");
+	printf("\n");
+	printf(" Hash table related configuration:\n");
+	printf("  -b, --bucket-count [COUNT]       sets the total number of buckets\n");
+	printf("  -e, --entries-per-bucket [COUNT] sets the number of entries for each bucket\n");
 }
 
 static inline void release_args(struct args *args)
 {
-	if (args->devpath)
-		free(args->devpath);
 	memset(args, 0, sizeof(*args));
 }
 
@@ -66,6 +79,7 @@ static int parse_args(int argc, char **argv, struct args *args)
  */
 {
 	int opt, opt_index = 0;
+	int tmp, ret;
 
 	/*
 	 * set default values
@@ -81,10 +95,11 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->volname[17] = '\0';
 	args->stripesize = 4096;
 	args->allocator = SALLOC_FIRSTFIT;
-	args->hashfunc = SHFUNC_SHA;
-	args->hashlen = 32; /* 256 bits */
 	args->bucket_count = 4096;
 	args->entries_per_bucket = 16;
+
+	args->hashfunc = SHFUNC_SHA;
+	args->hashlen = 32; /* 256 bits */
 
 	/*
 	 * Parse options
@@ -110,31 +125,79 @@ static int parse_args(int argc, char **argv, struct args *args)
 		case 'f': /* force */
 			force = 1;
 			break;
+		case 'n': /* name */
+			strncpy(args->volname, optarg, sizeof(args->volname) - 1);
+			break;
+		case 's': /* stripesize */
+			ret = parse_args_setval_int(&tmp, optarg);
+			if (ret < 0 ||
+			    tmp < 4096 ||
+			    !POWER_OF_2(tmp) ||
+			    tmp > 32768) {
+				eprintf("Invalid stripe size (min. 4096, max. 32768, and has to be a power of two)\n");
+				return -EINVAL;
+			}
+			args->stripesize = (uint32_t) tmp;
+			break;
+		case 'b': /* bucket-count */
+			ret = parse_args_setval_int(&tmp, optarg);
+			if (ret < 0 || tmp < 1) {
+				eprintf("Invalid bucket count (min. 1)\n");
+				return -EINVAL;
+			}
+			args->bucket_count = (uint32_t) tmp;
+			break;
+		case 'e': /* entries-per-bucket */
+			ret = parse_args_setval_int(&tmp, optarg);
+			if (ret < 0 || tmp < 1) {
+				eprintf("Invalid number of entries per bucket (min. 1)\n");
+				return -EINVAL;
+			}
+			args->entries_per_bucket = (uint32_t) tmp;
+			break;
 		default:
-			eprintf("Unrecognized option\n");
-			return -EINVAL;
 			/* unknown option */
+			return -EINVAL;
 		}
 	}
 
-	/* extra parameter available? */
-	if (argc <= optind) {
-		eprintf("Path to device not specified\n");
+	/* bucket/entry overflow check */
+	if (((uint64_t) args->bucket_count) * ((uint64_t) args->entries_per_bucket) > UINT32_MAX) {
+		printf("Combination of bucket count and entries per bucket leads to unsupported hash table size\n");
 		return -EINVAL;
 	}
-	parse_args_setval_str(&args->devpath, argv[optind]);
+
+	/* extra arguments are devices... just add a reference of those to args */
+	if (argc <= optind) {
+		eprintf("Path to device(s) not specified\n");
+		return -EINVAL;
+	}
+	args->devpath = &argv[optind];
+	args->nb_devs = argc - optind;
 
 	return 0;
 }
 
+/******************************************************************************
+ * SIGNAL HANDLING                                                            *
+ ******************************************************************************/
+
+static volatile int cancel = 0;
+
+void sigint_handler(int signum) {
+	printf("Caught abort signal: Cancelling...\n");
+	cancel = 1;
+}
 
 /******************************************************************************
  * MAIN                                                                       *
  ******************************************************************************/
 static void mkfs(struct disk *d, struct args *args)
 {
-	void * chk0;
-	void * chk1;
+	int ret;
+	void *chk0;
+	void *chk0_zero;
+	void *chk1;
 	off_t htable_base;
 	off_t htable_bak_base;
 	off_t hentry_offset;
@@ -151,10 +214,11 @@ static void mkfs(struct disk *d, struct args *args)
 	/*
 	 * Fillout headers / init entries
 	 */
-	chk0 = calloc(1, (size_t) args->stripesize);
-	chk1 = calloc(1, (size_t) args->stripesize);
-	hentry = calloc(1, sizeof(*hentry));
-	if (!chk0 || !chk1 || !hentry)
+	chk0      = calloc(1, 4096);
+	chk0_zero = calloc(1, 4096);
+	chk1      = calloc(1, (size_t) args->stripesize);
+	hentry    = calloc(1, sizeof(*hentry));
+	if (!chk0 || !chk0_zero || !chk1 || !hentry)
 		die();
 
 	/* chunk0: common header */
@@ -206,11 +270,13 @@ static void mkfs(struct disk *d, struct args *args)
 	mdata_size = CHUNKS_TO_BYTES(metadata_size(hdr_common, hdr_config), chunksize);
 	if (mdata_size > d->size)
 		dief("%s is to small: Disk label requires %ld Bytes but only %ld Bytes are available\n",
-		     args->devpath, mdata_size, d->size);
+		     d->path, mdata_size, d->size);
 
 	/*
 	 * Summary
 	 */
+	if (cancel)
+		exit(-2);
 	print_shfs_hdr_summary(hdr_common, hdr_config);
 	if (!force) {
 		char *rlin = NULL;
@@ -229,8 +295,26 @@ static void mkfs(struct disk *d, struct args *args)
 			printf("Aborted\n");
 			exit(EXIT_SUCCESS);
 		}
+
+		if (rlin)
+			free(rlin);
 	}
+	if (cancel)
+		exit(-2);
 	printf("\n");
+
+	/*
+	 *
+	 */
+	printf("Erasing common header area...\n");
+	ret = lseek(d->fd, 0, SEEK_SET);
+	if (ret < 0)
+		die();
+	if (cancel)
+		exit(-2);
+	ret = write(d->fd, chk0_zero, chunksize);
+	if (ret < 0)
+		die();
 
 	/*
 	 * Write htable entries
@@ -243,9 +327,10 @@ static void mkfs(struct disk *d, struct args *args)
 	if (verbosity == D_MAX)
 		status_i = 1;
 
-	printf("\n");
-	fflush(stdout);
 	for (i = 0; i < nb_hentries; i++) {
+		if (cancel)
+			exit(-2);
+
 		hentry_offset = htable_base + \
 			CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), chunksize) + \
 			SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
@@ -254,8 +339,13 @@ static void mkfs(struct disk *d, struct args *args)
 			dprintf(D_L0, " (@0x%08x)", hentry_offset);
 			fflush(stdout);
 		}
-		lseek(d->fd, hentry_offset, SEEK_SET);
-		write(d->fd, hentry, sizeof(*hentry));
+		ret = lseek(d->fd, hentry_offset, SEEK_SET);
+		if (ret < 0)
+			die();
+		ret = write(d->fd, hentry, sizeof(*hentry));
+		if (ret < 0)
+			die();
+
 	}
 	printf("\rWriting table entries... [%ld/%ld]                   \n",
 	       nb_hentries, nb_hentries);
@@ -263,6 +353,9 @@ static void mkfs(struct disk *d, struct args *args)
 	if (hdr_config->htable_bak_ref) {
 		printf("\n");
 		for (i = 0; i < nb_hentries; i++) {
+			if (cancel)
+				exit(-2);
+
 			hentry_offset = htable_bak_base + \
 				CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), chunksize) + \
 				SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
@@ -271,8 +364,12 @@ static void mkfs(struct disk *d, struct args *args)
 				dprintf(D_L0, " (@0x%08x)", hentry_offset);
 				fflush(stdout);
 			}
-			lseek(d->fd, hentry_offset, SEEK_SET);
-			write(d->fd, hentry, sizeof(*hentry));
+			ret = lseek(d->fd, hentry_offset, SEEK_SET);
+			if (ret < 0)
+				die();
+			ret = write(d->fd, hentry, sizeof(*hentry));
+			if (ret < 0)
+				die();
 		}
 		printf("\rWriting backup table entries... [%ld/%ld]                   \n",
 		       nb_hentries, nb_hentries);
@@ -281,19 +378,40 @@ static void mkfs(struct disk *d, struct args *args)
 	/*
 	 * Write headers
 	 */
+	if (cancel)
+		exit(-2);
 	printf("Writing config header...\n");
-	lseek(d->fd, chunksize, SEEK_SET);
-	write(d->fd, chk1, chunksize);
+	ret = lseek(d->fd, chunksize, SEEK_SET);
+	if (ret < 0)
+		die();
+	ret = write(d->fd, chk1, chunksize);
+	if (ret < 0)
+		die();
 
+	if (cancel)
+		exit(-2);
 	printf("Writing common header...\n");
-	lseek(d->fd, 0, SEEK_SET);
-	write(d->fd, chk0, chunksize);
+	ret = lseek(d->fd, 0, SEEK_SET);
+	if (ret < 0)
+		die();
+	ret = write(d->fd, chk0, chunksize);
+	if (ret < 0)
+		die();
+
+	free(hentry);
+	free(chk1);
+	free(chk0_zero);
+	free(chk0);
 }
 
 int main(int argc, char **argv)
 {
 	struct args args;
 	struct disk *d;
+
+	signal(SIGINT,  sigint_handler);
+	signal(SIGTERM, sigint_handler);
+	signal(SIGQUIT, sigint_handler);
 
 	/*
 	 * ARGUMENT PARSING
@@ -304,7 +422,7 @@ int main(int argc, char **argv)
 	if (verbosity > 0) {
 		fprintf(stderr, "Verbosity increased to level %d.\n", verbosity);
 	}
-	printvar(args.devpath, "%s");
+	printvar(args.nb_devs, "%u");
 	printvar(args.encoding, "%d");
 	printvar(args.volname, "%s");
 	printvar(args.stripesize, "%ld");
@@ -315,13 +433,18 @@ int main(int argc, char **argv)
 	printvar(args.bucket_count, "%ld");
 	printvar(args.entries_per_bucket, "%ld");
 
-
 	/*
 	 * MAIN
 	 */
-	d = open_disk(args.devpath, O_RDWR);
+	if (args.nb_devs > 1) {
+		printf("Sorry, multi-member volume format is not supported yet.\n");
+		exit(EXIT_FAILURE);
+	}
+	d = open_disk(args.devpath[0], O_RDWR);
 	if (!d)
 		exit(EXIT_FAILURE);
+	if (cancel)
+		exit(-2);
 	mkfs(d, &args);
 	close_disk(d);
 

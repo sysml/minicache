@@ -45,17 +45,17 @@ static void print_usage(char *argv0)
 	printf("Administration of an SHFS volume.\n");
 	printf("\n");
 	printf("Mandatory arguments to long options are mandatory for short options too.\n");
-	printf("  -h, --help                 display this help and exit\n");
-	printf("  -V, --version              display program version and exit\n");
-	printf("  -v, --verbose              increase verbosity level (max. %d times)\n", D_MAX);
-	printf("  -f, --force                Suppress warnings and user questions\n");
-	printf("  -a, --add-file [FILE]      Add a file to the volume\n");
-	printf("  -l, --ls                   Lists the volume contents\n");
-	printf("  -i, --info                 Show volume information\n");
+	printf("  -h, --help                 displays this help and exit\n");
+	printf("  -V, --version              displays program version and exit\n");
+	printf("  -v, --verbose              increases verbosity level (max. %d times)\n", D_MAX);
+	printf("  -f, --force                suppresses warnings and user questions\n");
+	printf("  -a, --add-file [FILE]      add a file to the volume\n");
+	printf("  -l, --ls                   lists the volume contents\n");
+	printf("  -i, --info                 shows volume information\n");
 	/* printf("  -r, --rm-file [HASH]       Remove a file from the volume\n"); */
 	printf("\n");
 	printf("Example (adding a file):\n");
-	printf(" %s --add-file song.mp4 /dev/ram14 /dev/ram15\n");
+	printf(" %s --add-file song.mp4 /dev/ram14 /dev/ram15\n", argv0);
 
 }
 
@@ -170,7 +170,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 
 	/* extra arguments are devices... just add a reference of those to args */
 	if (argc <= optind) {
-		eprintf("Path to device(s) not specified\n");
+		eprintf("Path to volume member device(s) not specified\n");
 		return -EINVAL;
 	}
 	args->devpath = &argv[optind];

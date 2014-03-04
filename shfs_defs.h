@@ -111,7 +111,7 @@ struct shfs_hentry {
 	uint64_t           ts_creation;
 	uint64_t           ts_laccess;
 	uint64_t           access_count;
-	char               name[128];
+	char               name[64];
 } __attribute__((packed));
 
 #define BYTES_TO_CHUNKS(bytes,  chunksize) DIV_ROUND_UP((bytes), (chunksize))

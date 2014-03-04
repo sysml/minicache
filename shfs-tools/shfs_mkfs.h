@@ -8,8 +8,11 @@
 
 #define STR_VERSION "Simon's HashFS Tools: MakeFS v0.01"
 
+#define MAX_NB_BLKDEVS SHFS_MAX_NB_MEMBERS
+
 struct args {
-	char *devpath;
+	char **devpath;
+	unsigned int nb_devs;
 
 	uint8_t  encoding;
 	char     volname[17]; /* null-terminated */
