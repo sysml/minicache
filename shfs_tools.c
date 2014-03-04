@@ -9,7 +9,71 @@
 #include "shfs_tools.h"
 
 #include "shfs.h"
+#include "shfs_htable.h"
 #include "shell.h"
+
+static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
+{
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	char str_hash[(shfs_vol.hlen * 2) + 1];
+	char str_mime[sizeof(hentry->mime) + 1];
+	char str_name[sizeof(hentry->name) + 1];
+	unsigned int i;
+
+	down(&shfs_mount_lock);
+	if (!shfs_mounted) {
+		fprintf(cio, "No SHFS filesystem mounted\n");
+		goto out;
+	}
+
+	str_hash[(shfs_vol.hlen * 2)] = '\0';
+	str_name[sizeof(hentry->name)] = '\0';
+
+	if (shfs_vol.hlen <= 32)
+		fprintf(cio, "%-64s %12s %12s %-16s %s\n",
+		       "Hash",
+		       "At (chk)",
+		       "Size (chk)",
+		       "MIME",
+		       "Name");
+	else
+		fprintf(cio, "%-128s %12s %12s %-16s %s\n",
+		       "Hash",
+		       "At (chk)",
+		       "Size (chk)",
+		       "MIME",
+		       "Name");
+	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
+		bentry = shfs_btable_pick(shfs_vol.bt, i);
+		hentry = (struct shfs_hentry *)
+			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+			 + bentry->hentry_htoffset);
+		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
+			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
+			strncpy(str_name, hentry->name, sizeof(hentry->name));
+			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
+			if (shfs_vol.hlen <= 32)
+				fprintf(cio, "%-64s %12lu %12lu %-16s %s\n",
+				       str_hash,
+				       hentry->chunk,
+				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       str_mime,
+				       str_name);
+			else
+				fprintf(cio, "%-128s %12lu %12lu %-16s %s\n",
+				       str_hash,
+				       hentry->chunk,
+				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       str_mime,
+				       str_name);
+		}
+	}
+
+ out:
+	up(&shfs_mount_lock);
+	return 0;
+}
 
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
@@ -62,6 +126,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 int register_shfs_tools(void)
 {
 	int ret;
+	ret = shell_register_cmd("ls", shcmd_shfs_ls);
 	ret = shell_register_cmd("shfs-info", shcmd_shfs_info);
 	if (ret < 0)
 		return ret;

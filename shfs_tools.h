@@ -24,4 +24,12 @@ int uuid_is_null(const uuid_t uu);
 int uuid_is_zero(const uuid_t uu);
 void uuid_copy(uuid_t dst, const uuid_t src);
 
+static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
+{
+	uint8_t i;
+
+	for (i = 0; i < hlen; i++)
+		snprintf(out + (2*i), 3, "%02x", h.u8[i]);
+}
+
 #endif /* _SHFS_TOOLS_H_ */
