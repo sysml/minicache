@@ -5,13 +5,6 @@
 #include "shfs.h"
 #include "shfs_htable.h"
 
-#ifndef min
-#define min(a, b) \
-    ({ __typeof__ (a) __a = (a); \
-       __typeof__ (b) __b = (b); \
-       __a < __b ? __a : __b; })
-#endif
-
 static inline __attribute__((always_inline))
 struct shfs_bentry *_shfs_lookup_bentry_by_hash(const char *hash)
 {
@@ -124,6 +117,13 @@ void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen)
 	out[outlen - 1] = '\0';
 }
 
+void shfs_fio_size(SHFS_FD f, uint64_t *out)
+{
+	struct shfs_hentry *hentry = (struct shfs_hentry *) f;
+
+	*out = hentry->len;
+}
+
 void shfs_fio_hash(SHFS_FD f, hash512_t out)
 {
 	struct shfs_hentry *hentry = (struct shfs_hentry *) f;
@@ -156,7 +156,8 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	}
 
 	/* perform the I/O chunk-wise */
-	chk_off = (hentry->offset + offset) / shfs_vol.chunksize;
+	chk_off = (hentry->offset + offset) / shfs_vol.chunksize +
+		  hentry->chunk;
 	byt_off = (hentry->offset + offset) % shfs_vol.chunksize;
 	left = len;
 

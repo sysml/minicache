@@ -5,6 +5,7 @@
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 #include <stdio.h>
+#include <hexdump.h>
 
 #include "shfs.h"
 #include "shfs_htable.h"
@@ -64,6 +65,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 {
 	char str_mime[128];
+	uint64_t fsize;
 	unsigned int i;
 	SHFS_FD f;
 	int ret = 0;
@@ -80,13 +82,55 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 			return -1;
 		}
 		shfs_fio_mime(f, str_mime, sizeof(str_mime));
+		shfs_fio_size(f, &fsize);
 
-		fprintf(cio, "%s: %s\n", argv[1], str_mime);
+		fprintf(cio, "%s: %s, %lu KiB\n", argv[1], str_mime, fsize / 1024);
 
 		shfs_fio_close(f);
 	}
 	return ret;
 }
+
+
+static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	char buf[4096];
+	uint64_t fsize, left, cur, dlen;
+	int ret = 0;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [FILE]\n", argv[0]);
+		return -1;
+	}
+
+	f = shfs_fio_open(argv[1]);
+	if (!f) {
+		fprintf(cio, "%s: Could not open: %s\n", argv[1], strerror(errno));
+		return -1;
+	}
+	shfs_fio_size(f, &fsize);
+
+	left = fsize;
+	cur = 0;
+	while (left) {
+		dlen = min(left, 4096);
+		ret = shfs_fio_read(f, cur, buf, dlen);
+		if (ret < 0) {
+			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+			goto out;
+		}
+		fprintf(cio, "*** @%lu B: %lu KiB\n", cur, dlen / 1024);
+		hexdump(cio, buf, dlen, "", HDAT_RELATIVE, cur, 16, 4, 1);
+		left -= dlen;
+		cur += dlen;
+	}
+
+ out:
+	shfs_fio_close(f);
+	return ret;
+}
+
 
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
@@ -141,6 +185,7 @@ int register_shfs_tools(void)
 	int ret;
 	ret = shell_register_cmd("ls", shcmd_shfs_ls);
 	ret = shell_register_cmd("file", shcmd_shfs_file);
+	ret = shell_register_cmd("df", shcmd_shfs_dumpfile);
 	ret = shell_register_cmd("shfs-info", shcmd_shfs_info);
 	if (ret < 0)
 		return ret;

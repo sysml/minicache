@@ -21,6 +21,7 @@ void shfs_fio_close(SHFS_FD f);
 void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_hash(SHFS_FD f, hash512_t out);
+void shfs_fio_size(SHFS_FD f, uint64_t *out);
 
 /**
  * File/object I/O

@@ -49,6 +49,18 @@ typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 #ifndef POWER_OF_2
 #define POWER_OF_2(x)          ((0 != x) && (0 == (x & (x-1))))
 #endif
+#ifndef min
+#define min(a, b) \
+    ({ __typeof__ (a) __a = (a); \
+       __typeof__ (b) __b = (b); \
+       __a < __b ? __a : __b; })
+#endif
+#ifndef max
+#define max(a, b) \
+    ({ __typeof__ (a) __a = (a); \
+       __typeof__ (b) __b = (b); \
+       __a > __b ? __a : __b; })
+#endif
 
 /**
  * Common SHFS header
