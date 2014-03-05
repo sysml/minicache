@@ -38,6 +38,11 @@ CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC L
 				   -DSHELL_PROMPT="\"mc\#\""
 
 ######################################
+## SHFS options
+######################################
+CFLAGS				+= -DSHFS_OPENBYNAME
+
+######################################
 ## Debugging options
 ######################################
 CONFIG_DEBUG			= y
@@ -57,7 +62,7 @@ STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
 STUB_APP_OBJS0  = main.o shell.o httpd.o fs.o fsdata.o blkdev.o \
-		  shfs.o shfs_check.o shfs_htable.o shfs_tools.o
+		  shfs.o shfs_check.o shfs_htable.o shfs_fio.o shfs_tools.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk

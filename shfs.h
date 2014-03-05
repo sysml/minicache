@@ -52,10 +52,11 @@ struct vol_info {
 extern struct vol_info shfs_vol;
 extern struct semaphore shfs_mount_lock;
 extern volatile int shfs_mounted;
+extern volatile unsigned int shfs_nb_open;
 
 int init_shfs(void);
 int mount_shfs(unsigned int vbd_id[], unsigned int count);
-void umount_shfs(void);
+int umount_shfs(void);
 void exit_shfs(void);
 
 static inline void shfs_poll_blkdevs(void) {
@@ -69,6 +70,7 @@ static inline void shfs_poll_blkdevs(void) {
 /**
  * Slow I/O: sequential sync I/O for volume chunks
  * These functions are intended to be used during mount/umount time
+ * because they can run without calling shfs_poll_blkdevs() frequently
  */
 int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer);
 #define shfs_sync_read_chunk(start, len, buffer) \

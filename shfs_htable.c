@@ -101,21 +101,44 @@ void shfs_free_btable(struct shfs_btable *bt)
  */
 static inline unsigned int _bucket_no(const hash512_t h, uint8_t hlen, uint32_t nb_buckets)
 {
+	register uint16_t h16;
+	register uint32_t h32;
+	register uint32_t h64;
+
 	switch (hlen) {
 	case 0:
 		return 0;
 	case 1:
-		return (h.u8[0] % nb_buckets); /* 1 byte */
+		return (h[0] % nb_buckets); /* 1 byte */
 	case 2:
-		return (h.u16[0] % nb_buckets); /* 2 byte */
-	case 3 ... 4:
-		return (h.u32[0] % nb_buckets); /* 4 byte */
+		h16 = *((uint16_t *) &h[0]);
+		return (h16 % nb_buckets); /* 2 bytes */
+	case 3:
+		h32 = *((uint32_t *) &h[0]);
+		h32 &= 0x00FFFFFF;
+		return (h32 % nb_buckets); /* 3 bytes */
+	case 4:
+		h32 = *((uint32_t *) &h[0]);
+		return (h32 % nb_buckets); /* 4 bytes */
+	case 5:
+		h64 = *((uint64_t *) &h[0]);
+		h64 &= 0x000000FFFFFFFFFF;
+		return (h64 % nb_buckets); /* 5 bytes */
+	case 6:
+		h64 = *((uint64_t *) &h[0]);
+		h64 &= 0x0000FFFFFFFFFFFF;
+		return (h64 % nb_buckets); /* 6 bytes */
+	case 7:
+		h64 = *((uint64_t *) &h[0]);
+		h64 &= 0x00FFFFFFFFFFFFFF;
+		return (h64 % nb_buckets); /* 7 bytes */
 	default:
 		break;
 	}
 
 	/* just take 8 bytes from hash */
-	return (h.u64[0] % nb_buckets);
+	h64 = *((uint64_t *) &h[0]);
+	return (h64 % nb_buckets); /* 8 bytes */
 }
 
 struct shfs_bentry *shfs_btable_pick(struct shfs_btable *bt, unsigned int bentry_idx)

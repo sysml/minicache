@@ -796,7 +796,7 @@ static int actn_addfile(struct job *j)
 	free(tmp_chk);
  err_release_container:
 	dprintf(D_L1, "Discard container reservation...\n", cchk);
-	shfs_alist_register(shfs_vol.al, cchk, csize);
+	shfs_alist_unregister(shfs_vol.al, cchk, csize);
  err_close_fd:
 	close(fd);
  err:

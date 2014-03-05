@@ -6,10 +6,10 @@
  */
 #include <stdio.h>
 
-#include "shfs_tools.h"
-
 #include "shfs.h"
 #include "shfs_htable.h"
+#include "shfs_tools.h"
+#include "shfs_fio.h"
 #include "shell.h"
 
 static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
@@ -30,20 +30,6 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
 
-	if (shfs_vol.hlen <= 32)
-		fprintf(cio, "%-64s %12s %12s %-16s %s\n",
-		       "Hash",
-		       "At (chk)",
-		       "Size (chk)",
-		       "MIME",
-		       "Name");
-	else
-		fprintf(cio, "%-128s %12s %12s %-16s %s\n",
-		       "Hash",
-		       "At (chk)",
-		       "Size (chk)",
-		       "MIME",
-		       "Name");
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
 		bentry = shfs_btable_pick(shfs_vol.bt, i);
 		hentry = (struct shfs_hentry *)
@@ -54,14 +40,14 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			strncpy(str_name, hentry->name, sizeof(hentry->name));
 			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 			if (shfs_vol.hlen <= 32)
-				fprintf(cio, "%-64s %12lu %12lu %-16s %s\n",
+				fprintf(cio, "?%-64s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
 				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
 				       str_name);
 			else
-				fprintf(cio, "%-128s %12lu %12lu %-16s %s\n",
+				fprintf(cio, "?%-128s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
 				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
@@ -73,6 +59,33 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
  out:
 	up(&shfs_mount_lock);
 	return 0;
+}
+
+static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
+{
+	char str_mime[128];
+	unsigned int i;
+	SHFS_FD f;
+	int ret = 0;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [FILE]...\n", argv[0]);
+		return -1;
+	}
+
+	for (i = 1; i < argc; ++i) {
+		f = shfs_fio_open(argv[i]);
+		if (!f) {
+			fprintf(cio, "%s: Could not open: %s\n", argv[1], strerror(errno));
+			return -1;
+		}
+		shfs_fio_mime(f, str_mime, sizeof(str_mime));
+
+		fprintf(cio, "%s: %s\n", argv[1], str_mime);
+
+		shfs_fio_close(f);
+	}
+	return ret;
 }
 
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
@@ -127,6 +140,7 @@ int register_shfs_tools(void)
 {
 	int ret;
 	ret = shell_register_cmd("ls", shcmd_shfs_ls);
+	ret = shell_register_cmd("file", shcmd_shfs_file);
 	ret = shell_register_cmd("shfs-info", shcmd_shfs_info);
 	if (ret < 0)
 		return ret;
@@ -141,26 +155,10 @@ void uuid_unparse(const uuid_t uu, char *out)
 	        uu[8], uu[9], uu[10], uu[11], uu[12], uu[13], uu[14], uu[15]);
 }
 
-int uuid_compare(const uuid_t uu1, const uuid_t uu2)
+void hash_unparse(const hash512_t h, uint8_t hlen, char *out)
 {
-	return memcmp(uu1, uu2, sizeof(uuid_t));
-}
+	uint8_t i;
 
-int uuid_is_zero(const uuid_t uu)
-{
-	unsigned i;
-	for (i = 0; i < sizeof(uuid_t); ++i)
-		if (uu[i] != 0)
-			return 0;
-	return 1;
-}
-
-int uuid_is_null(const uuid_t uu)
-{
-	return (uu == NULL);
-}
-
-void uuid_copy(uuid_t dst, const uuid_t src)
-{
-	memcpy(dst, src, sizeof(uuid_t));
+	for (i = 0; i < hlen; i++)
+		snprintf(out + (2*i), 3, "%02x", h[i]);
 }

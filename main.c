@@ -230,7 +230,7 @@ static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
     count = argc - 1;
 
     /* search for duplicates in the list
-     * This is unfortunately a ugly & slow way doing it... */
+     * This is unfortunately an ugly & slow way of how it is done here... */
     for (i = 0; i < count; ++i)
 	    for (j = 0; j < count; ++j)
 		    if (i != j && vbd_id[i] == vbd_id[j]) {
@@ -240,23 +240,27 @@ static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
 
     down(&_vbd_lock);
     if (shfs_mounted) {
-	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
 	    up(&_vbd_lock);
+	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
 	    return -1;
     }
     ret = mount_shfs(vbd_id, count);
-    if (ret < 0)
-	    fprintf(cio, "Mounting failed\n");
     up(&_vbd_lock);
+    if (ret < 0)
+	    fprintf(cio, "Could not mount: %s\n", strerror(-ret));
     return ret;
 }
 
 static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
 {
+    int ret;
+
     down(&_vbd_lock);
-    umount_shfs();
+    ret = umount_shfs();
     up(&_vbd_lock);
-    return 0;
+    if (ret < 0)
+	    fprintf(cio, "Could not unmount: %s\n", strerror(-ret));
+    return ret;
 }
 
 /**

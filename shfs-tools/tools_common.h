@@ -76,7 +76,7 @@ static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
 	uint8_t i;
 
 	for (i = 0; i < hlen; i++)
-		snprintf(out + (2*i), 3, "%02x", h.u8[i]);
+		snprintf(out + (2*i), 3, "%02x", h[i]);
 }
 
 #endif /* _TOOLS_COMMON_ */

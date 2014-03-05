@@ -22,6 +22,7 @@
 #endif
 
 volatile int shfs_mounted = 0;
+volatile unsigned int shfs_nb_open = 0;
 struct semaphore shfs_mount_lock;
 struct vol_info shfs_vol;
 
@@ -406,6 +407,8 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 		shfs_mounted = 0;
 		goto out;
 	}
+
+	shfs_nb_open = 0;
 	ret = 0;
 
  out:
@@ -416,11 +419,17 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 /**
  * Unmounts a previously mounted SHFS volume
  */
-void umount_shfs(void) {
+int umount_shfs(void) {
 	unsigned int i;
 
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
+		if (shfs_nb_open) {
+			/* there are still open files */
+			up(&shfs_mount_lock);
+			return -EBUSY;
+		}
+
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
 			if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
 				xfree(shfs_vol.htable_chunk_cache[i]);
@@ -433,6 +442,7 @@ void umount_shfs(void) {
 	}
 	shfs_mounted = 0;
 	up(&shfs_mount_lock);
+	return 0;
 }
 
 int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer)

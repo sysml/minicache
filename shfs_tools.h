@@ -15,21 +15,11 @@
 int register_shfs_tools(void);
 
 /**
- * Prints a uuid_t to a buffer (has to be at least 17 bytes long)
+ * Prints an uuid/hash number to a buffer
+ * Note: The target buffer for the UUID has to be at least 17 bytes long
+ * Note: The target buffer for the hash has to be at least ((2 * hlen) + 1) bytes long
  */
 void uuid_unparse(const uuid_t uu, char *out);
-
-int uuid_compare(const uuid_t uu1, const uuid_t uu2);
-int uuid_is_null(const uuid_t uu);
-int uuid_is_zero(const uuid_t uu);
-void uuid_copy(uuid_t dst, const uuid_t src);
-
-static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
-{
-	uint8_t i;
-
-	for (i = 0; i < hlen; i++)
-		snprintf(out + (2*i), 3, "%02x", h.u8[i]);
-}
+void hash_unparse(const hash512_t h, uint8_t hlen, char *out);
 
 #endif /* _SHFS_TOOLS_H_ */
