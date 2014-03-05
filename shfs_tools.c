@@ -43,14 +43,14 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 				fprintf(cio, "?%-64s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
-				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
 				       str_name);
 			else
 				fprintf(cio, "?%-128s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
-				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
 				       str_name);
 		}
@@ -113,7 +113,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	        "                    %lu chunks (%ld KiB)\n" \
 	        "                    %s\n",
 	        shfs_vol.htable_nb_entries, shfs_vol.htable_nb_buckets,
-	        shfs_vol.htable_len, CHUNKS_TO_BYTES(shfs_vol.htable_len, shfs_vol.chunksize) / 1024,
+	        shfs_vol.htable_len, DIV_ROUND_UP(shfs_vol.htable_len, shfs_vol.chunksize) / 1024,
 	        shfs_vol.htable_bak_ref ? "2nd copy enabled" : "No copy");
 	fprintf(cio, "Entry size:         %lu Bytes (raw: %ld Bytes)\n",
 	        SHFS_HENTRY_SIZE, sizeof(struct shfs_hentry));

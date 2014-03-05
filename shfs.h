@@ -10,11 +10,13 @@
 #include <mini-os/types.h>
 #include <stdint.h>
 #include <semaphore.h>
+#include <mempool.h>
 #include "blkdev.h"
 
 #include "shfs_defs.h"
 
 #define MAX_NB_TRY_BLKDEVS 64
+#define CHUNKPOOL_NB_BUFFERS 64
 
 struct vol_member {
 	struct blkdev *bd;
@@ -43,6 +45,8 @@ struct vol_info {
 	uint32_t htable_nb_entries_per_bucket;
 	uint32_t htable_nb_entries_per_chunk;
 	uint8_t hlen;
+
+	struct mempool *chunkpool; /* buffers for chunk I/O */
 };
 
 /* htable_chunk_cache_state */

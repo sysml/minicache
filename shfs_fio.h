@@ -25,6 +25,6 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out);
 /**
  * File/object I/O
  */
-int shfs_fio_read(SHFS_FD f, uint64_t start, uint64_t len, void *buffer);
+int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
 
 #endif /* _SHFS_FIO_ */

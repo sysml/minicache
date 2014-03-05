@@ -378,6 +378,7 @@ static int load_vol_htable(void)
  */
 int mount_shfs(unsigned int vbd_id[], unsigned int count)
 {
+	unsigned int i;
 	int ret;
 
 	down(&shfs_mount_lock);
@@ -385,33 +386,55 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	BUG_ON(shfs_mounted);
 	if (count == 0) {
 		ret = -EINVAL;
-		goto out;
+		goto err_out;
 	}
 
 	/* load common volume information and open devices */
 	ret = load_vol_cconf(vbd_id, count);
 	if (ret < 0)
-		goto out;
+		goto err_out;
 	shfs_mounted = 1;
 
 	/* load hash conf (uses shfs_sync_read_chunk) */
 	ret = load_vol_hconf();
-	if (ret < 0) {
-		shfs_mounted = 0;
-		goto out;
-	}
+	if (ret < 0)
+		goto err_close_members;
 
-	/* load htable (uses shfs_sync_read_chunk) */
+	/* load htable (uses shfs_sync_read_chunk)
+	 * This function also allocates htable_chunk_cache,
+	 * htable_chunk_cache_state and btable */
 	ret = load_vol_htable();
-	if (ret < 0) {
+	if (ret < 0)
+		goto err_close_members;
+
+	/* a memory pool that is used by shfs_io for
+	 * doing I/O */
+	shfs_vol.chunkpool = alloc_mempool(CHUNKPOOL_NB_BUFFERS,
+	                                   shfs_vol.chunksize,
+	                                   4096,
+	                                   0, 0, NULL, NULL, 0);
+	if (!shfs_vol.chunkpool) {
 		shfs_mounted = 0;
-		goto out;
+		goto err_free_htable;
 	}
 
 	shfs_nb_open = 0;
-	ret = 0;
+	up(&shfs_mount_lock);
+	return 0;
 
- out:
+ err_free_htable:
+	for (i = 0; i < shfs_vol.htable_len; ++i) {
+		if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
+			xfree(shfs_vol.htable_chunk_cache[i]);
+	}
+	xfree(shfs_vol.htable_chunk_cache);
+	xfree(shfs_vol.htable_chunk_cache_state);
+	shfs_free_btable(shfs_vol.bt);
+ err_close_members:
+	for(i = 0; i < shfs_vol.nb_members; ++i)
+		close_blkdev(shfs_vol.member[i].bd);
+ err_out:
+	shfs_mounted = 0;
 	up(&shfs_mount_lock);
 	return ret;
 }
@@ -424,12 +447,14 @@ int umount_shfs(void) {
 
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
-		if (shfs_nb_open) {
+		if (shfs_nb_open ||
+		    mempool_free_count(shfs_vol.chunkpool) < CHUNKPOOL_NB_BUFFERS) {
 			/* there are still open files */
 			up(&shfs_mount_lock);
 			return -EBUSY;
 		}
 
+		free_mempool(shfs_vol.chunkpool);
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
 			if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
 				xfree(shfs_vol.htable_chunk_cache[i]);

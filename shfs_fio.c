@@ -130,8 +130,50 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out)
 	hash_copy(out, hentry->hash, shfs_vol.hlen);
 }
 
-int shfs_fio_read(SHFS_FD f, uint64_t start, uint64_t len, void *buffer)
+/*
+ * Prototypical... it is using sync I/O (it's slow, I know)
+ */
+int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 {
-	//struct shfs_hentry *hentry = (struct shfs_hentry *) f;
-	return -1;
+	struct shfs_hentry *hentry = (struct shfs_hentry *) f;
+	struct mempool_obj *cobj;
+	chk_t    chk_off;
+	uint64_t byt_off;
+	uint64_t left;
+	uint64_t rlen;
+	int ret = 0;
+
+	/* check boundaries */
+	if ((offset > hentry->len) ||
+	    ((offset + len) > hentry->len))
+		return -EINVAL;
+
+	/* pick chunk I/O buffer from pool */
+	cobj = mempool_pick(shfs_vol.chunkpool);
+	while (!cobj) {
+		schedule(); /* wait for another thread releasing a buffer */
+		cobj = mempool_pick(shfs_vol.chunkpool);
+	}
+
+	/* perform the I/O chunk-wise */
+	chk_off = (hentry->offset + offset) / shfs_vol.chunksize;
+	byt_off = (hentry->offset + offset) % shfs_vol.chunksize;
+	left = len;
+
+	while (left) {
+		ret = shfs_sync_read_chunk(chk_off, 1, cobj->data);
+		if (ret < 0)
+			goto out;
+
+		rlen = min(shfs_vol.chunksize - byt_off, left);
+		memcpy(buf, (uint8_t *) cobj->data + byt_off, rlen);
+		left -= rlen;
+
+		++chk_off;   /* go to next chunk */
+		byt_off = 0; /* byte offset is set on the first chunk only */
+	}
+
+ out:
+	mempool_put(cobj);
+	return ret;
 }

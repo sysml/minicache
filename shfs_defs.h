@@ -110,7 +110,6 @@ struct shfs_hentry {
 	char               name[64];
 } __attribute__((packed));
 
-#define BYTES_TO_CHUNKS(bytes,  chunksize) DIV_ROUND_UP((bytes), (chunksize))
 #define CHUNKS_TO_BYTES(chunks, chunksize) ((uint64_t) (chunks) * (uint64_t) (chunksize))
 
 #define SHFS_CHUNKSIZE(hdr_common) ((hdr_common)->member_stripesize * (uint32_t) ((hdr_common)->member_count))

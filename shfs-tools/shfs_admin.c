@@ -548,8 +548,8 @@ static void load_vol_alist(void)
 				 + bentry->hentry_htoffset);
 			shfs_alist_register(shfs_vol.al,
 			                    hentry->chunk,
-			                    BYTES_TO_CHUNKS(hentry->offset + hentry->len,
-			                                    shfs_vol.chunksize));
+			                    DIV_ROUND_UP(hentry->offset + hentry->len,
+			                                 shfs_vol.chunksize));
 		}
 	}
 }
@@ -655,7 +655,7 @@ static int actn_addfile(struct job *j)
 
 	/* find and alloc container */
 	fsize = fd_stat.st_size;
-	csize = BYTES_TO_CHUNKS(fsize, shfs_vol.chunksize);
+	csize = DIV_ROUND_UP(fsize, shfs_vol.chunksize);
 	dprintf(D_L0, "Searching for an appropriate container to store file contents (%lu chunks)...\n", csize);
 	cchk = shfs_alist_find_free(shfs_vol.al, csize);
 	if (cchk == 0 || cchk >= shfs_vol.volsize) {
@@ -847,14 +847,14 @@ static int actn_ls(struct job *job)
 				printf("%-64s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
-				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
 				       str_name);
 			else
 				printf("%-128s %12lu %12lu %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
-				       BYTES_TO_CHUNKS(hentry->len + hentry->offset, shfs_vol.chunksize),
+				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
 				       str_name);
 		}
