@@ -84,7 +84,11 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 		shfs_fio_mime(f, str_mime, sizeof(str_mime));
 		shfs_fio_size(f, &fsize);
 
-		fprintf(cio, "%s: %s, %lu KiB\n", argv[1], str_mime, fsize / 1024);
+		fprintf(cio, "%s: %s, ", argv[1], str_mime);
+		if (fsize < 1024)
+			fprintf(cio, "%lu B\n", fsize);
+		else
+			fprintf(cio, "%lu KiB\n", fsize / 1024);
 
 		shfs_fio_close(f);
 	}
@@ -120,7 +124,6 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
 			goto out;
 		}
-		fprintf(cio, "*** @%lu B: %lu KiB\n", cur, dlen / 1024);
 		hexdump(cio, buf, dlen, "", HDAT_RELATIVE, cur, 16, 4, 1);
 		left -= dlen;
 		cur += dlen;
