@@ -43,12 +43,19 @@ CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC L
 CFLAGS				+= -DSHFS_OPENBYNAME
 
 ######################################
+## HTTPd options
+######################################
+CFLAGS				+= -DHTTPD_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
+
+######################################
+
+######################################
 ## Debugging options
 ######################################
 CONFIG_DEBUG			= y
 CONFIG_DEBUG_LWIP		= n
-CFLAGS				+= -DSHFS_DEBUG \
-				   -DSHELL_DEBUG
+//CFLAGS			+= -DSHFS_DEBUG \
+//				   -DSHELL_DEBUG
 
 ######################################
 ## MiniOS path

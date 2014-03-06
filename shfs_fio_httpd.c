@@ -19,7 +19,47 @@
 #error "LWIP_HTTPD_FS_ASYNC_READ is not supported yet"
 #endif
 
+#if !LWIP_HTTPD_DYNAMIC_HEADERS
+int _fs_generate_hdr(SHFS_FD f, int flen, char *buf)
+{
+	char str_mime[128];
+	size_t len, ret;
+	char *ptr = buf;
+	ret = 0;
+
+	/* HTTP/1.0 200 OK */
+	len = sprintf(ptr, "HTTP/1.0 200 OK\r\n");
+	ret += len;
+	ptr += len;
+
+	/* Server Agent */
+	len = sprintf(ptr, "Server: %s\r\n", HTTPD_SERVER_AGENT);
+	ret += len;
+	ptr += len;
+
+	/* Content size */
+	len = sprintf(ptr, "Content-Length: %d\r\n", flen);
+	ret += len;
+	ptr += len;
+
+	/* Content Type */
+	shfs_fio_mime(f, str_mime, sizeof(str_mime));
+	if ( str_mime[0] == '\0' ) {
+		/* default mime */
+		len = sprintf(ptr, "Content-type: text/plain\r\n\r\n");
+		ret += len;
+		ptr += len;
+	} else {
+		/* mime provided by SHFS */
+		len = sprintf(ptr, "Content-type: %s\r\n\r\n", str_mime);
+		ret += len;
+		ptr += len;
+	}
+	return ret;
+}
+#else
 const char null_data[] = { '\0' };
+#endif
 
 int _fs_fsize(struct fs_file *file)
 {
@@ -47,11 +87,20 @@ err_t fs_open(struct fs_file *file, const char *name)
 		return ERR_VAL; /* file not found */
 
 	file->state = f;
-	file->len = 0; /* will let httpd_check_eof to read from disk */
-	file->data = null_data;
+#if !LWIP_HTTPD_DYNAMIC_HEADERS
+	file->data = malloc(1024); /* used to store the header */
+	file->len = _fs_generate_hdr(f, _fs_fsize(file),
+	                             (char *) file->data);
+	            /* returns length of the header */
 	file->index = 0; /* offset */
-	file->pextension = NULL;
+	file->http_header_included = 1;
+#else
+	file->data = null_data;
+	file->len = 0; /* will let httpd_check_eof to read from disk */
+	file->index = 0; /* offset */
 	file->http_header_included = 0;
+#endif
+	file->pextension = NULL;
 	file->is_custom_file = 1;
 	return ERR_OK;
 }
@@ -59,6 +108,9 @@ err_t fs_open(struct fs_file *file, const char *name)
 void fs_close(struct fs_file *file)
 {
 	SHFS_FD f = file->state;
+#if !LWIP_HTTPD_DYNAMIC_HEADERS
+	free((void *) file->data);
+#endif
 	shfs_fio_close(f);
 }
 
@@ -70,22 +122,24 @@ int fs_read_async(struct fs_file *file, char *buffer, int count, fs_wait_cb call
 #else
 int fs_read(struct fs_file *file, char *buffer, int count)
 {
-	int read;
+	SHFS_FD f = file->state;
+	int nb_read;
 	int ret;
 
+	if (file->index < 0)
+		return FS_READ_EOF;
 	if (file->index >= _fs_fsize(file))
 		return FS_READ_EOF;
 
-	read = _fs_fsize(file) - file->index;
-	read = min(read, count);
+	nb_read = _fs_fsize(file) - file->index;
+	nb_read = min(nb_read, count);
 
-	ret = shfs_fio_read(file->state, (uint64_t) file->index, buffer, read);
+	ret = shfs_fio_read(f, (uint64_t) file->index, buffer, nb_read);
 	if (ret < 0)
-		return 0;
-		//		return FS_READ_EOF; /* a read error happened -> cancel request */
+		return FS_READ_EOF; /* a read error happened -> cancel request */
 
-	file->index += read;
-	return (read);
+	file->index += nb_read;
+	return (nb_read);
 }
 #endif
 
@@ -94,9 +148,10 @@ int fs_bytes_left(struct fs_file *file)
 	return _fs_fsize(file) - file->index;
 }
 
-const char *fs_getmime(struct fs_file *file)
+void fs_getmime(struct fs_file *file, char *out, int outlen)
 {
-	return NULL;
+	SHFS_FD f = file->state;
+	shfs_fio_mime(f, out, (size_t) outlen);
 }
 
 /* these functions are unused but prototypes are defined

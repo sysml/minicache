@@ -131,7 +131,7 @@ void fs_state_free(struct fs_file *file, void *state);
 #endif /* #if LWIP_HTTPD_FILE_STATE */
 
 #if LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME
-const char *fs_getmime(struct fs_file *file);
+void fs_getmime(struct fs_file *file, char *out, int outlen);
 #endif
 
 #endif /* __FS_H__ */
