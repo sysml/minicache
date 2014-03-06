@@ -65,12 +65,16 @@ int _fs_fsize(struct fs_file *file)
 {
 	SHFS_FD f = file->state;
 	uint64_t fsize;
+	int ret;
 
 	shfs_fio_size(f, &fsize);
 	/* FIXME: this workaround cuts the end of
 	 * large files because they are not
-	 * supported by httpd yet */
-	return (int) min(fsize, (uint64_t) INT_MAX);
+	 * supported by httpd */
+	ret = (int) min(fsize, (uint64_t) INT_MAX);
+	if ((uint64_t) ret < fsize)
+		printf("_fs_fsize(): WARNING: Shrinked file from %lu to %d bytes\n", fsize, ret);
+	return ret;
 }
 
 err_t fs_open(struct fs_file *file, const char *name)
@@ -120,6 +124,8 @@ int fs_read_async(struct fs_file *file, char *buffer, int count, fs_wait_cb call
 	return 0;
 }
 #else
+
+#include <hexdump.h>
 int fs_read(struct fs_file *file, char *buffer, int count)
 {
 	SHFS_FD f = file->state;
@@ -127,7 +133,7 @@ int fs_read(struct fs_file *file, char *buffer, int count)
 	int ret;
 
 	if (file->index < 0)
-		return FS_READ_EOF;
+		file->index = 0;
 	if (file->index >= _fs_fsize(file))
 		return FS_READ_EOF;
 
@@ -135,8 +141,10 @@ int fs_read(struct fs_file *file, char *buffer, int count)
 	nb_read = min(nb_read, count);
 
 	ret = shfs_fio_read(f, (uint64_t) file->index, buffer, nb_read);
-	if (ret < 0)
+	if (ret < 0) {
+		printf("fs_read: read error: %d (%s) @ o=%d l=%\n", ret, strerror(-ret), file->index, nb_read);
 		return FS_READ_EOF; /* a read error happened -> cancel request */
+	}
 
 	file->index += nb_read;
 	return (nb_read);

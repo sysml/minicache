@@ -98,10 +98,59 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 }
 
 
+static int shcmd_shfs_cat(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	char buf[129];
+	uint64_t fsize, left, cur, dlen, plen;
+	int ret = 0;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [FILE]\n", argv[0]);
+		return -1;
+	}
+
+	f = shfs_fio_open(argv[1]);
+	if (!f) {
+		fprintf(cio, "%s: Could not open: %s\n", argv[1], strerror(errno));
+		return -1;
+	}
+	shfs_fio_size(f, &fsize);
+
+	left = fsize;
+	cur = 0;
+	while (left) {
+		dlen = min(left, sizeof(buf) - 1);
+
+		ret = shfs_fio_read(f, cur, buf, dlen);
+		if (ret < 0) {
+			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+			goto out;
+		}
+		buf[dlen] = '\0'; /* set terminating character for fprintf */
+		plen = fprintf(cio, "%s", buf);
+		fflush(cio);
+		if (plen < dlen) {
+			/* terminating character found earlier than expected
+			 * -> end of string in file */
+			goto out;
+		}
+		left -= dlen;
+		cur += dlen;
+	}
+
+ out:
+	fflush(stdout);
+	fflush(cio);
+	shfs_fio_close(f);
+	return ret;
+}
+
+
 static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 {
 	SHFS_FD f;
-	char buf[4096];
+	char buf[1024];
 	uint64_t fsize, left, cur, dlen;
 	int ret = 0;
 
@@ -120,7 +169,7 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 	left = fsize;
 	cur = 0;
 	while (left) {
-		dlen = min(left, 4096);
+		dlen = min(left, sizeof(buf));
 		ret = shfs_fio_read(f, cur, buf, dlen);
 		if (ret < 0) {
 			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
@@ -191,6 +240,7 @@ int register_shfs_tools(void)
 	ret = shell_register_cmd("ls", shcmd_shfs_ls);
 	ret = shell_register_cmd("file", shcmd_shfs_file);
 	ret = shell_register_cmd("df", shcmd_shfs_dumpfile);
+	ret = shell_register_cmd("cat", shcmd_shfs_cat);
 	ret = shell_register_cmd("shfs-info", shcmd_shfs_info);
 	if (ret < 0)
 		return ret;
