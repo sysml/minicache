@@ -34,6 +34,7 @@
 
 #include <lwip/opt.h>
 #include <lwip/err.h>
+#include "httpd_opt.h"
 
 /** Set this to 1 and provide the functions:
  * - "int fs_open_custom(struct fs_file *file, const char *name)"
@@ -128,5 +129,9 @@ void *fs_state_init(struct fs_file *file, const char *name);
 /** This user-defined function is called when a file is closed. */
 void fs_state_free(struct fs_file *file, void *state);
 #endif /* #if LWIP_HTTPD_FILE_STATE */
+
+#if LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME
+const char *fs_getmime(struct fs_file *file);
+#endif
 
 #endif /* __FS_H__ */

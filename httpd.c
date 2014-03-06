@@ -237,7 +237,8 @@
 #define HTTP_IS_DATA_VOLATILE(hs)   ((hs)->ssi ? TCP_WRITE_FLAG_COPY : 0)
 #else /* LWIP_HTTPD_SSI */
 /** Default: don't copy if the data is sent from file-system directly */
-#define HTTP_IS_DATA_VOLATILE(hs) (((hs->file != NULL) && (hs->handle != NULL) && (hs->file == \
+#define HTTP_IS_DATA_VOLATILE(hs) (((hs->file != NULL) && (hs->handle != NULL) && \
+                                    (!(hs)->handle->is_custom_file) && (hs->file == \
                                    (char*)hs->handle->data + hs->handle->len - hs->left)) \
                                    ? 0 : TCP_WRITE_FLAG_COPY)
 #endif /* LWIP_HTTPD_SSI */
@@ -624,8 +625,7 @@ http_write(struct tcp_pcb *pcb, const void* ptr, u16_t *length, u8_t apiflags)
        } else {
          len /= 2;
        }
-       LWIP_DEBUGF(HTTPD_DEBUG | LWIP_DBG_TRACE, 
-                   ("Send failed, trying less (%d bytes)\n", len));
+       LWIP_DEBUGF(HTTPD_DEBUG | LWIP_DBG_TRACE, ("Send failed, trying less (%d bytes)\n", len));
      }
    } while ((err == ERR_MEM) && (len > 1));
 
@@ -905,6 +905,11 @@ get_http_headers(struct http_state *pState, char *pszURI)
       *pszVars = '\0';
     }
 
+#if LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME
+    pState->hdrs[2] = fs_getmime(pState->file);
+    if (!pState->hdrs[2])
+      pState->hdrs[2] = g_psHTTPHeaderStrings[HTTP_HDR_DEFAULT_TYPE];
+#else
     /* Get a pointer to the file extension.  We find this by looking for the
        last occurrence of "." in the filename passed. */
     pszExt = NULL;
@@ -923,6 +928,7 @@ get_http_headers(struct http_state *pState, char *pszURI)
         break;
       }
     }
+#endif
 
     /* Reinstate the parameter marker if there was one in the original URI. */
     if(pszVars) {
@@ -930,6 +936,7 @@ get_http_headers(struct http_state *pState, char *pszURI)
     }
   }
 
+#if !LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME
   /* Does the URL passed have any file extension?  If not, we assume it
      is a special-case URL used for control state notification and we do
      not send any HTTP headers with the response. */
@@ -943,11 +950,13 @@ get_http_headers(struct http_state *pState, char *pszURI)
       /* No - use the default, plain text file type. */
       pState->hdrs[2] = g_psHTTPHeaderStrings[HTTP_HDR_DEFAULT_TYPE];
     }
-
+#endif
     /* Set up to send the first header string. */
     pState->hdr_index = 0;
     pState->hdr_pos = 0;
+#if !LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME
   }
+#endif
 }
 
 /** Sub-function of http_send(): send dynamic headers

@@ -38,6 +38,7 @@
 
 #include "lwip/opt.h"
 #include "lwip/err.h"
+#include "httpd_opt.h"
 #include "lwip/pbuf.h"
 
 
@@ -56,6 +57,10 @@
 #define LWIP_HTTPD_SUPPORT_POST   0
 #endif
 
+/** If dynamic headers are enabled fs can provide content type string */
+#ifndef LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME
+#define LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME 0
+#endif
 
 #if LWIP_HTTPD_CGI
 

@@ -41,19 +41,21 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			strncpy(str_name, hentry->name, sizeof(hentry->name));
 			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 			if (shfs_vol.hlen <= 32)
-				fprintf(cio, "?%-64s %12lu %12lu %-16s %s\n",
-				       str_hash,
-				       hentry->chunk,
-				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-				       str_mime,
-				       str_name);
+				fprintf(cio, "%c%-64s %12lu %12lu %-16s %s\n",
+				        SFHS_HASH_INDICATOR_PREFIX,
+				        str_hash,
+				        hentry->chunk,
+				        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+				        str_mime,
+				        str_name);
 			else
-				fprintf(cio, "?%-128s %12lu %12lu %-16s %s\n",
-				       str_hash,
-				       hentry->chunk,
-				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-				       str_mime,
-				       str_name);
+				fprintf(cio, "%c%-128s %12lu %12lu %-16s %s\n",
+				        SFHS_HASH_INDICATOR_PREFIX,
+				        str_hash,
+				        hentry->chunk,
+				        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+				        str_mime,
+				        str_name);
 		}
 	}
 

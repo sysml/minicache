@@ -71,7 +71,7 @@ SHFS_FD shfs_fio_open(const char *path)
 	}
 
 	/* lookup bentry (either by name or hash) */
-	if (path[0] == '?') {
+	if (path[0] == SFHS_HASH_INDICATOR_PREFIX) {
 		bentry = _shfs_lookup_bentry_by_hash(path + 1);
 	} else {
 #ifdef SHFS_OPENBYNAME

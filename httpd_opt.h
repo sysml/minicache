@@ -1,0 +1,21 @@
+#ifndef __HTTPD_OPT_H__
+#define __HTTPD_OPT_H__
+
+#define HTTPD_DEBUG LWIP_DBG_ON
+
+//#define LWIP_HTTPD_SUPPORT_EXTSTATUS 1
+//#define LWIP_HTTPD_SUPPORT_11_KEEPALIVE 1
+#define LWIP_HTTPD_SSI_INCLUDE_TAG 0
+
+/* Enables usage of SHFS for httpd
+ * shfs_fio_httpd.c is providing the required functions,
+ * the prototypes are defined in fs.h */
+#define LWIP_HTTPD_DYNAMIC_HEADERS 1
+#define LWIP_HTTPD_DYNAMIC_HEADERS_FS_HAS_MIME 1
+#define LWIP_HTTPD_DYNAMIC_FILE_READ 1
+//#define HTTPD_USE_CUSTOM_FILES 1
+//#define LWIP_HTTPD_DYNAMIC_FILE_READ 1
+#define LWIP_HTTPD_FILE_STATE 1
+#define LWIP_HTTPD_CUSTOM_FILES 1
+
+#endif /* __HTTPD_OPT_H__ */

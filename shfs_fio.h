@@ -3,13 +3,15 @@
 
 #include "shfs_defs.h"
 
+#define SFHS_HASH_INDICATOR_PREFIX ':'
+
 typedef struct shfs_hentry *SHFS_FD;
 
 /**
  * Opens a file/object via hash or name depending on
  * the first character of path:
  *
- * Hash: "?024a5bec"
+ * Hash: ":024a5bec"
  * Name: "index.html"
  */
 SHFS_FD shfs_fio_open(const char *path);
