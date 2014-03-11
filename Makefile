@@ -14,9 +14,9 @@ CFLAGS          += -Wunused -Winline -Wtype-limits -Wcast-align --param large-st
 
 CONFIG_START_NETWORK		= n
 # use 'vale' for xenbus driver instead of 'vif'
-CONFIG_NETMAP_XENBUS		= y
+CONFIG_NETMAP_XENBUS		= n
 # POSIX netmap implementation
-CONFIG_NETMAP			= y
+CONFIG_NETMAP			= n
 CONFIG_NETMAP_API		= 4
 CONFIG_MEMPOOL			= y
 CONFIG_LWIP			= y
@@ -24,9 +24,9 @@ CONFIG_LWIP_MINIMAL		= y
 CONFIG_LWIP_SINGLETHREADED 	= y
 
 # enable NM_WRAP API/lwip-netif only
-CONFIG_NETFRONT			= n
+CONFIG_NETFRONT			= y
 CONFIG_NETFRONT_NETMAP2		= n
-CONFIG_NMWRAP			= y
+CONFIG_NMWRAP			= n
 CONFIG_NMWRAP_SYNCRX		= n
 
 ######################################
