@@ -6,514 +6,462 @@
 #include <errno.h>
 #include <getopt.h>
 #include <kernel.h>
+#include <sched.h>
 #include <pkt_copy.h>
+#include <mempool.h>
+#include <semaphore.h>
 
-#include "ring.h"
-#include "mempool.h"
-#include "pktbuf.h"
-#include "netdev.h"
-#include "blkdev.h"
-#include "hexdump.h"
+#include <ipv4/lwip/ip_addr.h>
+#include <netif/etharp.h>
+#include <lwip/netif.h>
+#include <lwip/inet.h>
+#include <lwip/tcp.h>
+#include <lwip/tcp_impl.h>
+#include <lwip/tcpip.h>
+#include <lwip/dhcp.h>
+#include <lwip/dns.h>
+#include <lwip/ip_frag.h>
+#include <lwip/init.h>
+#include <lwip/stats.h>
 
-#define RXFIFO_LEN 1024 /* can have 1023 elements */
-#define TXFIFO_LEN 8192 /* can have 8191 elements */
-#define MAX_RX_BURST_LEN 16
-#define MAX_HANDLE_BURST_LEN 16
-#define MAX_TX_BURST_LEN 128
-#define PKTPOOL_SIZE 8192
-#define IOBPOOL_SIZE 1024
-#define PKTENCAP_HDRSIZE (sizeof(struct eth_hdr) + sizeof(struct ip_hdr) + sizeof(struct udp_hdr))
-#define MAX_PKTPAYLOAD (1536 - PKTENCAP_HDRSIZE)
-#define MIN_PKTIOPAYLOAD 64 /* minimum I/O load in a packet (set to 64 because of pktcopy) */
-#define PKT_TTL 2
-#define PRINT_STATISTICS_SEC 2 /* print statistics each ... second */
-
-#ifndef min
-#define min(x, y) (((x) < (y)) ? (x) : (y))
-#endif
-static inline uint32_t min3(uint32_t x, uint32_t y, uint32_t z)
-{
-  uint32_t a = min(x, y);
-  return min(a, z);
-}
-static inline uint32_t min4(uint32_t w, uint32_t x, uint32_t y, uint32_t z)
-{
-  uint32_t a = min(w, x);
-  uint32_t b = min(y, z);
-  return min(a, b);
-}
-/* checks if a number is a power of two. Copied from BNX2X driver (Linux) */
-#ifndef POWER_OF_2
-  #define POWER_OF_2(x)   ((0 != (x)) && (0 == ((x) & ((x)-1))))
+#ifdef CONFIG_NMWRAP
+#include <lwip-nmwrap.h>
+#else
+#include <lwip-netfront.h>
 #endif
 
-static uint64_t statistics_nb_read_blocks = 0;
-static uint64_t statistics_nb_sent_packets = 0;
+#include "httpd.h"
+#include "shell.h"
+#include "shfs.h"
+#include "shfs_tools.h"
 
-struct _args {
-  int ndid;
-  int bdid;
-  struct eth_addr src_mac;
-  struct ip_addr src_ip;
-  uint16_t src_port;
-  struct eth_addr dst_mac;
-  struct ip_addr dst_ip;
-  uint16_t dst_port;
-  uint8_t ttl;
+#define MAX_NB_VBD 64
+#ifdef CONFIG_LWIP_SINGLETHREADED
+#define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
+/* runs (func) a command on a timeout */
+#define TIMED(ts_now, ts_tmr, interval, func)                        \
+	do {                                                         \
+		if (unlikely(((ts_now) - (ts_tmr)) >= (interval))) { \
+			if ((ts_tmr))                                \
+				(func);                              \
+			(ts_tmr) = (ts_now);                         \
+		}                                                    \
+	} while(0)
+#endif /* CONFIG_LWIP_MINIMAL */
 
-  int pchksum; /* enable UDP payload checksumming? */
-  size_t blksize; /* block size per request */
-  size_t sectors_per_blk; /* disk sectors per request */
-  size_t addpayload; /* additional payload for each packet (simulating protocol overhead) */
-  int indirect; /* use handle_indirect instead of handle_direct */
-  uint32_t nb_chunks; /* number of chunk packets per request */
-  size_t chunklen; /* length of an I/O chunk */
-  size_t chunk_pktlen; /* pktlen of a chunk packet */
+/**
+ * ARGUMENT PARSING
+ */
+static struct _args {
+    int             dhclient;
+    struct eth_addr mac;
+    struct ip_addr  ip;
+    struct ip_addr  mask;
+    struct ip_addr  gw;
+    struct ip_addr  dns0;
+    struct ip_addr  dns1;
+
+    unsigned int    nb_vbds;
+    unsigned int    vbd_id[16];
+    unsigned int    startup_delay;
 } args;
 
-static inline void receive(struct netdev *nd, struct ring *txfifo, struct mempool *pktpool)
+static int parse_args_setval_int(int *out, const char *buf)
 {
-  /* TODO */
-}
-
-static inline void transmit(struct netdev *nd, struct ring *txfifo)
-{
-  uint32_t burstlen;
-  struct pktbuf *txburst[MAX_TX_BURST_LEN];
-  //burstlen = min3(MAX_TX_BURST_LEN, ring_count(txfifo), netdev_xmit_freebuf_count(nd));
-  burstlen = min(MAX_TX_BURST_LEN, ring_count(txfifo)); /* temporary */
-
-  if (likely(burstlen > 0)) {
-  	ring_dequeue_multiple(txfifo, (void **) txburst, burstlen); /* does not fail, because here is the only point
-																 where objects are picked from the ring */
-	netdev_xmit_burst(nd, txburst, burstlen);
-	statistics_nb_sent_packets += burstlen;
-  }
-}
-
-static void handle_direct_cb(struct blkdev *bd, uint64_t sector, size_t nb_sectors, int write, int ret, void *argp)
-{
-  struct pktbuf *pkt = argp;
-  struct ring *txfifo = pkt->private;
-
-  if (unlikely(ret < 0)) {
-	printf("I/O request @ sector %llu failed: %d\n", sector, ret);
-	pktpool_put(pkt);
-	return;
-  }
-
-  /* encapsulate packet and put it to txfifo */
-  pktbuf_encap_udp_nocheck(pkt, &args.src_mac, &args.dst_mac, &args.src_ip, &args.dst_ip, args.src_port, args.dst_port, args.ttl, args.pchksum);
-  ring_enqueue(txfifo, pkt);
-
-  /* update statistics */
-  statistics_nb_read_blocks++;
-}
-
-static inline void handle_direct(struct ring *rxfifo, struct blkdev *bd, struct ring *txfifo, struct mempool *pktpool)
-{
-  uint32_t burstlen, i;
-  static uint64_t addr_s = 0;
-  struct pktbuf *pkt;
-
-  /* poll for done requests */
-  blkdev_poll_req(bd);
-
-  burstlen = min3(MAX_HANDLE_BURST_LEN, pktpool_free_count(pktpool), blkdev_avail_req(bd));
-  for (i = 0; i < burstlen; i++) {
-	/* Instead of picking up request from rx_fifo, just generate I/O requests */
-	if (unlikely(addr_s >= blkdev_sectors(bd)))
-	  addr_s = 0;
-
-	/* submit a new I/O request */
-	pkt = pktpool_pick(pktpool);
-	pkt->pktlen = args.chunk_pktlen;
-	pkt->private = txfifo;
-	blkdev_submit_req_nocheck(bd, addr_s, args.sectors_per_blk, 0, pkt->p_obj.data, handle_direct_cb, pkt);
-
-	addr_s += args.sectors_per_blk;
-  }
-}
-
-struct _ioo_args {
-  struct ring *txfifo;
-  struct pktbuf *pkts[0];
-};
-
-static void handle_indirect_cb(struct blkdev *bd, uint64_t sector, size_t nb_sectors, int write, int ret, void *argp)
-{
-  uint32_t i;
-  struct mempool_obj *ioo = argp;
-  struct _ioo_args *ioo_args = ioo->private;
-
-  if (unlikely(ret < 0)) {
-	printf("I/O request @ sector %llu failed: %d\n", sector, ret);
-	pktpool_put_multiple(ioo_args->pkts, args.nb_chunks);
-	mempool_put(ioo);
-	return;
-  }
-
-  for (i = 0; i < args.nb_chunks; i++) {
-	pkt_copy(ioo_args->pkts[i]->p_obj.data, (void *)((uintptr_t) ioo->data + i * args.chunklen), args.chunklen);
-	ioo_args->pkts[i]->pktlen = args.chunk_pktlen;
-	pktbuf_encap_udp_nocheck(ioo_args->pkts[i], &args.src_mac, &args.dst_mac, &args.src_ip, &args.dst_ip, args.src_port, args.dst_port, args.ttl, args.pchksum);
-  }
-  ring_enqueue_multiple(ioo_args->txfifo, (void **) ioo_args->pkts, args.nb_chunks);
-  mempool_put(ioo);
-
-  /* update statistics */
-  statistics_nb_read_blocks++;
-}
-
-static inline void handle_indirect(struct ring *rxfifo, struct blkdev *bd, struct mempool *iobpool, struct ring *txfifo, struct mempool *pktpool)
-{
-  uint32_t burstlen, i;
-  static uint64_t addr_s = 0;
-  struct mempool_obj *ioo;
-  struct _ioo_args *ioo_args;
-
-  /* poll for finished requests */
-  blkdev_poll_req(bd);
-
-  burstlen = min4(MAX_HANDLE_BURST_LEN, (pktpool_free_count(pktpool) / args.nb_chunks), mempool_free_count(iobpool), blkdev_avail_req(bd));
-  for (i = 0; i < burstlen; i++) {
-	/* Instead of picking up request from rx_fifo, just generate I/O requests */
-	if (unlikely(addr_s >= blkdev_sectors(bd)))
-	  addr_s = 0;
-
-	/* submit a new I/O request */
-	ioo = mempool_pick(iobpool);
-	ioo_args = ioo->private;
-	ioo_args->txfifo = txfifo;
-	pktpool_pick_multiple(pktpool, ioo_args->pkts, args.nb_chunks);
-	blkdev_submit_req_nocheck(bd, addr_s, args.sectors_per_blk, 0, ioo->data, handle_indirect_cb, ioo);
-
-	addr_s += args.sectors_per_blk;
-  }
-}
-
-static int parse_decimal(const char *str, int *val)
-{
-  char *end = NULL;
-  int pval;
-
-  pval = strtoul(str, &end, 10);
-  if ((str[0] == '\0') || (end == NULL) || (*end != '\0'))
-    return -1;
-
-  *val = pval;
-  return 0;
-}
-
-static int parse_args(int argc, char **argv) {
-  int opt;
-
-  memset(&args, 0, sizeof(args));
-  args.ndid = 0; /* first vif/vale device */
-  args.bdid = 51712; /* xvda */
-  IP4_ADDR((&args.src_ip), 192, 168, 10, 127);
-  args.src_port = 6500;
-  args.dst_mac.addr[0] = 0x96;
-  args.dst_mac.addr[1] = 0x81;
-  args.dst_mac.addr[2] = 0x2f;
-  args.dst_mac.addr[3] = 0x8a;
-  args.dst_mac.addr[4] = 0x5b;
-  args.dst_mac.addr[5] = 0x99;
-  IP4_ADDR((&args.dst_ip), 192, 168, 10, 1);
-  args.dst_port = 6501;
-  args.ttl = PKT_TTL;
-
-  args.blksize = 512;
-
-  while ((opt = getopt(argc, argv, "d:n:b:p:iuh")) != -1) {
-	switch (opt) {
-	case 'b': /* block size */
-	  if (parse_decimal(optarg, (int *) &args.blksize) ||
-		  args.blksize < 512 ||
-		  args.blksize > 32768 ||
-		  !POWER_OF_2(args.blksize)) {
-		printf("invalid block size (has to be a power of 2, at least 512 B, and at most 32 KB)\n");
+	if (sscanf(buf, "%d", out) != 1)
 		return -1;
-	  }
-	  break;
-	case 'i': /* indirect I/O */
-	  args.indirect = 1;
-	  break;
-	case 'u': /* UDP payload checksum */
-	  args.pchksum = 1;
-	  break;
-    case 'p': /* additional payload */
-	  if (parse_decimal(optarg, (int *) &args.addpayload) ||
-		  args.addpayload < 0 || args.addpayload > (MAX_PKTPAYLOAD - MIN_PKTIOPAYLOAD)) {
-		printf("invalid additional payload size (has to be at least %u B and at most %llu B)\n", 0, (MAX_PKTPAYLOAD - MIN_PKTIOPAYLOAD));
-		return -1;
-	  }
-	  break;
-    case 'd': /* block device id */
-      if (parse_decimal(optarg, (int *) &args.bdid) || args.bdid < 0) {
-        printf("invalid block device id\n", MAX_PKTPAYLOAD);
-        return -1;
-      }
-      break;
-    case 'n': /* network device id */
-      if (parse_decimal(optarg, (int *) &args.ndid) || args.ndid < 0) {
-        printf("invalid block device id\n", MAX_PKTPAYLOAD);
-        return -1;
-      }
-      break;
-	case 'h': /* help */
-	  return -1;
-	default:
-	  printf("unrecognized option: \"-%c %s\"\n", opt, optarg);
-	  return -1;
-	}
-  }
-
-  if (!args.indirect && (args.blksize + args.addpayload) > MAX_PKTPAYLOAD) {
-	printf("Resulting packet payload size is to big (> %llu B).\nPlease enable indirect I/O mode for packet chunking\n", MAX_PKTPAYLOAD);
-	return -1;
-  }
-
-  /* Calculate number of chunks and resulting I/O payload per chunk packet */
-  if (args.indirect) {
-	args.nb_chunks = 1;
-	while (args.blksize / args.nb_chunks > (MAX_PKTPAYLOAD - args.addpayload))
-	  args.nb_chunks <<= 1;
-	args.chunklen = args.blksize / args.nb_chunks;
-  } else {
-	args.nb_chunks = 1;
-	args.chunklen = args.blksize;
-  }
-  args.chunk_pktlen = args.chunklen + args.addpayload;
-
-  return 0;
+	return 0;
 }
 
-static void parse_usage(void)
+static int parse_args(int argc, char *argv[])
 {
-  printf("minicache [-i] [-b BLKSIZE] [-p PLSIZE] [-u] [-d ID] [-n ID]\n");
-  printf("\n");
-  printf("  -i          Indirect I/O mode, copies read block into packet(s) instead of performing I/O request directly to \n");
-  printf("  -u          Enable calculation of UDP payload checksum\n");
-  printf("  -b BLKSIZE  Block size for I/O requests (default=512)\n");
-  printf("  -p PLSIZE   Additional payload for each packet (protocol overhead simulation)\n");
-  printf("  -d ID       Block device ID to open\n");
-  printf("  -n ID       Network device ID to open\n");
+    int opt;
+    int ret;
+    int ival;
+
+    /* default arguments */
+    memset(&args, 0, sizeof(args));
+    IP4_ADDR(&args.ip,   10,  10,  10,  1);
+    IP4_ADDR(&args.mask, 255, 255, 255, 0);
+    IP4_ADDR(&args.gw,   0,   0,   0,   0);
+    IP4_ADDR(&args.dns0, 0,   0,   0,   0);
+    IP4_ADDR(&args.dns1, 0,   0,   0,   0);
+    args.nb_vbds = 4;
+    args.vbd_id[0] = 51712; /* xvda */
+    args.vbd_id[1] = 51728; /* xvdb */
+    args.vbd_id[2] = 51744; /* xvdc */
+    args.vbd_id[3] = 51760; /* xvdd */
+    args.dhclient = 0;
+    args.startup_delay = 0;
+
+     while ((opt = getopt(argc, argv, "s:")) != -1) {
+         switch(opt) {
+         case 's': /* startup delay */
+              ret = parse_args_setval_int(&ival, optarg);
+              if (ret < 0 || ival < 0) {
+	           printf("invalid delay specified\n");
+	           return -1;
+              }
+              args.startup_delay = (unsigned int) ival;
+              break;
+         default:
+	      return -1;
+         }
+     }
+
+     return 0;
 }
 
-int main(int argc, char **argv)
+/**
+ * SHUTDOWN/SUSPEND
+ */
+static volatile int shall_shutdown = 0;
+static volatile int shall_reboot = 0;
+static volatile int shall_suspend = 0;
+
+static int shcmd_halt(FILE *cio, int argc, char *argv[])
 {
-  struct mempool *pktpool;
-  struct mempool *iobpool;
-  struct ring *rxfifo;
-  struct ring *txfifo;
-  struct netdev *nd;
-  struct blkdev *bd;
-  uint64_t ts_tick, ts_tock, ts_diff;
-  uint64_t nb_rd_blks, nb_tx_pkts;
-  uint64_t nb_rd_blks_prev = 0;
-  uint64_t nb_tx_pkts_prev = 0;
-  int ret;
+    shall_reboot = 0;
+    shall_shutdown = 1;
+    return SH_CLOSE; /* special return code: closes the shell session */
+}
 
-  /*
-   * Arguments
-   */
-  if (parse_args(argc, argv) < 0) {
-	parse_usage();
-	return 1;
-  }
+static int shcmd_reboot(FILE *cio, int argc, char *argv[])
+{
+    shall_reboot = 1;
+    shall_shutdown = 1;
+    return SH_CLOSE;
+}
 
-  /* 
-   * Initialization
-   */
-  ret = 1; /* error */
-  printf("Opening network device %d\n", args.ndid);
-  nd = open_netdev((unsigned int) args.ndid);
-  if (!nd) {
-	printf("Could not open network device (vif id: %d): %d\n", args.ndid, errno);
-	goto out;
-  }
-  printf("Network device has MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
-		 netdev_mac(nd)->addr[0], netdev_mac(nd)->addr[1], netdev_mac(nd)->addr[2],
-		 netdev_mac(nd)->addr[3], netdev_mac(nd)->addr[4], netdev_mac(nd)->addr[5]);
-  memcpy(args.src_mac.addr, netdev_mac(nd)->addr, ETHARP_HWADDR_LEN);
+static int shcmd_suspend(FILE *cio, int argc, char *argv[])
+{
+    shall_suspend = 1;
+    return 0;
+}
 
-  printf("Opening block device %d\n", args.bdid);
-  bd = open_blkdev((unsigned int) args.bdid, O_RDONLY);
-  if (!bd) {
-	printf("Could not open block device (vbd id: %d): %d\n", args.bdid, errno);
-	goto out_close_nd;
-  }
-  printf("Block device has sector size of %llu bytes\n", blkdev_ssize(bd));
-  printf("Block device has %llu sectors (%llu Mbytes)\n", blkdev_size(bd) / blkdev_ssize(bd), (blkdev_size(bd) >> 20));
-  if (args.blksize & (blkdev_ssize(bd) - 1)) {
-	printf("Error: Please specify another block size because current block size (%d) is not a multiple of device block size\n", args.blksize);
-	goto out_close_bd;
-  }
-  args.sectors_per_blk = args.blksize / blkdev_ssize(bd);
+void app_shutdown(unsigned reason)
+{
+    switch (reason) {
+    case SHUTDOWN_poweroff:
+	    printf("Poweroff requested\n", reason);
+	    shall_reboot = 0;
+	    shall_shutdown = 1;
+	    break;
+    case SHUTDOWN_reboot:
+	    printf("Reboot requested: %d\n", reason);
+	    shall_reboot = 1;
+	    shall_shutdown = 1;
+	    break;
+    case SHUTDOWN_suspend:
+	    printf("Suspend requested: %d\n", reason);
+	    shall_suspend = 1;
+	    break;
+    default:
+	    printf("Unknown shutdown action requested: %d. Ignoring\n", reason);
+	    break;
+    }
+}
 
-  printf("Allocating RX FIFO\n");
-  rxfifo = alloc_ring(RXFIFO_LEN);
-  if (!rxfifo) {
-	printf("Could not allocate ring 'rxfifo': %d\n", errno);
-	goto out_close_bd;
-  }
-  
-  printf("Allocating TX FIFO\n");
-  txfifo = alloc_ring(TXFIFO_LEN);
-  if (!txfifo) {
-	printf("Could not allocate ring 'txfifo': %d\n", errno);
-	goto out_free_rxfifo;
-  }
+/**
+ * VBD MGMT
+ */
+struct semaphore _vbd_lock;
 
-  /*
-   * Main loop
-   */
-  ret = 0; /* success */
-  printf("Info: Using %u packets per I/O request (blocksize: %llu B; %llu B per packet) with a total payload of %llu B\n", args.nb_chunks, args.blksize, args.chunklen, args.chunk_pktlen);
-  if (args.indirect) {
-	/*
-	 * INDIRECT I/O
-	 */
-	printf("Allocating packet buffer pool\n");
-	pktpool = alloc_pktpool(PKTPOOL_SIZE, args.chunk_pktlen, 0, PKTENCAP_HDRSIZE, 0);
-	if (!pktpool) {
-	  printf("Could not allocate packet buffer pool 'pktpool': %d\n", errno);
-	  goto out_free_txfifo;
-	}
-	printf("Allocating I/O buffer pool\n");
-	iobpool = alloc_mempool(IOBPOOL_SIZE, args.blksize, blkdev_ssize(bd), 0, 0, NULL, 0, sizeof(struct _ioo_args) + (args.nb_chunks * sizeof(struct pktbuf *)));
-	if (!iobpool) {
-	  printf("Could not allocate I/O buffer pool 'iobpool': %d\n", errno);
-	  goto out_free_pktpool;
-	}
+static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
+{
+    struct blkdev *bd;
+    unsigned int i ,j;
+    int inuse;
 
-	printf("Entering main loop...\n");
-	printf("%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s\n",
-               "vbd ID",
-               "mode (0=direct I/O, 1=indirect I/O)",
-               "block size",
-               "packet size",
-               "packets per block",
-               "packet: hdr length",
-               "packet: block data length",
-               "packet: additional payload",
-               "packet: UDP checksum",
-               "nb blocks",
-               "nb packets",
-               "interval len (sec)",
-               "timestamp (sec)",
-               "/\\nb blocks",
-               "/\\nb packets");
-	ts_tick = NOW();
-	while (1) {
-	  //receive(nd, rxfifo, pktpool);                        /* puts received pkts (allocated from pktpool) to rxfifo */
-	  handle_indirect(rxfifo, bd, iobpool, txfifo, pktpool); /* transforms rx into submitted ioreqs, finished ioreqs produce a pkt (from pktpool) on txfifo */
-	  transmit(nd, txfifo);                                  /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
+    down(&_vbd_lock);
+    for (i = 0; i < args.nb_vbds; ++i) {
+	    /* because blkfront does not support opening the same device for
+	     * multiple times, we need to check if a device was already
+	     * opened by SHFS */
+	    inuse = 0;
+	    bd = NULL;
+	    if (shfs_mounted)
+		    for (j = 0; j < shfs_vol.nb_members; ++j) {
+			    if (shfs_vol.member[j].bd->vbd_id == args.vbd_id[i]) {
+				    bd = shfs_vol.member[j].bd;
+				    inuse = 1;
+				    break;
+			    }
+		    }
+	    if (!bd)
+		    bd = open_blkdev(args.vbd_id[i], O_RDONLY);
 
-	  /* statistics */
-	  ts_tock = NOW();
-	  ts_diff = ts_tock - ts_tick;
-	  if (unlikely(ts_diff >= (PRINT_STATISTICS_SEC * 1000000000))) {
-              nb_rd_blks = statistics_nb_read_blocks;
-              nb_tx_pkts = statistics_nb_sent_packets;
-              printf("%d;%d;%llu;%llu;%llu;%llu;%llu;%llu;%d;%llu;%llu;%llu.%09llu;%llu.%09llu;%llu;%llu\n",
-                     args.bdid, /* vdb ID */
-                     args.indirect ? 1 : 0, /* mode */
-                     args.blksize, /* block size */
-                     args.chunk_pktlen + PKTENCAP_HDRSIZE + 4, /* packet size (incl. CRC) */
-                     args.nb_chunks, /* packets per block */
-                     PKTENCAP_HDRSIZE, /* packet: hdr length */
-                     args.chunklen, /* packet: block data length */
-                     args.addpayload, /* packet: additional payload */
-                     args.pchksum ? 1 : 0, /* packet: UDP checksum */
-                     nb_rd_blks, /* nb blocks */
-                     nb_tx_pkts, /* nb packets */
-                     ts_diff / 1000000000, ts_diff % 1000000000, /* interval len (sec) */
-                     ts_tick / 1000000000, ts_tick % 1000000000, /* timestamp (sec) */
-                     nb_rd_blks - nb_rd_blks_prev,
-                     nb_tx_pkts - nb_tx_pkts_prev);
-                nb_rd_blks_prev = nb_rd_blks;
-                nb_tx_pkts_prev = nb_tx_pkts;
-		ts_tick = NOW();
-	  }
-	}
-  } else {
-	/*
-         * DIRECT I/O to pktbuf 
-	 */
-	printf("Allocating packet buffer pool\n");
-	pktpool = alloc_pktpool(PKTPOOL_SIZE, args.chunk_pktlen, blkdev_ssize(bd), PKTENCAP_HDRSIZE, 0);
-	if (!pktpool) {
-	  printf("Could not allocate packet buffer pool 'pktpool': %d\n", errno);
-	  goto out_free_txfifo;
-	}
+	    if (bd) {
+		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
+		            args.vbd_id[i],
+		            blkdev_ssize(bd),
+		            blkdev_size(bd),
+		            inuse ? ", inuse" : "");
 
-	printf("Entering main loop...\n");
-	printf("%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s\n",
-		   "vbd ID",
-		   "mode (0=direct I/O, 1=indirect I/O)",
-		   "block size",
-		   "packet size",
-		   "packets per block",
-		   "packet: hdr length",
-		   "packet: block data length",
-		   "packet: additional payload",
-		   "packet: UDP checksum",
-		   "nb blocks",
-		   "nb packets",
-		   "interval len (sec)",
-		   "timestamp (sec)");
-	ts_tick = NOW();
-	while (1) {
-	  //receive(nd, rxfifo, pktpool);               /* puts received pkts (allocated from pktpool) to rxfifo */
-	  handle_direct(rxfifo, bd, txfifo, pktpool);   /* transforms rx into submitted ioreqs, finished ioreqs produce a pkt (from pktpool) on txfifo */
-	  transmit(nd, txfifo);                         /* picks pkts from txfifo, sents them out and releases pktbuf to their pktpool */
+		    if (!inuse)
+			    close_blkdev(bd);
+	    }
+    }
+    up(&_vbd_lock);
+    return 0;
+}
 
-	  /* statistics */
-	  ts_tock = NOW();
-	  ts_diff = ts_tock - ts_tick;
-	  if (unlikely(ts_diff >= (PRINT_STATISTICS_SEC * 1000000000))) {
-              nb_rd_blks = statistics_nb_read_blocks;
-              nb_tx_pkts = statistics_nb_sent_packets;
-              printf("%d;%d;%llu;%llu;%llu;%llu;%llu;%llu;%d;%llu;%llu;%llu.%09llu;%llu.%09llu;%llu;%llu\n",
-                     args.bdid, /* vdb ID */
-                     args.indirect ? 1 : 0, /* mode */
-                     args.blksize, /* block size */
-                     args.chunk_pktlen + PKTENCAP_HDRSIZE + 4, /* packet size (incl. CRC) */
-                     args.nb_chunks, /* packets per block */
-                     PKTENCAP_HDRSIZE, /* packet: hdr length */
-                     args.chunklen, /* packet: block data length */
-                     args.addpayload, /* packet: additional payload */
-                     args.pchksum ? 1 : 0, /* packet: UDP checksum */
-                     nb_rd_blks, /* nb blocks */
-                     nb_tx_pkts, /* nb packets */
-                     ts_diff / 1000000000, ts_diff % 1000000000, /* interval len (sec) */
-                     ts_tick / 1000000000, ts_tick % 1000000000, /* timestamp (sec) */
-                     nb_rd_blks - nb_rd_blks_prev,
-                     nb_tx_pkts - nb_tx_pkts_prev);
-                nb_rd_blks_prev = nb_rd_blks;
-                nb_tx_pkts_prev = nb_tx_pkts;
-		ts_tick = NOW();
-	  }
-	}
-  }
+static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
+{
+    unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
+    unsigned int count;
+    unsigned int i, j;
+    int ret;
 
-  /*
-   * Cleanup
-   */
-  if(args.indirect)
-	free_mempool(iobpool);
- out_free_pktpool:
-  free_pktpool(pktpool);
- out_free_txfifo:
-  free_ring(txfifo);
- out_free_rxfifo:
-  free_ring(rxfifo);
- out_close_bd:
-  close_blkdev(bd);
- out_close_nd:
-  close_netdev(nd);
+    if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
+	    fprintf(cio, "At most %u devices are supported\n", MAX_NB_TRY_BLKDEVS);
+	    return -1;
+    }
+    if ((argc) == 1) {
+	    fprintf(cio, "Usage: %s [vbd_id]...\n", argv[0]);
+	    return -1;
+    }
+    for (i = 1; i < argc; ++i) {
+	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
+		    fprintf(cio, "Invalid argument %u\n", i);
+		    return -1;
+	    }
+    }
+    count = argc - 1;
+
+    /* search for duplicates in the list
+     * This is unfortunately an ugly & slow way of how it is done here... */
+    for (i = 0; i < count; ++i)
+	    for (j = 0; j < count; ++j)
+		    if (i != j && vbd_id[i] == vbd_id[j]) {
+			    fprintf(cio, "Found duplicates in the list\n");
+			    return -1;
+		    }
+
+    down(&_vbd_lock);
+    if (shfs_mounted) {
+	    up(&_vbd_lock);
+	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
+	    return -1;
+    }
+    ret = mount_shfs(vbd_id, count);
+    up(&_vbd_lock);
+    if (ret < 0)
+	    fprintf(cio, "Could not mount: %s\n", strerror(-ret));
+    return ret;
+}
+
+static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
+{
+    int ret;
+
+    down(&_vbd_lock);
+    ret = umount_shfs();
+    up(&_vbd_lock);
+    if (ret < 0)
+	    fprintf(cio, "Could not unmount: %s\n", strerror(-ret));
+    return ret;
+}
+
+/**
+ * MAIN
+ */
+int main(int argc, char *argv[])
+{
+    struct netif netif;
+    int ret;
+#ifdef CONFIG_LWIP_SINGLETHREADED
+    uint64_t now;
+    uint64_t ts_tcp = 0;
+    uint64_t ts_etharp = 0;
+    uint64_t ts_ipreass = 0;
+    uint64_t ts_dns = 0;
+    uint64_t ts_dhcp_fine = 0;
+    uint64_t ts_dhcp_coarse = 0;
+#endif
+
+    init_SEMAPHORE(&_vbd_lock, 1);
+
+    /* -----------------------------------
+     * argument parsing
+     * ----------------------------------- */
+    if (parse_args(argc, argv) < 0) {
+	    printf("Argument parsing error!\n" \
+	           "Please check your arguments\n");
+	    goto out;
+    }
+    if (args.startup_delay) {
+	    unsigned int s;
+	    printf("Startup delay");
+	    fflush(stdout);
+	    for (s = 0; s < args.startup_delay; ++s) {
+		    printf(".");
+		    fflush(stdout);
+		    msleep(1000);
+	    }
+	    printf("\n");
+    }
+
+    /* -----------------------------------
+     * lwIP initialization
+     * ----------------------------------- */
+    printf("Starting networking...\n");
+#ifdef CONFIG_LWIP_SINGLETHREADED
+    lwip_init(); /* single threaded */
+#else
+    tcpip_init(NULL, NULL); /* multi-threaded */
+#endif
+
+    /* -----------------------------------
+     * network interface initialization
+     * ----------------------------------- */
+#ifdef CONFIG_LWIP_SINGLETHREADED
+#ifdef CONFIG_NMWRAP
+    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                   nmwif_init, ethernet_input)) {
+#else
+    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                   netfrontif_init, ethernet_input)) {
+#endif /* CONFIG_NMWRAP */
+#else
+#ifdef CONFIG_NMWRAP
+    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                   nmwif_init, tcpip_input)) {
+#else
+    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                   netfrontif_init, tcpip_input)) {
+#endif /* CONFIG_NMWRAP */
+
+#endif /* CONFIG_LWIP_SINGLETHREADED */
+    /* device init function is user-defined
+     * use ip_input instead of ethernet_input for non-ethernet hardware
+     * (this function is assigned to netif.input and should be called by
+     * the hardware driver) */
+    /*
+     * The final parameter input is the function that a driver will
+     * call when it has received a new packet. This parameter
+     * typically takes one of the following values:
+     * ethernet_input: If you are not using a threaded environment
+     *                 and the driver should use ARP (such as for
+     *                 an Ethernet device), the driver will call
+     *                 this function which permits ARP packets to
+     *                 be handled, as well as IP packets.
+     * ip_input:       If you are not using a threaded environment
+     *                 and the interface is not an Ethernet device,
+     *                 the driver will directly call the IP stack.
+     * tcpip_ethinput: If you are using the tcpip application thread
+     *                 (see lwIP and threads), the driver uses ARP,
+     *                 and has defined the ETHARP_TCPIP_ETHINPUT lwIP
+     *                 option. This function is used for drivers that
+     *                 passes all IP and ARP packets to the input function.
+     * tcpip_input:    If you are using the tcpip application thread
+     *                 and have defined ETHARP_TCPIP_INPUT option.
+     *                 This function is used for drivers that pass
+     *                 only IP packets to the input function.
+     *                 (The driver probably separates out ARP packets
+     *                 and passes these directly to the ARP module).
+     *                 (Someone please recheck this: in lwip 1.4.1
+     *                 there is no tcpip_ethinput() ; tcp_input()
+     *                 handles ARP packets as well).
+     */
+        printf("FATAL: Could not initialize the network interface\n");
+        goto out;
+    }
+    netif_set_default(&netif);
+    netif_set_up(&netif);
+    if (args.dhclient)
+        dhcp_start(&netif);
+
+    /* -----------------------------------
+     * filesystem automount
+     * ----------------------------------- */
+    init_shfs();
+    printf("Trying to mount cache filesystem...\n");
+    ret = mount_shfs(args.vbd_id, args.nb_vbds);
+    if (ret < 0)
+	    printf("ERROR: Could not mount cache filesystem\n");
+
+    /* -----------------------------------
+     * service initialization
+     * ----------------------------------- */
+    printf("Starting shell...\n");
+    init_shell(0, 4); /* no local session + 4 telnet sessions */
+    printf("Starting httpd...\n");
+    init_httpd();
+
+    /* add custom commands to the shell */
+    shell_register_cmd("halt", shcmd_halt);
+    shell_register_cmd("reboot", shcmd_reboot);
+    shell_register_cmd("suspend", shcmd_suspend);
+    shell_register_cmd("lsvbd", shcmd_lsvbd);
+    shell_register_cmd("mount", shcmd_mount_shfs);
+    shell_register_cmd("umount", shcmd_umount_shfs);
+    register_shfs_tools();
+
+    /* -----------------------------------
+     * Processing loop
+     * ----------------------------------- */
+    printf("*** MiniCache is up and running ***\n");
+    while(likely(!shall_shutdown)) {
+	/* poll block devices */
+	shfs_poll_blkdevs();
+#ifdef CONFIG_LWIP_SINGLETHREADED
+        /* NIC handling loop (single threaded lwip) */
+#ifdef CONFIG_NMWRAP
+	nmwif_handle(&netif, RXBURST_LEN);
+#else
+	netfrontif_handle(&netif, RXBURST_LEN);
+#endif /* CONFIG_NMWRAP */
+	/* Process lwip network-related timers */
+        now = NSEC_TO_MSEC(NOW());
+        TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
+        TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
+        TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
+        TIMED(now, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
+        if (args.dhclient) {
+	        TIMED(now, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
+	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
+        }
+#endif /* CONFIG_LWIP_SINGLETHREADED */
+        schedule(); /* yield CPU */
+
+        if (unlikely(shall_suspend)) {
+            printf("System is going to suspend now\n");
+            netif_set_down(&netif);
+            netif_remove(&netif);
+
+            kernel_suspend();
+
+            printf("System woke up from suspend\n");
+            netif_set_default(&netif);
+            netif_set_up(&netif);
+            if (args.dhclient)
+                dhcp_start(&netif);
+            shall_suspend = 0;
+        }
+    }
+
+    /* -----------------------------------
+     * Shutdown
+     * ----------------------------------- */
+    if (shall_reboot)
+	    printf("System is going down to reboot now\n");
+    else
+	    printf("System is going down to halt now\n");
+    printf("Stopping httpd...\n");
+    exit_httpd();
+    printf("Stopping shell...\n");
+    exit_shell();
+    printf("Unmounting cache filesystem...\n");
+    umount_shfs();
+    exit_shfs();
+    printf("Stopping networking...\n");
+    netif_set_down(&netif);
+    netif_remove(&netif);
  out:
-  return ret;
+    if (shall_reboot)
+	    kernel_poweroff(SHUTDOWN_reboot);
+    kernel_poweroff(SHUTDOWN_poweroff);
+
+    return 0; /* will never be reached */
 }

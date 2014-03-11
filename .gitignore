@@ -1,1 +1,10 @@
+shfs-tools/shfs_mkfs
+shfs-tools/shfs_admin
+build/*
+*.bak
 *.o
+*.a
+*.so
+*~
+\#_*\#
+minicache
