@@ -11,15 +11,30 @@ shared libraries installed:
 
 On Debian/Ubuntu you install them via:
 
-        apt-get install libmhash2 libmhash-dev libuuid1 uuid-dev
+    apt-get install libmhash2 libmhash-dev libuuid1 uuid-dev
 
 ## Build Instructions
 
 You build the SHFS tools with the following make command:
 
-        make all
+    make all
 
 Alternatively, you can also build just a single tool by passing its executable
 name (e.g., shfs_mkfs) to make:
 
-        make shfs_mkfs
+    make shfs_mkfs
+
+## Examples: Using SHFS Tools
+
+### Format a Physical Block Device with SHFS
+
+    shfs_mkfs -n "NewVol#00" /dev/sdb2
+
+### Create an 2GB SHFS Image File
+
+    dd if=/dev/zero of=shfs-demo.img count=0 bs=1 seek=2G
+    shfs_mkfs -n "SHFS-Demo" shfs-demo.img
+
+### Adding Files to an SHFS Volume
+
+    shfs_admin --add-file /path/to/my_music.mp3 -m audio/mpeg shfs-demo.img
