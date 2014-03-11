@@ -139,6 +139,7 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	struct mempool_obj *cobj;
 	chk_t    chk_off;
 	uint64_t byt_off;
+	uint64_t buf_off;
 	uint64_t left;
 	uint64_t rlen;
 	int ret = 0;
@@ -160,6 +161,7 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 		  hentry->chunk;
 	byt_off = (hentry->offset + offset) % shfs_vol.chunksize;
 	left = len;
+	buf_off = 0;
 
 	while (left) {
 		ret = shfs_sync_read_chunk(chk_off, 1, cobj->data);
@@ -167,11 +169,14 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 			goto out;
 
 		rlen = min(shfs_vol.chunksize - byt_off, left);
-		memcpy(buf, (uint8_t *) cobj->data + byt_off, rlen);
+		memcpy((uint8_t *) buf + buf_off,
+		       (uint8_t *) cobj->data + byt_off,
+		       rlen);
 		left -= rlen;
 
 		++chk_off;   /* go to next chunk */
 		byt_off = 0; /* byte offset is set on the first chunk only */
+		buf_off += rlen;
 	}
 
  out:
