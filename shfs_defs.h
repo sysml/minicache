@@ -251,6 +251,21 @@ static inline int hash_is_zero(const hash512_t h, uint8_t hlen)
 #endif
 }
 
+static inline void hash_clear(const hash512_t h, uint8_t hlen)
+{
+#ifdef __x86_64
+	register uint64_t *p64;
+	register uint8_t i;
+
+	for (i = 0; i < hlen; i += 8) {
+		p64 = (uint64_t *) &h[i];
+		*p64 = 0;
+	}
+#else
+	memset(h, 0x00, hlen);
+#endif
+}
+
 static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 {
 	uint8_t strlen = hlen * 2;

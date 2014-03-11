@@ -22,7 +22,7 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:m:n:li";
+const char *short_opts = "h?vVfa:r:m:n:li";
 
 static struct option long_opts[] = {
 	{"help",	no_argument,		NULL,	'h'},
@@ -30,6 +30,7 @@ static struct option long_opts[] = {
 	{"verbose",	no_argument,		NULL,	'v'},
 	{"force",	no_argument,		NULL,	'f'},
 	{"add-file",	required_argument,	NULL,	'a'},
+	{"rm-file",	required_argument,	NULL,	'r'},
 	{"mime",	required_argument,	NULL,	'm'},
 	{"name",	required_argument,	NULL,	'n'},
 	{"ls",	        no_argument,            NULL,	'l'},
@@ -56,6 +57,7 @@ static void print_usage(char *argv0)
 	printf("  For each add-file token:\n");
 	printf("    -m, --mime [MIME]        sets the MIME type of a file\n");
 	printf("    -n, --name [NAME]        sets an additionally name to a file\n");
+	printf("  -r, --rm-file [HASH]       removes a file from the volume\n");
 	printf("  -l, --ls                   lists the volume contents\n");
 	printf("  -i, --info                 shows volume information\n");
 	/* printf("  -r, --rm-file [HASH]       Remove a file from the volume\n"); */
@@ -161,6 +163,12 @@ static int parse_args(int argc, char **argv, struct args *args)
 		case 'a': /* add-file */
 			cjob = args_add_job(cjob, args);
 			cjob->action = ADDFILE;
+			if (parse_args_setval_str(&cjob->path, optarg) < 0)
+				die();
+			break;
+		case 'r': /* rm-file */
+			cjob = args_add_job(cjob, args);
+			cjob->action = RMFILE;
 			if (parse_args_setval_str(&cjob->path, optarg) < 0)
 				die();
 			break;
@@ -805,7 +813,49 @@ static int actn_addfile(struct job *j)
 
 static int actn_rmfile(struct job *job)
 {
-	return -1;
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	hash512_t h;
+	int ret = 0;
+
+	/* parse hash string */
+	dprintf(D_L0, "Finding hash table entry of file %s...\n", job->path);
+	ret = hash_parse(job->path, h, shfs_vol.hlen);
+	if (ret < 0) {
+		eprintf("Could not parse hash value\n");
+		ret = -1;
+		goto out;
+	}
+	/* find htable entry */
+	bentry = shfs_btable_lookup(shfs_vol.bt, h);
+	if (!bentry) {
+		eprintf("No such entry found\n");
+		ret = -1;
+		goto out;
+	}
+	hentry = (struct shfs_hentry *)
+		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		 + bentry->hentry_htoffset);
+
+	/* release container */
+	dprintf(D_L0, "Releasing container...\n");
+	ret = shfs_alist_unregister(shfs_vol.al, hentry->chunk,
+	                            DIV_ROUND_UP(hentry->len + hentry->offset,
+	                                         shfs_vol.chunksize));
+	if (ret < 0) {
+		eprintf("Could not release container\n");
+		ret = -1;
+		goto out;
+	}
+
+	/* clear htable entry */
+	dprintf(D_L0, "Clearing hash table entry...\n");
+	hash_clear(hentry->hash, shfs_vol.hlen);
+	hash_clear(bentry->hash, shfs_vol.hlen);
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
+
+ out:
+	return ret;
 }
 
 static int actn_ls(struct job *job)
@@ -957,10 +1007,12 @@ int main(int argc, char **argv)
 		switch (cjob->action) {
 		case ADDFILE:
 			dprintf(D_L0, "*** Job %u: add-file\n", i);
+			printf("Adding %s...\n", cjob->path);
 			ret = actn_addfile(cjob);
 			break;
 		case RMFILE:
 			dprintf(D_L0, "*** Job %u: rm-file\n", i);
+			printf("Deleting %s...\n", cjob->path);
 			ret = actn_rmfile(cjob);
 			break;
 		case LSFILES:
@@ -977,7 +1029,7 @@ int main(int argc, char **argv)
 		}
 
 		if (ret < 0) {
-			eprintf("Job %u failed: %d\n", i, ret);
+			eprintf("Error: %d\n", i, ret);
 			failed++;
 		}
 		i++;
@@ -988,7 +1040,7 @@ int main(int argc, char **argv)
 	if (cancel)
 		exit(-2);
 	if (failed)
-		eprintf("Some jobs failed\n");
+		eprintf("Some commands failed\n");
 	/*
 	 * EXIT
 	 */
