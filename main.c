@@ -30,6 +30,7 @@
 #include <lwip-netfront.h>
 #endif
 
+#include "http.h"
 #include "httpd.h"
 #include "shell.h"
 #include "shfs.h"
@@ -386,8 +387,9 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     printf("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
-    printf("Starting httpd...\n");
+    printf("Starting http server...\n");
     init_httpd();
+    init_http(60); /* allow 60 simultaneous connections */
 
     /* add custom commands to the shell */
     shell_register_cmd("halt", shcmd_halt);
@@ -448,7 +450,8 @@ int main(int argc, char *argv[])
 	    printf("System is going down to reboot now\n");
     else
 	    printf("System is going down to halt now\n");
-    printf("Stopping httpd...\n");
+    printf("Stopping http server...\n");
+    exit_http();
     exit_httpd();
     printf("Stopping shell...\n");
     exit_shell();
