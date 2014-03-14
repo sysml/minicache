@@ -304,6 +304,22 @@ int main(int argc, char *argv[])
     }
 
     /* -----------------------------------
+     * banner
+     * ----------------------------------- */
+#ifndef CONFIG_HIDE_BANNER
+    printf("\n");
+    printf("_|      _|  _|            _|    _|_|_|                      _|                \n");
+    printf("_|_|  _|_|      _|_|_|        _|          _|_|_|    _|_|_|  _|_|_|      _|_|  \n");
+    printf("_|  _|  _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|_|_|_|\n");
+    printf("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
+    printf("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
+    printf("\n");
+    printf("Copyright(C) 2013-1014 NEC Laboratories Europe Ltd.\n");
+    printf("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
+    printf("\n");
+#endif
+
+    /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
     printf("Starting networking...\n");
