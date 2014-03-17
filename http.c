@@ -12,6 +12,7 @@
 #include <mempool.h>
 
 #include "http_parser.h"
+#include "http_data.h"
 #include "http.h"
 
 #define HTTP_LISTEN_PORT 81
@@ -28,11 +29,12 @@
        __a < __b ? __a : __b; })
 #endif
 
-static char *_http_err_404 = "<html><h1>Error 404</h1>Ooops, could not find requested object.</html>";
-
 enum http_sess_state {
 	HSS_UNDEF = 0,
-	HSS_ESTABLISHED,
+	HSS_PARSING_HDR,
+	HSS_PARSING_MSG,
+	HSS_RESPONDING_HDR,
+	HSS_RESPONDING_MSG,
 	HSS_CLOSING,
 };
 
@@ -67,17 +69,21 @@ struct http_sess {
 		struct _hdr_line line[HTTPHDR_MAX_NB_LINES];
 		uint32_t nb_lines;
 		int last_was_value;
+		int lines_overflow; /* more lines in request header than memory available */
 	} request_hdr;
+
+	size_t infly;
 };
 
 static struct http_srv *hs = NULL;
 
-
-static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err);
-static void  httpsess_close (struct http_sess *hsess);
-static err_t httpsess_recv  (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
-static void  httpsess_error (void *argp, err_t err);
-static err_t httpsess_poll  (void *argp, struct tcp_pcb *tpcb);
+static err_t httpsess_accept (void *argp, struct tcp_pcb *new_tpcb, err_t err);
+static void  httpsess_close  (struct http_sess *hsess);
+static err_t httpsess_sent   (void *argp, struct tcp_pcb *tpcb, uint16_t len);
+static err_t httpsess_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
+static void  httpsess_error  (void *argp, err_t err);
+static err_t httpsess_poll   (void *argp, struct tcp_pcb *tpcb);
+static void  httpsess_respond(struct http_sess *hsess);
 
 int init_http(int nb_sess)
 {
@@ -139,11 +145,10 @@ void exit_http(void)
 /*******************************************************************************
  * Session handling
  ******************************************************************************/
-static int httprecv_hdr_complete(struct http_parser *parser);
+static int httprecv_req_complete(struct http_parser *parser);
 static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len);
-
 
 static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 {
@@ -165,14 +170,20 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess = hsobj->data;
 	hsess->pobj = hsobj;
 	hsess->hsrv = hs;
+	hsess->infly = 0;
 	hs->nb_sess++;
+
+	hsess->request_hdr.nb_lines = 0;
+	hsess->request_hdr.url.len = 0;
+	hsess->request_hdr.last_was_value = 1;
+	hsess->request_hdr.lines_overflow = 0;
 
 	/* register tpcb */
 	hsess->tpcb = new_tpcb;
-	hsess->state = HSS_ESTABLISHED;
+	hsess->state = HSS_PARSING_HDR;
 	tcp_arg (hsess->tpcb, hsess); /* argp for callbacks */
 	tcp_recv(hsess->tpcb, httpsess_recv); /* recv callback */
-	tcp_sent(hsess->tpcb, NULL); /* sent ack callback */
+	tcp_sent(hsess->tpcb, httpsess_sent); /* sent ack callback */
 	tcp_err (hsess->tpcb, httpsess_error); /* err callback */
 	tcp_poll(hsess->tpcb, httpsess_poll, HTTP_POLL_INTERVAL); /* poll callback */
 	tcp_setprio(hsess->tpcb, HTTP_TCP_PRIO);
@@ -183,16 +194,11 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->parser_settings.on_status = NULL;
 	hsess->parser_settings.on_header_field = httprecv_hdr_field;
 	hsess->parser_settings.on_header_value = httprecv_hdr_value;
-	hsess->parser_settings.on_headers_complete = httprecv_hdr_complete;
+	hsess->parser_settings.on_headers_complete = NULL;
 	hsess->parser_settings.on_body = NULL;
-	hsess->parser_settings.on_message_complete = NULL;
+	hsess->parser_settings.on_message_complete = httprecv_req_complete;
 	hsess->parser.data = hsess;
 	http_parser_init(&hsess->parser, HTTP_REQUEST);
-
-	hsess->request_hdr.nb_lines = 0;
-	hsess->request_hdr.last_was_value = 1;
-
-	/* TODO: Initialize len of buffers to 0 !!!! */
 
 	return 0;
 
@@ -205,11 +211,11 @@ static void httpsess_close(struct http_sess *hsess)
 	//struct http_srv *hs = hsess->hs;
 
 	/* disable tcp connection */
-	tcp_arg(hsess->tpcb, NULL);
+	tcp_arg(hsess->tpcb,  NULL);
 	tcp_sent(hsess->tpcb, NULL);
 	tcp_recv(hsess->tpcb, NULL);
 	tcp_sent(hsess->tpcb, NULL);
-	tcp_err(hsess->tpcb, NULL);
+	tcp_err(hsess->tpcb,  NULL);
 	tcp_poll(hsess->tpcb, NULL, 0);
 
 	/* release memory */
@@ -236,23 +242,32 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 		return ERR_OK;
 	}
 
-	/* feed parser */
-	for (q = p; q != NULL; q = q->next) {
-		plen = http_parser_execute(&hsess->parser, &hsess->parser_settings,
-		                           q->payload, q->len);
-
-		if (unlikely(hsess->parser.upgrade)) {
-			/* protocol upgrade requested */
-			printf("Unsupported HTTP protocol upgrade requested: Killing connection...\n");
-			httpsess_close(hsess);
+	switch (hsess->state) {
+	case HSS_PARSING_HDR:
+	case HSS_PARSING_MSG:
+		/* feed parser */
+		for (q = p; q != NULL; q = q->next) {
+			plen = http_parser_execute(&hsess->parser, &hsess->parser_settings,
+			                           q->payload, q->len);
+			if (unlikely(hsess->parser.upgrade)) {
+				/* protocol upgrade requested */
+				printf("Unsupported HTTP protocol upgrade requested: Killing connection...\n");
+				httpsess_close(hsess);
+			}
+			if (unlikely(plen != q->len)) {
+				/* parsing error happened: close conenction */
+				printf("HTTP protocol parsing error: Dropping connection...\n");
+				httpsess_close(hsess);
+			}
 		}
-		if (unlikely(plen != q->len)) {
-			/* parsing error happened: close conenction */
-			printf("HTTP protocol parsing error: Dropping connection...\n");
-			httpsess_close(hsess);
-		}
+		tcp_recved(tpcb, p->tot_len); /* we took the data */
+		break;
+	default:
+		/* we are not done yet with replying
+		 * or connection was aborted
+		 * -> do not */
+		break;
 	}
-
 	return ERR_OK;
 }
 
@@ -269,12 +284,67 @@ static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 	return ERR_OK;
 }
 
+/** Call tcp_write() in a loop trying smaller and smaller length
+ *
+ * @param pcb tcp_pcb to send
+ * @param ptr Data to send
+ * @param length Length of data to send (in/out: on return, contains the
+ *        amount of data sent)
+ * @param apiflags directly passed to tcp_write
+ * @return the return value of tcp_write
+ */
+static err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *len, uint8_t apiflags)
+{
+	struct tcp_pcb *pcb = hsess->tpcb;
+	uint16_t l;
+	err_t err;
+
+	l = *len;
+	if (l == 0)
+		return ERR_OK;
+
+	do {
+		err = tcp_write(pcb, buf, l, apiflags);
+		if (unlikely(err == ERR_MEM)) {
+			if ((tcp_sndbuf(pcb) == 0) ||
+			    (tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN))
+				/* no need to try smaller sizes */
+				l = 1;
+			else
+				l /= 2;
+		}
+	} while ((err == ERR_MEM) && (l > 1));
+
+	hsess->infly += l;
+	*len = l;
+	return err;
+}
+
+static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
+	struct http_sess *hsess = argp;
+
+	hsess->infly -= len;
+	switch (hsess->state) {
+	case HSS_RESPONDING_HDR:
+	case HSS_RESPONDING_MSG:
+		/* continue replying */
+		httpsess_respond(hsess);
+		break;
+	case HSS_CLOSING:
+		/* close session after all sent data were ack'ed */
+		if (likely(hsess->infly == 0))
+			httpsess_close(hsess);
+		break;
+	default:
+		break;
+	}
+
+	return ERR_OK;
+}
 
 /*******************************************************************************
- * HTTP protocol handling
+ * HTTP Request header parsing
  ******************************************************************************/
-
-/* fills up a _hdr_buffer */
 static void _hdr_buffer_add(struct _hdr_buffer *dst, const char *src, size_t len)
 {
 	register size_t curpos, maxlen;
@@ -292,10 +362,60 @@ static void _hdr_buffer_terminate(struct _hdr_buffer *dst)
 	dst->b[dst->len++] = '\0';
 }
 
-//typedef int (*http_data_cb) (http_parser*, const char *at, size_t length);
-//typedef int (*http_cb) (http_parser*);
+static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len)
+{
+	struct http_sess *hsess = parser->data;
+	_hdr_buffer_add(&hsess->request_hdr.url, buf, len);
+	return 0;
+}
 
-static int httprecv_hdr_complete(struct http_parser *parser)
+static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len)
+{
+	struct http_sess *hsess = parser->data;
+	register unsigned lineno;
+
+	if (unlikely(hsess->request_hdr.lines_overflow))
+		return 0; /* ignore line */
+	if (unlikely(hsess->request_hdr.last_was_value)) {
+		if (unlikely(hsess->request_hdr.nb_lines == HTTPHDR_MAX_NB_LINES)) {
+			/* overflow */
+			hsess->request_hdr.lines_overflow = 1;
+			return 0;
+		}
+
+		/* switch to next line and reset its buffer */
+		hsess->request_hdr.last_was_value = 0;
+		hsess->request_hdr.line[hsess->request_hdr.nb_lines].field.len = 0;
+		hsess->request_hdr.line[hsess->request_hdr.nb_lines].value.len = 0;
+		++hsess->request_hdr.nb_lines;
+	}
+
+	lineno = hsess->request_hdr.nb_lines - 1;
+	_hdr_buffer_add(&hsess->request_hdr.line[lineno].field, buf, len);
+	return 0;
+}
+
+static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len)
+{
+	struct http_sess *hsess = parser->data;
+	register unsigned lineno;
+
+	if (unlikely(hsess->request_hdr.lines_overflow))
+		return 0; /* ignore line */
+	if (unlikely(!hsess->request_hdr.last_was_value))
+		hsess->request_hdr.last_was_value = 1; /* value parsing began */
+	if (unlikely(hsess->request_hdr.nb_lines == 0))
+		return -EINVAL; /* parsing error */
+
+	lineno = hsess->request_hdr.nb_lines - 1;
+	_hdr_buffer_add(&hsess->request_hdr.line[lineno].value, buf, len);
+	return 0;
+}
+
+/*******************************************************************************
+ * HTTP Request handling
+ ******************************************************************************/
+static int httprecv_req_complete(struct http_parser *parser)
 {
 	struct http_sess *hsess = parser->data; /* TODO: Use containerof: less lookups? */
 	register unsigned lineno;
@@ -317,50 +437,34 @@ static int httprecv_hdr_complete(struct http_parser *parser)
 	printf("URL: %s\n", hsess->request_hdr.url.b);
 	/* DEBUG */
 
+	hsess->state = HSS_RESPONDING_HDR; /* switch to reply mode */
+	httpsess_respond(hsess);
 	return 0;
 }
 
-static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len)
+/* will be called multiple times */
+static void httpsess_respond(struct http_sess *hsess)
 {
-	struct http_sess *hsess = parser->data;
-	_hdr_buffer_add(&hsess->request_hdr.url, buf, len);
-	return 0;
-}
+	static const char resp_hdr[] =
+		"HTTP/1.1 404 File not found\r\n"
+		"Server: "HTTPD_SERVER_AGENT"\r\n"
+		"Content-type: text/plain\r\n"
+		"\r\n";
+	uint16_t len = (uint16_t) sizeof(resp_hdr) - 1;
 
-static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len)
-{
-	struct http_sess *hsess = parser->data;
-	register unsigned lineno;
-
-	if (unlikely(hsess->request_hdr.last_was_value)) {
-		/* switch to next line */
-		hsess->request_hdr.last_was_value = 0;
-		++hsess->request_hdr.nb_lines;
+	switch (hsess->state) {
+	case HSS_RESPONDING_HDR:
+		/* send out header */
+		httpsess_write(hsess, resp_hdr, &len, 0);
+		hsess->state = HSS_CLOSING; /* let the session close after sending */
+	case HSS_RESPONDING_MSG:
+		/* send out data */
+		break;
+	default:
+		break;
 	}
-	lineno = hsess->request_hdr.nb_lines - 1;
-	if (unlikely(lineno == HTTPHDR_MAX_NB_LINES))
-		return 0; /* ignore line */
-
-	_hdr_buffer_add(&hsess->request_hdr.line[lineno].field, buf, len);
-	return 0;
 }
 
-static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len)
-{
-	struct http_sess *hsess = parser->data;
-	register unsigned lineno;
-
-	if (unlikely(!hsess->request_hdr.last_was_value)) {
-		/* value parsing just began */
-		hsess->request_hdr.last_was_value = 1;
-	}
-	if (unlikely(hsess->request_hdr.nb_lines == 0))
-		return -EINVAL; /* parsing error */
-
-	lineno = hsess->request_hdr.nb_lines - 1;
-	if (unlikely(lineno == HTTPHDR_MAX_NB_LINES))
-		return 0; /* line is ignored */
-
-	_hdr_buffer_add(&hsess->request_hdr.line[lineno].value, buf, len);
-	return 0;
-}
+/*******************************************************************************
+ * File I/O
+ ******************************************************************************/
