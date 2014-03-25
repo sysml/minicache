@@ -558,10 +558,7 @@ DEBUG */
 		shdr_code = HTTP_SHDR_OK(parser->http_major, parser->http_minor);
 		hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
 		hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
-
-		/* keep alive? TODO: Include keep-alive request from request */
-		if ((hsess->parser.http_major > 1) ||
-		    ((hsess->parser.http_major == 1) && (hsess->parser.http_minor >= 1))) {
+		if (http_should_keep_alive(&hsess->parser)) {
 			hsess->keepalive = 1;
 			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_KEEPALIVE];
 			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_KEEPALIVE];
@@ -570,7 +567,6 @@ DEBUG */
 			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
 			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
 		}
-
 		hsess->response_hdr.nb_slines    = 2;
 
 		hsess->response_hdr.dline[0].len = snprintf(hsess->response_hdr.dline[0].b,
