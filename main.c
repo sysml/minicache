@@ -264,6 +264,73 @@ static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
     return ret;
 }
 
+#if LWIP_STATS_DISPLAY
+#include <lwip/stats.h>
+
+static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
+{
+	stats_display();
+	return 0;
+}
+#endif
+
+static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
+{
+	struct netif *netif;
+	int is_up;
+	uint8_t flags;
+
+	for (netif = netif_list; netif != NULL; netif = netif->next) {
+		is_up = netif_is_up(netif);
+		flags = netif->flags;
+
+		/* name + mac */
+		fprintf(cio, "%c%c%c%c      ",
+		        (netif->name[0] ? netif->name[0] : ' '),
+		        (netif->name[1] ? netif->name[1] : ' '),
+		        (netif->name[2] ? netif->name[2] : ' '),
+		        (netif == netif_default ? '*' : ' '));
+		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
+		        netif->hwaddr[0], netif->hwaddr[1],
+		        netif->hwaddr[2], netif->hwaddr[3],
+		        netif->hwaddr[4], netif->hwaddr[5]);
+		/* flags + mtu */
+		fprintf(cio, "          ");
+		if (flags & NETIF_FLAG_UP)
+			fprintf(cio, "UP ");
+		if (flags & NETIF_FLAG_BROADCAST)
+			fprintf(cio, "BROADCAST ");
+		if (flags & NETIF_FLAG_POINTTOPOINT)
+			fprintf(cio, "P2P ");
+		if (flags & NETIF_FLAG_DHCP)
+			fprintf(cio, "DHCP ");
+		if (flags & NETIF_FLAG_ETHARP)
+			fprintf(cio, "ARP ");
+		if (flags & NETIF_FLAG_ETHERNET)
+			fprintf(cio, "ETHERNET ");
+		fprintf(cio, "MTU:%u\n", netif->mtu);
+	        /* ip addr */
+		if (is_up) {
+			fprintf(cio, "          inet addr:%u.%u.%u.%u",
+			        ip4_addr1(&netif->ip_addr),
+			        ip4_addr2(&netif->ip_addr),
+			        ip4_addr3(&netif->ip_addr),
+			        ip4_addr4(&netif->ip_addr));
+			fprintf(cio, " Mask:%u.%u.%u.%u",
+			        ip4_addr1(&netif->netmask),
+			        ip4_addr2(&netif->netmask),
+			        ip4_addr3(&netif->netmask),
+			        ip4_addr4(&netif->netmask));
+			fprintf(cio, " Gw:%u.%u.%u.%u\n",
+			        ip4_addr1(&netif->gw),
+			        ip4_addr2(&netif->gw),
+			        ip4_addr3(&netif->gw),
+			        ip4_addr4(&netif->gw));
+		}
+	}
+	return 0;
+}
+
 /**
  * MAIN
  */
@@ -412,8 +479,12 @@ int main(int argc, char *argv[])
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
     shell_register_cmd("lsvbd", shcmd_lsvbd);
+    shell_register_cmd("ifconfig", shcmd_ifconfig);
     shell_register_cmd("mount", shcmd_mount_shfs);
     shell_register_cmd("umount", shcmd_umount_shfs);
+#if LWIP_STATS_DISPLAY
+    shell_register_cmd("lwip-stats", shcmd_lwipstats);
+#endif
     register_shfs_tools();
 
     /* -----------------------------------
