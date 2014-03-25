@@ -31,6 +31,14 @@
        __typeof__ (b) __b = (b); \
        __a < __b ? __a : __b; })
 #endif
+#ifndef min3
+#define min3(a, b, c) \
+	min(min((a), (b)), (c))
+#endif
+#ifndef min4
+#define min4(a, b, c, d) \
+	min(min((a), (b)), min((c), (d)))
+#endif
 
 enum http_sess_state {
 	HSS_UNDEF = 0,
@@ -192,6 +200,10 @@ static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_
 
 static inline void httpsess_reset(struct http_sess *hsess)
 {
+	/* close open file */
+	if (hsess->fd)
+		shfs_fio_close(hsess->fd);
+
 	hsess->state = HSS_PARSING_HDR;
 	hsess->request_hdr.nb_lines = 0;
 	hsess->request_hdr.url.len = 0;
@@ -622,7 +634,7 @@ static inline err_t httpsess_write_hdr(struct http_sess *hsess, size_t *sent)
 				if ((aoff_cl <= apos) && (apos < aoff_nl)) {
 					l_off  = apos - aoff_cl;
 					l_left = hsess->response_hdr.sline[l].len - l_off;
-					slen = min(avail, (uint16_t) l_left);
+					slen = min3(l_left, UINT16_MAX, avail);
 					ptr  = (uint8_t *) hsess->response_hdr.sline[l].b + l_off;
 
 					err     = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
@@ -645,7 +657,7 @@ static inline err_t httpsess_write_hdr(struct http_sess *hsess, size_t *sent)
 				if ((aoff_cl <= apos) && (apos < aoff_nl)) {
 					l_off  = apos - aoff_cl;
 					l_left = hsess->response_hdr.dline[l].len - l_off;
-					slen = min(avail, (uint16_t) l_left);
+					slen = min3(l_left, UINT16_MAX, avail);
 					ptr  = (uint8_t *) hsess->response_hdr.dline[l].b + l_off;
 
 					err     = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
@@ -691,9 +703,7 @@ static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
 	if (unlikely(avail == 0))
 		return ERR_OK; /* we need to wait for space on tcp sndbuf */
 	left = (sbuf_len - apos);
-	if (unlikely(left > UINT16_MAX))
-		left = UINT16_MAX;
-	slen = min(avail, (uint16_t) left);
+	slen = min3(left, UINT16_MAX, avail);
 	ptr = sbuf + apos;
 	err = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
 
@@ -715,11 +725,7 @@ static inline err_t httpsess_write_shfsfio(struct http_sess *hsess, size_t *sent
 		return ERR_OK; /* we need to wait for space on tcp sndbuf */
 	left = hsess->fsize;
 	left -= foff;
-	if (left > shfs_vol.chunksize)
-		left = shfs_vol.chunksize;
-	if (unlikely(left > UINT16_MAX))
-		left = UINT16_MAX;
-	slen = min(avail, (uint16_t) left);
+	slen = min4(left, UINT16_MAX, shfs_vol.chunksize, avail);
 
 	ret = shfs_fio_read(hsess->fd, foff, hsess->chk_buf, slen);
 	if (ret < 0) {

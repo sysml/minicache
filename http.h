@@ -8,7 +8,7 @@
 #ifndef _HTTP_H_
 #define _HTTP_H_
 
-#define HTTP_LISTEN_PORT          81
+#define HTTP_LISTEN_PORT          80
 #define HTTP_TCP_PRIO             TCP_PRIO_MAX
 
 int init_http(int nb_sess);
