@@ -484,7 +484,7 @@ static void _hdr_dbuffer_add(struct _hdr_dbuffer *dst, const char *src, size_t l
 	maxlen = sizeof(dst->b) - 1 - curpos; /* minus 1 to store terminating '\0' later */
 
 	len = min(maxlen, len);
-	memcpy(&dst->b[curpos], src, len);
+	MEMCPY(&dst->b[curpos], src, len);
 	dst->len += len;
 }
 
@@ -504,7 +504,7 @@ static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t 
 		hsess->request_hdr.url_overflow = 1; /* Out of memory */
 		len = maxlen;
 	}
-	memcpy(&hsess->request_hdr.url[curpos], buf, len);
+	MEMCPY(&hsess->request_hdr.url[curpos], buf, len);
 	hsess->request_hdr.url_len += len;
 	return 0;
 }
