@@ -10,17 +10,20 @@
 #include <mini-os/xmalloc.h>
 #include <lwip/tcp.h>
 #include <mempool.h>
+#include "shfs.h"
+#include "shfs_fio.h"
 
 #include "http_parser.h"
 #include "http_data.h"
 #include "http.h"
 
-#define HTTP_LISTEN_PORT 81
-#define HTTP_TCP_PRIO TCP_PRIO_MAX
-#define HTTP_POLL_INTERVAL 10 /* = x * 500ms; 10 = 5s */
+#define HTTP_POLL_INTERVAL        10 /* = x * 500ms; 10 = 5s */
+#define HTTP_KEEPALIVE_TIMEOUT     3 /* = x * HTTP_POLL_INTERVAL */
 
-#define HTTPHDR_BUFFER_MAXLEN 64
-#define HTTPHDR_MAX_NB_LINES 8
+#define HTTPHDR_BUFFER_MAXLEN     64
+#define HTTPHDR_REQ_MAXNB_LINES   16
+#define HTTPHDR_RESP_MAXNB_SLINES  8
+#define HTTPHDR_RESP_MAXNB_LINES   8
 
 #ifndef min
 #define min(a, b) \
@@ -35,6 +38,7 @@ enum http_sess_state {
 	HSS_PARSING_MSG,
 	HSS_RESPONDING_HDR,
 	HSS_RESPONDING_MSG,
+	HSS_RESPONDING_EMSG,
 	HSS_CLOSING,
 };
 
@@ -50,6 +54,11 @@ struct _hdr_buffer {
 	size_t len;
 };
 
+struct _hdr_sbuffer {
+	const char *b;
+	size_t len;
+};
+
 struct _hdr_line {
 	struct _hdr_buffer field;
 	struct _hdr_buffer value;
@@ -59,6 +68,7 @@ struct http_sess {
 	struct mempool_obj *pobj;
 	struct http_srv *hsrv;
 	struct tcp_pcb *tpcb;
+	size_t sent_infly;
 
 	enum http_sess_state state;
 	struct http_parser parser;
@@ -66,13 +76,33 @@ struct http_sess {
 
 	struct {
 		struct _hdr_buffer url;
-		struct _hdr_line line[HTTPHDR_MAX_NB_LINES];
+		struct _hdr_line line[HTTPHDR_REQ_MAXNB_LINES];
 		uint32_t nb_lines;
 		int last_was_value;
 		int lines_overflow; /* more lines in request header than memory available */
 	} request_hdr;
 
-	size_t infly;
+	struct {
+		unsigned int code;
+		struct _hdr_sbuffer sline[HTTPHDR_RESP_MAXNB_SLINES];
+		struct _hdr_buffer  dline[HTTPHDR_RESP_MAXNB_LINES];
+		uint32_t nb_slines;
+		size_t slines_tlen;
+		uint32_t nb_dlines;
+		size_t dlines_tlen;
+		size_t eoh_off; /* end of header offset */
+		size_t total_len; /* total length (inclusive EOH line) */
+	} response_hdr;
+
+	size_t sent;
+	int keepalive;
+	int keepalive_timer; /* -1, timout disabled, 0 timeout expired */
+
+	SHFS_FD fd;
+	char fmime[65]; /* mime type of file (fd) */
+	char fname[65]; /* name of file (fd) */
+	uint64_t fsize; /* file size (fd) */
+	char chk_buf[]; /* memory allocated by alloc_mempool */
 };
 
 static struct http_srv *hs = NULL;
@@ -83,7 +113,7 @@ static err_t httpsess_sent   (void *argp, struct tcp_pcb *tpcb, uint16_t len);
 static err_t httpsess_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 static void  httpsess_error  (void *argp, err_t err);
 static err_t httpsess_poll   (void *argp, struct tcp_pcb *tpcb);
-static void  httpsess_respond(struct http_sess *hsess);
+static err_t httpsess_respond(struct http_sess *hsess);
 
 int init_http(int nb_sess)
 {
@@ -100,7 +130,8 @@ int init_http(int nb_sess)
 
 	/* allocate session pool */
 	hs->sess_pool = alloc_simple_mempool(hs->max_nb_sess,
-	                                     sizeof(struct http_sess));
+	                                     sizeof(struct http_sess) +
+	                                     shfs_vol.chunksize);
 	if (!hs->sess_pool) {
 		ret = -ENOMEM;
 		goto err_free_hs;
@@ -150,6 +181,26 @@ static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t 
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len);
 
+#define httpsess_reset_keepalive(hsess) \
+	do { \
+		(hsess)->keepalive_timer = HTTP_KEEPALIVE_TIMEOUT; \
+	} while(0)
+#define httpsess_disable_keepalive(hsess) \
+	do { \
+		(hsess)->keepalive_timer = -1; \
+	} while(0)
+
+static inline void httpsess_reset(struct http_sess *hsess)
+{
+	hsess->state = HSS_PARSING_HDR;
+	hsess->request_hdr.nb_lines = 0;
+	hsess->request_hdr.url.len = 0;
+	hsess->request_hdr.last_was_value = 1;
+	hsess->request_hdr.lines_overflow = 0;
+	http_parser_init(&hsess->parser, HTTP_REQUEST);
+	httpsess_reset_keepalive(hsess);
+}
+
 static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 {
 	struct mempool_obj *hsobj;
@@ -170,17 +221,12 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess = hsobj->data;
 	hsess->pobj = hsobj;
 	hsess->hsrv = hs;
-	hsess->infly = 0;
+	hsess->sent_infly = 0;
+	hsess->fd = NULL;
 	hs->nb_sess++;
-
-	hsess->request_hdr.nb_lines = 0;
-	hsess->request_hdr.url.len = 0;
-	hsess->request_hdr.last_was_value = 1;
-	hsess->request_hdr.lines_overflow = 0;
 
 	/* register tpcb */
 	hsess->tpcb = new_tpcb;
-	hsess->state = HSS_PARSING_HDR;
 	tcp_arg (hsess->tpcb, hsess); /* argp for callbacks */
 	tcp_recv(hsess->tpcb, httpsess_recv); /* recv callback */
 	tcp_sent(hsess->tpcb, httpsess_sent); /* sent ack callback */
@@ -198,7 +244,9 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->parser_settings.on_body = NULL;
 	hsess->parser_settings.on_message_complete = httprecv_req_complete;
 	hsess->parser.data = hsess;
-	http_parser_init(&hsess->parser, HTTP_REQUEST);
+
+	/* reset session */
+	httpsess_reset(hsess);
 
 	return 0;
 
@@ -218,6 +266,10 @@ static void httpsess_close(struct http_sess *hsess)
 	tcp_err(hsess->tpcb,  NULL);
 	tcp_poll(hsess->tpcb, NULL, 0);
 
+	/* close open file */
+	if (hsess->fd)
+		shfs_fio_close(hsess->fd);
+
 	/* release memory */
 	tcp_close(hsess->tpcb);
 	mempool_put(hsess->pobj);
@@ -231,7 +283,7 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 	size_t plen;
 
 	/* receive error: close connection */
-	if (!p || err != ERR_OK) {
+	if (unlikely(!p || err != ERR_OK)) {
 		if (p) {
 			/* inform TCP that we have taken the data */
 			tcp_recved(tpcb, p->tot_len);
@@ -246,12 +298,14 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 	case HSS_PARSING_HDR:
 	case HSS_PARSING_MSG:
 		/* feed parser */
+		tcp_recved(tpcb, p->tot_len); /* we took the data */
+		httpsess_disable_keepalive(hsess);
 		for (q = p; q != NULL; q = q->next) {
 			plen = http_parser_execute(&hsess->parser, &hsess->parser_settings,
 			                           q->payload, q->len);
 			if (unlikely(hsess->parser.upgrade)) {
 				/* protocol upgrade requested */
-				printf("Unsupported HTTP protocol upgrade requested: Killing connection...\n");
+				printf("Unsupported HTTP protocol upgrade requested: Dropping connection...\n");
 				httpsess_close(hsess);
 			}
 			if (unlikely(plen != q->len)) {
@@ -260,12 +314,11 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 				httpsess_close(hsess);
 			}
 		}
-		tcp_recved(tpcb, p->tot_len); /* we took the data */
 		break;
 	default:
 		/* we are not done yet with replying
 		 * or connection was aborted
-		 * -> do not */
+		 * -> do not read input for now */
 		break;
 	}
 	return ERR_OK;
@@ -281,6 +334,11 @@ static void httpsess_error(void *argp, err_t err)
 static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 {
 	struct http_sess *hsess = argp;
+
+	if (unlikely(hsess->keepalive_timer == 0))
+		httpsess_close(hsess); /* timeout expired: close connection */
+	if (hsess->keepalive_timer > 0)
+		--hsess->keepalive_timer;
 	return ERR_OK;
 }
 
@@ -304,6 +362,7 @@ static err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *
 		return ERR_OK;
 
 	do {
+		//err = tcp_write(pcb, buf, l, apiflags | TCP_WRITE_FLAG_COPY);
 		err = tcp_write(pcb, buf, l, apiflags);
 		if (unlikely(err == ERR_MEM)) {
 			if ((tcp_sndbuf(pcb) == 0) ||
@@ -315,15 +374,18 @@ static err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *
 		}
 	} while ((err == ERR_MEM) && (l > 1));
 
-	hsess->infly += l;
+	hsess->sent_infly += l;
 	*len = l;
+
 	return err;
 }
+
+#define httpsess_flush(hsess) tcp_output((hsess)->tpcb)
 
 static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 	struct http_sess *hsess = argp;
 
-	hsess->infly -= len;
+	hsess->sent_infly -= len;
 	switch (hsess->state) {
 	case HSS_RESPONDING_HDR:
 	case HSS_RESPONDING_MSG:
@@ -332,7 +394,7 @@ static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 		break;
 	case HSS_CLOSING:
 		/* close session after all sent data were ack'ed */
-		if (likely(hsess->infly == 0))
+		if (likely(hsess->sent_infly == 0))
 			httpsess_close(hsess);
 		break;
 	default:
@@ -372,12 +434,12 @@ static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t 
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len)
 {
 	struct http_sess *hsess = parser->data;
-	register unsigned lineno;
+	register unsigned l;
 
 	if (unlikely(hsess->request_hdr.lines_overflow))
 		return 0; /* ignore line */
 	if (unlikely(hsess->request_hdr.last_was_value)) {
-		if (unlikely(hsess->request_hdr.nb_lines == HTTPHDR_MAX_NB_LINES)) {
+		if (unlikely(hsess->request_hdr.nb_lines == HTTPHDR_REQ_MAXNB_LINES)) {
 			/* overflow */
 			hsess->request_hdr.lines_overflow = 1;
 			return 0;
@@ -390,15 +452,15 @@ static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_
 		++hsess->request_hdr.nb_lines;
 	}
 
-	lineno = hsess->request_hdr.nb_lines - 1;
-	_hdr_buffer_add(&hsess->request_hdr.line[lineno].field, buf, len);
+	l = hsess->request_hdr.nb_lines - 1;
+	_hdr_buffer_add(&hsess->request_hdr.line[l].field, buf, len);
 	return 0;
 }
 
 static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len)
 {
 	struct http_sess *hsess = parser->data;
-	register unsigned lineno;
+	register unsigned l;
 
 	if (unlikely(hsess->request_hdr.lines_overflow))
 		return 0; /* ignore line */
@@ -407,8 +469,8 @@ static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_
 	if (unlikely(hsess->request_hdr.nb_lines == 0))
 		return -EINVAL; /* parsing error */
 
-	lineno = hsess->request_hdr.nb_lines - 1;
-	_hdr_buffer_add(&hsess->request_hdr.line[lineno].value, buf, len);
+	l = hsess->request_hdr.nb_lines - 1;
+	_hdr_buffer_add(&hsess->request_hdr.line[l].value, buf, len);
 	return 0;
 }
 
@@ -418,53 +480,318 @@ static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_
 static int httprecv_req_complete(struct http_parser *parser)
 {
 	struct http_sess *hsess = parser->data; /* TODO: Use containerof: less lookups? */
-	register unsigned lineno;
+	register uint32_t l;
+	register unsigned shdr_code;
+	register size_t url_offset = 0;
 
 	/* finalize request_hdr lines by adding terminating '\0' */
-	for (lineno = 0; lineno < hsess->request_hdr.nb_lines; ++lineno) {
-		_hdr_buffer_terminate(&hsess->request_hdr.line[lineno].field);
-		_hdr_buffer_terminate(&hsess->request_hdr.line[lineno].value);
+	for (l = 0; l < hsess->request_hdr.nb_lines; ++l) {
+		_hdr_buffer_terminate(&hsess->request_hdr.line[l].field);
+		_hdr_buffer_terminate(&hsess->request_hdr.line[l].value);
 	}
 	_hdr_buffer_terminate(&hsess->request_hdr.url);
 
-	/* DEBUG */
+/* DEBUG
 	printf("Got HTTP/%u.%u header!\n", parser->http_major, parser->http_minor);
-	for (lineno = 0; lineno < hsess->request_hdr.nb_lines; ++lineno) {
+	for (l = 0; l < hsess->request_hdr.nb_lines; ++l) {
 		printf(" %s: %s\n",
-		       hsess->request_hdr.line[lineno].field.b,
-		       hsess->request_hdr.line[lineno].value.b);
+		       hsess->request_hdr.line[l].field.b,
+		       hsess->request_hdr.line[l].value.b);
 	}
-	printf("URL: %s\n", hsess->request_hdr.url.b);
-	/* DEBUG */
+	printf(" GET: %s\n", hsess->request_hdr.url.b);
+DEBUG */
 
-	hsess->state = HSS_RESPONDING_HDR; /* switch to reply mode */
+	/* try to open requested file and construct header */
+	/* eliminate leading '/'s */
+	while (hsess->request_hdr.url.b[url_offset] == '/')
+		++url_offset;
+	hsess->fd = shfs_fio_open(hsess->request_hdr.url.b + url_offset);
+	if (!hsess->fd) {
+		if (errno == ENOENT) {
+			/* 404 File not found */
+			shdr_code = HTTP_SHDR_404(parser->http_major, parser->http_minor);
+			hsess->response_hdr.code         = 404;
+			hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
+			hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
+			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_HTML];
+			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_HTML];
+			hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_NOCACHE];
+			hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_NOCACHE];
+			hsess->response_hdr.sline[3].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
+			hsess->response_hdr.sline[3].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
+			hsess->response_hdr.nb_slines    = 4;
+			hsess->response_hdr.nb_dlines    = 0;
+		} else {
+			/* 500 Internal server error */
+			shdr_code = HTTP_SHDR_500(parser->http_major, parser->http_minor);
+			hsess->response_hdr.code         = 500;
+			hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
+			hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
+			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_HTML];
+			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_HTML];
+			hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_NOCACHE];
+			hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_NOCACHE];
+			hsess->response_hdr.sline[3].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
+			hsess->response_hdr.sline[3].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
+			hsess->response_hdr.nb_slines    = 4;
+			hsess->response_hdr.nb_dlines    = 0;
+		}
+	} else {
+		/* 200 OK */
+		hsess->response_hdr.code = 200;
+		shfs_fio_size(hsess->fd, &hsess->fsize);
+		shfs_fio_mime(hsess->fd, hsess->fmime, sizeof(hsess->fmime));
+		shfs_fio_name(hsess->fd, hsess->fname, sizeof(hsess->fname));
+
+		shdr_code = HTTP_SHDR_OK(parser->http_major, parser->http_minor);
+		hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
+		hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
+
+		/* keep alive? TODO: Include keep-alive request from request */
+		if ((hsess->parser.http_major > 1) ||
+		    ((hsess->parser.http_major == 1) && (hsess->parser.http_minor >= 1))) {
+			hsess->keepalive = 1;
+			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_KEEPALIVE];
+			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_KEEPALIVE];
+		} else {
+			hsess->keepalive = 0;
+			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
+			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
+		}
+
+		hsess->response_hdr.nb_slines    = 2;
+
+		hsess->response_hdr.dline[0].len = snprintf(hsess->response_hdr.dline[0].b,
+		                                            HTTPHDR_BUFFER_MAXLEN,
+		                                            "%s%s\r\n",
+		                                            _http_dhdr[HTTP_DHDR_MIME],
+		                                            hsess->fmime);
+		hsess->response_hdr.dline[1].len = snprintf(hsess->response_hdr.dline[1].b,
+		                                            HTTPHDR_BUFFER_MAXLEN,
+		                                            "%s%lu\r\n",
+		                                            _http_dhdr[HTTP_DHDR_SIZE],
+		                                            hsess->fsize);
+		hsess->response_hdr.nb_dlines    = 2;
+	}
+
+	/* Server string */
+	hsess->response_hdr.sline[hsess->response_hdr.nb_slines  ].b   = _http_shdr    [HTTP_SHDR_SERVER];
+	hsess->response_hdr.sline[hsess->response_hdr.nb_slines++].len = _http_shdr_len[HTTP_SHDR_SERVER];
+
+	/* final header length */
+	hsess->response_hdr.slines_tlen = 0;
+	for (l = 0; l < hsess->response_hdr.nb_slines; ++l)
+		hsess->response_hdr.slines_tlen += hsess->response_hdr.sline[l].len;
+	hsess->response_hdr.dlines_tlen = 0;
+	for (l = 0; l < hsess->response_hdr.nb_dlines; ++l)
+		hsess->response_hdr.dlines_tlen += hsess->response_hdr.dline[l].len;
+	hsess->response_hdr.eoh_off   = hsess->response_hdr.slines_tlen + hsess->response_hdr.dlines_tlen;
+	hsess->response_hdr.total_len = hsess->response_hdr.eoh_off + _http_shdr_len[HTTP_EOH];
+
+	/* start transmission */
+	hsess->state = HSS_RESPONDING_HDR; /* switch to reply phase (disables parser) */
+	hsess->sent  = 0;
 	httpsess_respond(hsess);
 	return 0;
 }
 
-/* will be called multiple times */
-static void httpsess_respond(struct http_sess *hsess)
+/* might be called multiple times until hdr was sent out */
+static inline err_t httpsess_write_hdr(struct http_sess *hsess, size_t *sent)
 {
-	static const char resp_hdr[] =
-		"HTTP/1.1 404 File not found\r\n"
-		"Server: "HTTPD_SERVER_AGENT"\r\n"
-		"Content-type: text/plain\r\n"
-		"\r\n";
-	uint16_t len = (uint16_t) sizeof(resp_hdr) - 1;
+	register size_t apos = *sent;     /* absolute offset in hdr */
+	register size_t aoff_cl, aoff_nl; /* current/next line buffer absolut offset in hdr */
+	register size_t l_off;            /* offset in current hdr line */
+	register size_t l_left;           /* left of current hdr line */
+	register void *ptr;
+	register uint32_t l;
+	register uint16_t avail;
+	uint16_t slen;
+	err_t err = ERR_OK;
+
+	avail = tcp_sndbuf(hsess->tpcb);
+	if (unlikely(avail == 0))
+		return ERR_OK; /* we need to wait for space on tcp sndbuf */
+	do {
+		if (apos < hsess->response_hdr.slines_tlen) {
+			/* static header */
+			//printf("STAT_HDR\n");
+			aoff_nl = 0;
+			for (l = 0; l < hsess->response_hdr.nb_slines; ++l) {
+				aoff_cl  = aoff_nl;
+				aoff_nl += hsess->response_hdr.sline[l].len;
+				if ((aoff_cl <= apos) && (apos < aoff_nl)) {
+					l_off  = apos - aoff_cl;
+					l_left = hsess->response_hdr.sline[l].len - l_off;
+					slen = min(avail, (uint16_t) l_left);
+					ptr  = (uint8_t *) hsess->response_hdr.sline[l].b + l_off;
+
+					err     = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
+					apos   += slen;
+					avail  -= slen;
+					l_left -= slen;
+					if ((avail == 0) || (err != ERR_OK) || (l_left))
+						goto out;
+				}
+			}
+		}
+		if ((apos >= hsess->response_hdr.slines_tlen) &&
+		    (apos <  hsess->response_hdr.eoh_off)) {
+			/* dynamic header */
+			//printf("DYN_HDR\n");
+			aoff_nl = hsess->response_hdr.slines_tlen;
+			for (l = 0; l < hsess->response_hdr.nb_dlines; ++l) {
+				aoff_cl  = aoff_nl;
+				aoff_nl += hsess->response_hdr.dline[l].len;
+				if ((aoff_cl <= apos) && (apos < aoff_nl)) {
+					l_off  = apos - aoff_cl;
+					l_left = hsess->response_hdr.dline[l].len - l_off;
+					slen = min(avail, (uint16_t) l_left);
+					ptr  = (uint8_t *) hsess->response_hdr.dline[l].b + l_off;
+
+					err     = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
+					apos   += slen;
+					avail  -= slen;
+					l_left -= slen;
+					if ((avail == 0) || (err != ERR_OK) || (l_left))
+						goto out;
+				}
+			}
+		}
+		if (apos >= hsess->response_hdr.eoh_off) {
+			/* end of header */
+			//printf("EOH\n");
+			l_off  = apos - hsess->response_hdr.eoh_off;
+			l_left = _http_shdr_len[HTTP_EOH] - l_off;
+			slen = min(avail, (uint16_t) l_left);
+			ptr  = (uint8_t *) _http_shdr[HTTP_EOH] + l_off;
+
+			err     = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
+			apos   += slen;
+			goto out;
+		}
+	} while (avail);
+
+ out:
+	httpsess_flush(hsess);
+	*sent = apos;
+	return err;
+}
+
+static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
+                                        const char *sbuf, size_t sbuf_len)
+{
+	register size_t apos = *sent;     /* absolute offset in hdr */
+	register const void *ptr;
+	register size_t left;                     /* left bytes of file */
+	register uint16_t avail;
+	uint16_t slen;
+	err_t err;
+
+	avail = tcp_sndbuf(hsess->tpcb);
+	if (unlikely(avail == 0))
+		return ERR_OK; /* we need to wait for space on tcp sndbuf */
+	left = (sbuf_len - apos);
+	if (unlikely(left > UINT16_MAX))
+		left = UINT16_MAX;
+	slen = min(avail, (uint16_t) left);
+	ptr = sbuf + apos;
+	err = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
+
+	*sent += slen;
+	return err;
+}
+
+static inline err_t httpsess_write_shfsfio(struct http_sess *hsess, size_t *sent)
+{
+	register size_t foff = (uint64_t) *sent;  /* offset in file */
+	register uint16_t avail;
+	size_t left;                              /* left bytes of file */
+	uint16_t slen;
+	err_t err;
+	int ret;
+
+	avail = tcp_sndbuf(hsess->tpcb);
+	if (unlikely(avail == 0))
+		return ERR_OK; /* we need to wait for space on tcp sndbuf */
+	left = hsess->fsize;
+	left -= foff;
+	if (left > shfs_vol.chunksize)
+		left = shfs_vol.chunksize;
+	if (unlikely(left > UINT16_MAX))
+		left = UINT16_MAX;
+	slen = min(avail, (uint16_t) left);
+
+	ret = shfs_fio_read(hsess->fd, foff, hsess->chk_buf, slen);
+	if (ret < 0) {
+		return ERR_MEM; /* I/O error */
+	}
+	err = httpsess_write(hsess, hsess->chk_buf, &slen, TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
+
+	*sent += slen;
+	return err;
+}
+
+/* will be called multiple times */
+static err_t httpsess_respond(struct http_sess *hsess)
+{
+	size_t len;
+	err_t err = ERR_OK;
 
 	switch (hsess->state) {
 	case HSS_RESPONDING_HDR:
 		/* send out header */
-		httpsess_write(hsess, resp_hdr, &len, 0);
-		hsess->state = HSS_CLOSING; /* let the session close after sending */
+		err = httpsess_write_hdr(hsess, &hsess->sent);
+
+		/* sending of hdr done? */
+		if (hsess->sent < hsess->response_hdr.total_len)
+			break; /* no */
+		httpsess_flush(hsess);
+		hsess->sent = 0;
+		if (hsess->response_hdr.code == 200) {
+			hsess->state = HSS_RESPONDING_MSG;
+			break;
+		} else {
+			hsess->state = HSS_RESPONDING_EMSG;
+		}
+	case HSS_RESPONDING_EMSG:
+		/* send out error message */
+		switch (hsess->response_hdr.code) {
+		case 404:
+			len = _http_err404p_len;
+			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err404p, len);
+			break;
+		case 501:
+			len = _http_err501p_len;
+			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err501p, len);
+			break;
+		default:
+			len = _http_err500p_len;
+			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err500p, len);
+			break;
+		}
+
+		if (hsess->sent == len) {
+			/* we are done serving the request */
+			hsess->state = HSS_CLOSING;
+		}
+		break;
 	case HSS_RESPONDING_MSG:
 		/* send out data */
+		err = httpsess_write_shfsfio(hsess, &hsess->sent);
+
+		if (hsess->sent == hsess->fsize) {
+			/* we are done serving the request */
+			if (hsess->keepalive)
+				httpsess_reset(hsess);
+			else
+				hsess->state = HSS_CLOSING;
+		}
 		break;
 	default:
+		/* unknown state -> close connection */
+		hsess->state = HSS_CLOSING;
 		break;
 	}
-}
 
-/*******************************************************************************
- * File I/O
- ******************************************************************************/
+	return err;
+}
