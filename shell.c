@@ -516,11 +516,11 @@ static err_t shlsess_accept(void)
     return ERR_OK;
 
 err_free_prompt:
-    free(sess->prompt);
+    xfree(sess->prompt);
 err_close_cons:
     close(sess->cons_fd);
 err_free_sess:
-    free(sess);
+    xfree(sess);
 err_out:
     return err;
 }
@@ -533,7 +533,7 @@ static void shlsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    free(sess->prompt);
+    xfree(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
@@ -693,9 +693,9 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     return ERR_OK;
 
 err_free_prompt:
-    free(sess->prompt);
+    xfree(sess->prompt);
 err_free_sess:
-    free(sess);
+    xfree(sess);
 err_out:
     return err;
 }
@@ -708,7 +708,7 @@ static void shrsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    free(sess->prompt);
+    xfree(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);

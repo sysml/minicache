@@ -60,7 +60,7 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
  err_free_reqpool:
   free_mempool(bd->reqpool);
  err_free_bd:
-  free(bd);
+  xfree(bd);
  err:
   return NULL;
 }
@@ -72,7 +72,7 @@ void close_blkdev(struct blkdev *bd)
 
   shutdown_blkfront(bd->dev);
   free_mempool(bd->reqpool);
-  free(bd);
+  xfree(bd);
 }
 
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret)
