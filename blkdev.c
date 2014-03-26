@@ -20,8 +20,6 @@
   (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif /* container_of */
 
-#define MAX_REQUESTS 4
-
 struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 {
   struct blkdev *bd;

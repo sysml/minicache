@@ -164,7 +164,7 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	buf_off = 0;
 
 	while (left) {
-		ret = shfs_sync_read_chunk(chk_off, 1, cobj->data);
+		ret = shfs_read_chunk(chk_off, 1, cobj->data);
 		if (ret < 0)
 			goto out;
 

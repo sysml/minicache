@@ -262,7 +262,7 @@ static int load_vol_hconf(void)
 #ifdef SHFS_DEBUG
 	printf("Load SHFS configuration chunk\n");
 #endif /* SHFS_DEBUG */
-	ret = shfs_sync_read_chunk(1, 1, chk1);
+	ret = shfs_read_chunk(1, 1, chk1);
 	if (ret < 0)
 		goto out_free_chk1;
 
@@ -342,7 +342,7 @@ static int load_vol_htable(void)
 			shfs_vol.htable_chunk_cache[cur_htchk]       = chk_buf;
 			shfs_vol.htable_chunk_cache_state[cur_htchk] = CCS_LOADED;
 
-			ret = shfs_sync_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
+			ret = shfs_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
 			if (ret < 0) {
 				goto err_free_chunkcache;
 			}
@@ -393,12 +393,17 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	ret = load_vol_cconf(vbd_id, count);
 	if (ret < 0)
 		goto err_out;
+
+	/* a memory pool required for async I/O requests */
+	shfs_vol.aiotoken_pool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _shfs_aio_token));
+	if (!shfs_vol.aiotoken_pool)
+		goto err_close_members;
 	shfs_mounted = 1;
 
 	/* load hash conf (uses shfs_sync_read_chunk) */
 	ret = load_vol_hconf();
 	if (ret < 0)
-		goto err_close_members;
+		goto err_free_aiotoken_pool;
 
 	/* load htable (uses shfs_sync_read_chunk)
 	 * This function also allocates htable_chunk_cache,
@@ -430,6 +435,8 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	xfree(shfs_vol.htable_chunk_cache);
 	xfree(shfs_vol.htable_chunk_cache_state);
 	shfs_free_btable(shfs_vol.bt);
+ err_free_aiotoken_pool:
+	free_mempool(shfs_vol.aiotoken_pool);
  err_close_members:
 	for(i = 0; i < shfs_vol.nb_members; ++i)
 		close_blkdev(shfs_vol.member[i].bd);
@@ -448,8 +455,9 @@ int umount_shfs(void) {
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
 		if (shfs_nb_open ||
+		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
 		    mempool_free_count(shfs_vol.chunkpool) < CHUNKPOOL_NB_BUFFERS) {
-			/* there are still open files */
+			/* there are still open files and/or async I/O is happening */
 			up(&shfs_mount_lock);
 			return -EBUSY;
 		}
@@ -462,6 +470,7 @@ int umount_shfs(void) {
 		xfree(shfs_vol.htable_chunk_cache);
 		xfree(shfs_vol.htable_chunk_cache_state);
 		shfs_free_btable(shfs_vol.bt);
+		free_mempool(shfs_vol.aiotoken_pool);
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			close_blkdev(shfs_vol.member[i].bd);
 	}
@@ -470,17 +479,63 @@ int umount_shfs(void) {
 	return 0;
 }
 
-int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer)
+/*
+ * Note: Async I/O token data access is atomic since none of these functions can
+ * be interrupted or yield the CPU. Even blkfront calls the callbacks outside
+ * of the interrupt context via blkdev_poll_req() and there is only the
+ * cooperative scheduler.
+ */
+static void _shfs_aio_cb(int ret, void *argp) {
+	SHFS_AIO_TOKEN *t = argp;
+
+	if (unlikely(ret < 0))
+		t->ret = ret;
+	--t->infly;
+
+	if (unlikely(t->infly == 0)) {
+		/* call user's callback */
+		if (t->cb)
+			t->cb(t, t->cb_argp);
+	}
+}
+
+SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
+                               shfs_aiocb_t *cb, void *cb_argp)
 {
 	int ret;
 	chk_t end, c;
 	sector_t start_sec, len_sec;
 	unsigned int m;
 	uint8_t *wptr = buffer;
+	struct mempool_obj *t_obj;
+	SHFS_AIO_TOKEN *t;
 
-	if (!shfs_mounted)
-		return -ENODEV;
+	if (!shfs_mounted) {
+		errno = ENODEV;
+		goto err_out;
+	}
+	/* check if each member has enough request objects available for this operation */
+	for (m = 0; m < shfs_vol.nb_members; ++m) {
+		if (blkdev_avail_req(shfs_vol.member[m].bd) < len) {
+			errno = ENOMEM;
+			goto err_out;
+		}
+	}
 
+	/* pick token */
+	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
+	if (!t_obj) {
+		errno = ENOMEM;
+		goto err_out;
+	}
+	t = t_obj->data;
+	t->p_obj = t_obj;
+	t->ret = 0;
+	t->infly = 0;
+	t->cb = cb;
+	t->cb_argp = cb_argp;
+
+	/* setup requests */
 	end = start + len;
 	for (c = start; c < end; c++) {
 		for (m = 0; m < shfs_vol.nb_members; ++m) {
@@ -488,21 +543,31 @@ int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer)
 			start_sec = c * shfs_vol.member[m].sfactor;
 			len_sec = shfs_vol.member[m].sfactor;
 #ifdef SHFS_DEBUG
-			printf("blkdev_sync_io member=%u, start=%lus, len=%lus, wptr=%p\n",
+			printf("blkdev_async_io member=%u, start=%lus, len=%lus, wptr=%p\n",
 			       m, start_sec, len_sec, wptr);
 #endif /* SHFS_DEBUG */
-			ret = blkdev_sync_io(shfs_vol.member[m].bd, start_sec, len_sec, write, wptr);
-			if (ret < 0) {
+			ret = blkdev_async_io(shfs_vol.member[m].bd, start_sec, len_sec, write, wptr,
+			                      _shfs_aio_cb, t);
+			if (unlikely(ret < 0)) {
 #ifdef SHFS_DEBUG
-				printf("Error while reading from member %u: %d\n", m, ret);
+				printf("Error while setting up async I/O request for member %u: %d. ", m, ret);
+				printf("Cancelling request...\n");
 #endif /* SHFS_DEBUG */
-				return ret;
+				t->cb = NULL; /* erase callback */
+				shfs_aio_wait(t);
+				errno = -ret;
+				goto err_free_token;
 			}
+			++t->infly;
 			wptr += shfs_vol.stripesize;
-		}
+			}
 	}
+	return t;
 
-	return 0;
+ err_free_token:
+	mempool_put(t_obj);
+ err_out:
+	return NULL;
 }
 
 void exit_shfs(void) {
