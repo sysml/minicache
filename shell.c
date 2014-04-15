@@ -702,6 +702,8 @@ err_out:
 
 static void shrsess_close(struct shell_sess *sess)
 {
+    err_t err;
+
     BUG_ON(sess->type != SST_REMOTE);
 
     /* unregister session */
@@ -721,8 +723,12 @@ static void shrsess_close(struct shell_sess *sess)
     tcp_err(sess->tpcb, NULL);
     tcp_poll(sess->tpcb, NULL, 0);
 
+    /* terminate connection */
+    err = tcp_close(sess->tpcb);
+    if (err != ERR_OK)
+        tcp_abort(sess->tpcb);
+
     /* release memory */
-    tcp_close(sess->tpcb);
 #ifdef SHELL_DEBUG
     printf("shell: Remote session closed (%s)\n", sess->name);
     fflush(stdout);
