@@ -24,13 +24,15 @@ static const char __http_shdr19[] = "Connection: close\r\n";
 static const char __http_shdr20[] = "Connection: keep-alive\r\n";
 static const char __http_shdr21[] = "Expires: Thu, 1 Jan 1970 00:00:00 GMT\r\nPragma: no-chache\r\n";
 static const char __http_shdr22[] = "Server: "HTTPD_SERVER_AGENT"\r\n";
+static const char __http_shdr23[] = "Accept-ranges: bytes\r\n";
+static const char __http_shdr24[] = "Transfer-encoding: chunked\r\n";
 
 static const char * const _http_shdr[] = {
 	__http_shdr00, __http_shdr01, __http_shdr02, __http_shdr03, __http_shdr04,
 	__http_shdr05, __http_shdr06, __http_shdr07, __http_shdr08, __http_shdr09,
 	__http_shdr10, __http_shdr11, __http_shdr12, __http_shdr13, __http_shdr14,
 	__http_shdr15, __http_shdr16, __http_shdr17, __http_shdr18, __http_shdr19,
-	__http_shdr20, __http_shdr21, __http_shdr22,
+	__http_shdr20, __http_shdr21, __http_shdr22, __http_shdr23, __http_shdr24
 };
 static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr00) - 1, sizeof(__http_shdr01) - 1,
@@ -44,7 +46,8 @@ static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr16) - 1, sizeof(__http_shdr17) - 1,
 	sizeof(__http_shdr18) - 1, sizeof(__http_shdr19) - 1,
 	sizeof(__http_shdr20) - 1, sizeof(__http_shdr21) - 1,
-	sizeof(__http_shdr22) - 1,
+	sizeof(__http_shdr22) - 1, sizeof(__http_shdr23) - 1,
+	sizeof(__http_shdr24) - 1
 };
 
 /* Indexes into _http_shdr */
@@ -71,6 +74,8 @@ static const size_t _http_shdr_len[] = {
 #define HTTP_SHDR_CONN_KEEPALIVE 20 /* Connection: keep-alive */
 #define HTTP_SHDR_NOCACHE        21 /* Pragma: no-cache */
 #define HTTP_SHDR_SERVER         22 /* Server agent */
+#define HTTP_SHDR_ACC_BYTERANGE  23 /* Accept-ranges: bytes */
+#define HTTP_SHDR_ENC_CHUNKED    24 /* Transfer-Encoding: chunked */
 
 #define HTTP_SHDR_DEFAULT_TYPE   HTTP_SHDR_PLAIN
 
@@ -108,13 +113,15 @@ static const size_t _http_shdr_len[] = {
 
 static const char __http_dhdr00[] = "Content-type: ";
 static const char __http_dhdr01[] = "Content-length: ";
+static const char __http_dhdr02[] = "Content-range: bytes ";
 
 static const char * const _http_dhdr[] = {
-	__http_dhdr00, __http_dhdr01,
+	__http_dhdr00, __http_dhdr01, __http_dhdr02,
 };
 
 #define HTTP_DHDR_MIME            0 /* content-type */
 #define HTTP_DHDR_SIZE            1 /* content-length */
+#define HTTP_DHDR_RANGE           2 /* content-range */
 
 static const char _http_err404p[] = \
 	"<html>\n"

@@ -131,7 +131,8 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out)
 }
 
 /*
- * Prototypical... it is using sync I/O (it's slow, I know)
+ * Slow sync I/O file read function
+ * Warning: It is using busy-waiting
  */
 int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 {
@@ -151,15 +152,12 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 
 	/* pick chunk I/O buffer from pool */
 	cobj = mempool_pick(shfs_vol.chunkpool);
-	while (!cobj) {
-		schedule(); /* wait for another thread releasing a buffer */
-		cobj = mempool_pick(shfs_vol.chunkpool);
-	}
+	if (!cobj)
+		return -ENOMEM;
 
 	/* perform the I/O chunk-wise */
-	chk_off = (hentry->offset + offset) / shfs_vol.chunksize +
-		  hentry->chunk;
-	byt_off = (hentry->offset + offset) % shfs_vol.chunksize;
+	chk_off = shfs_volchk_foff(f, offset);
+	byt_off = shfs_volchkoff_foff(f, offset);
 	left = len;
 	buf_off = 0;
 

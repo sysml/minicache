@@ -416,7 +416,7 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	 * doing I/O */
 	shfs_vol.chunkpool = alloc_mempool(CHUNKPOOL_NB_BUFFERS,
 	                                   shfs_vol.chunksize,
-	                                   4096,
+	                                   shfs_vol.stripesize,
 	                                   0, 0, NULL, NULL, 0);
 	if (!shfs_vol.chunkpool) {
 		shfs_mounted = 0;
@@ -495,18 +495,18 @@ static void _shfs_aio_cb(int ret, void *argp) {
 	if (unlikely(t->infly == 0)) {
 		/* call user's callback */
 		if (t->cb)
-			t->cb(t, t->cb_argp);
+			t->cb(t, t->cb_cookie, t->cb_argp);
 	}
 }
 
 SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
-                               shfs_aiocb_t *cb, void *cb_argp)
+                               shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp)
 {
 	int ret;
 	chk_t end, c;
 	sector_t start_sec, len_sec;
 	unsigned int m;
-	uint8_t *wptr = buffer;
+	uint8_t *ptr = buffer;
 	struct mempool_obj *t_obj;
 	SHFS_AIO_TOKEN *t;
 
@@ -533,6 +533,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	t->ret = 0;
 	t->infly = 0;
 	t->cb = cb;
+	t->cb_cookie = cb_cookie;
 	t->cb_argp = cb_argp;
 
 	/* setup requests */
@@ -543,10 +544,10 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 			start_sec = c * shfs_vol.member[m].sfactor;
 			len_sec = shfs_vol.member[m].sfactor;
 #ifdef SHFS_DEBUG
-			printf("blkdev_async_io member=%u, start=%lus, len=%lus, wptr=%p\n",
-			       m, start_sec, len_sec, wptr);
+			printf("shfs_aio_chunk: member=%u, start=%lu (%lus), len=1 (%lus), ptr=@%p\n",
+			       m, c, start_sec, len_sec, ptr);
 #endif /* SHFS_DEBUG */
-			ret = blkdev_async_io(shfs_vol.member[m].bd, start_sec, len_sec, write, wptr,
+			ret = blkdev_async_io(shfs_vol.member[m].bd, start_sec, len_sec, write, ptr,
 			                      _shfs_aio_cb, t);
 			if (unlikely(ret < 0)) {
 #ifdef SHFS_DEBUG
@@ -559,7 +560,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 				goto err_free_token;
 			}
 			++t->infly;
-			wptr += shfs_vol.stripesize;
+			ptr += shfs_vol.stripesize;
 			}
 	}
 	return t;

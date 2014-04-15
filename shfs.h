@@ -16,7 +16,7 @@
 #include "shfs_defs.h"
 
 #define MAX_NB_TRY_BLKDEVS 64
-#define CHUNKPOOL_NB_BUFFERS 64
+#define CHUNKPOOL_NB_BUFFERS 128
 
 struct vol_member {
 	struct blkdev *bd;
@@ -84,7 +84,7 @@ static inline void shfs_poll_blkdevs(void) {
  */
 struct _shfs_aio_token;
 typedef struct _shfs_aio_token SHFS_AIO_TOKEN;
-typedef void (shfs_aiocb_t)(SHFS_AIO_TOKEN *t, void *argp);
+typedef void (shfs_aiocb_t)(SHFS_AIO_TOKEN *t, void *cookie, void *argp);
 struct _shfs_aio_token {
 	/** this struct has only private data **/
 	struct mempool_obj *p_obj;
@@ -92,6 +92,7 @@ struct _shfs_aio_token {
 	int ret;
 
 	shfs_aiocb_t *cb;
+	void *cb_cookie;
 	void *cb_argp;
 };
 
@@ -101,13 +102,15 @@ struct _shfs_aio_token {
  * The callback registration is optional and can be seen as an alternative way
  * to wait for the I/O completation compared to using shfs_aio_is_done()
  * or shfs_aio_wait()
+ * cb_cookie and cb_argp are user definable values that get passed
+ * to the user defined callback.
  */
 SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
-                               shfs_aiocb_t *cb, void *cb_argp);
-#define shfs_aread_chunk(start, len, buffer, cb, cb_argp)  \
-	shfs_aio_chunk((start), (len), 0, (buffer), (cb), (cb_argp))
-#define shfs_awrite_chunk(start, len, buffer, cb, cb_argp) \
-	shfs_aio_chunk((start), (len), 1, (buffer), (cb), (cb_argp))
+                               shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp);
+#define shfs_aread_chunk(start, len, buffer, cb, cb_cookie, cb_argp)	  \
+	shfs_aio_chunk((start), (len), 0, (buffer), (cb), (cb_cookie), (cb_argp))
+#define shfs_awrite_chunk(start, len, buffer, cb, cb_cookie, cb_argp) \
+	shfs_aio_chunk((start), (len), 1, (buffer), (cb), (cb_cookie), (cb_argp))
 
 /*
  * Returns 1 if the I/O operation has finished, 0 otherwise
@@ -152,7 +155,7 @@ static inline int shfs_aio_finalize(SHFS_AIO_TOKEN *t)
 static inline int shfs_io_chunk(chk_t start, chk_t len, int write, void *buffer) {
 	SHFS_AIO_TOKEN *t;
 
-	t = shfs_aio_chunk(start, len, write, buffer, NULL, NULL);
+	t = shfs_aio_chunk(start, len, write, buffer, NULL, NULL, NULL);
 	if (!t)
 		return -errno;
 	shfs_aio_wait(t);

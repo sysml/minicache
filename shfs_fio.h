@@ -2,6 +2,7 @@
 #define _SHFS_FIO_
 
 #include "shfs_defs.h"
+#include "shfs.h"
 
 #define SFHS_HASH_INDICATOR_PREFIX ':'
 
@@ -25,8 +26,27 @@ void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is 
 void shfs_fio_hash(SHFS_FD f, hash512_t out);
 void shfs_fio_size(SHFS_FD f, uint64_t *out);
 
-/**
- * File/object I/O
+/* volume chunk address of file chunk address */
+#define shfs_volchk_fchk(f, fchk) \
+	((f)->chunk + (fchk))
+
+/* volume chunk address of file byte offset */
+#define shfs_volchk_foff(f, foff) \
+	(((f)->offset + (foff)) / shfs_vol.chunksize + (f)->chunk)
+/* byte offset in volume chunk of file byte offset */
+#define shfs_volchkoff_foff(f, foff) \
+	(((f)->offset + (foff)) % shfs_vol.chunksize)
+
+/* Check macros to test if a */
+#define shfs_is_fchk_in_bound(f, fchk) \
+	(DIV_ROUND_UP(((f)->offset + (f)->len), shfs_vol.chunksize) > (fchk))
+#define shfs_is_foff_in_bound(f, foff) \
+	((f)->len > (foff))
+
+
+/*
+ * Synchronous file read
+ * Note: Busy-waiting is used
  */
 int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
 
