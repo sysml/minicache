@@ -107,18 +107,15 @@ struct shell_sess {
 
     /* console i/o */
     char argb[ARGB_LEN]; /* argument buffer */
-    FILE *cio; /* stdout for console */
+    FILE *cio; /* stdin/stdout of session */
 
     int cons_fd; /* serial console on SSS_LOCAL */
 #ifdef HAVE_LWIP
     struct tcp_pcb *tpcb; /* TCP PCB */
-    cookie_io_functions_t cio_funcs; /* tcp i/o on non SSS_LOCAL */
     /* rx buffer (tcp session) */
     char cio_rxbuf[SH_RXBUFLEN];
     uint16_t cio_rxbuf_ridx;
     uint16_t cio_rxbuf_widx;
-    struct wait_queue_head cio_rxbuf_wq_rd;
-    struct wait_queue_head cio_rxbuf_wq_wr;
 #endif
 
 };
@@ -553,11 +550,11 @@ static void shlsess_close(struct shell_sess *sess)
 #define RXBUF_NB_AVAIL(s) ((SH_RXBUFLEN  + (s)->cio_rxbuf_widx - (s)->cio_rxbuf_ridx) & SH_RXBUFMASK)
 #define RXBUF_NB_FREE(s)  ((SH_RXBUFMASK + (s)->cio_rxbuf_ridx - (s)->cio_rxbuf_widx) & SH_RXBUFMASK)
 
-static ssize_t shrsess_cio_read(void *argp, char *buf, size_t maxlen)
+static ssize_t shrsess_cio_read(void *argp, char *buf, int maxlen)
 {
     struct shell_sess *sess = argp;
-    size_t i;
-    size_t avail;
+    int i;
+    int avail;
 
 retry:
     if (sess->state == SSS_CLOSING)
@@ -585,11 +582,11 @@ retry:
     return (ssize_t) avail;
 }
 
-static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
+static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
 {
     struct shell_sess *sess = argp;
     err_t err = ERR_OK;
-    size_t i = 0;
+    int i = 0;
     uint16_t avail, sendlen;
     /*
 #ifdef SHELL_DEBUG
@@ -662,15 +659,16 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     sess->ts_start = NOW();
     sess->id = shell_get_free_sess_id();
 
-    sess->cio_funcs.read = shrsess_cio_read;
-    sess->cio_funcs.write = shrsess_cio_write;
-    sess->cio_funcs.seek = NULL;
-    sess->cio_funcs.close = NULL;
     sess->cio_rxbuf_ridx = 0;
     sess->cio_rxbuf_widx = 0;
-    init_waitqueue_head(&sess->cio_rxbuf_wq_rd);
-    init_waitqueue_head(&sess->cio_rxbuf_wq_wr);
-    sess->cio = fopencookie(sess, "r+", sess->cio_funcs);
+    sess->cio = funopen(sess,
+                        shrsess_cio_read,
+                        shrsess_cio_write,
+                        NULL, NULL);
+    if (!sess->cio) {
+	err = ERR_MEM;
+	goto err_free_prompt;
+    }
 
     snprintf(sess->name, SESSNAME_MAXLEN, SESSNAME_RFMT, sess->id);
     sess->thread = create_thread(sess->name, sh_session, sess);
@@ -813,11 +811,12 @@ static int shcmd_help(FILE *cio, int argc, char *argv[])
 static int shcmd_who(FILE *cio, int argc, char *argv[])
 {
     /* list opened sessions */
+    /* TODO: Copy session name before printing (session might close while printing) */
     int32_t i;
 
     for (i = 0; i < MAX_NB_SESS; i++){
         if (sh->sess[i])
-            fprintf(cio, " %s\n", sh->sess[i]->name);
+	        fprintf(cio, " %s\n", sh->sess[i]->name);
     }
     return 0;
 }
