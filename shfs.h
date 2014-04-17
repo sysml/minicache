@@ -115,8 +115,8 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 /*
  * Returns 1 if the I/O operation has finished, 0 otherwise
  */
-#define shfs_aio_is_done(t) \
-	((t)->infly == 0)
+#define shfs_aio_is_done(t)	  \
+	(!(t) || (t)->infly == 0)
 
 /*
  * Busy-waiting until the async I/O operation is completed
