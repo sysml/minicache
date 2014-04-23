@@ -38,6 +38,8 @@
 #define MAX_NB_VBD 64
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
+#endif /* CONFIG_LWIP_MINIMAL */
+
 /* runs (func) a command on a timeout */
 #define TIMED(ts_now, ts_tmr, interval, func)                        \
 	do {                                                         \
@@ -47,7 +49,58 @@
 			(ts_tmr) = (ts_now);                         \
 		}                                                    \
 	} while(0)
-#endif /* CONFIG_LWIP_MINIMAL */
+
+#ifdef CONFIG_MINDER_PRINT
+#define MINDER_INTERVAL 500
+
+static inline void minder_print(void)
+{
+    static int minder_step = 0;
+
+    switch (minder_step) {
+    case 1:
+	    printf("\r >))'>   ");
+	    minder_step = 2;
+	    break;
+    case 2:
+	    printf("\r  >))'>  ");
+	    minder_step = 3;
+	    break;
+    case 3:
+	    printf("\r   >))'> ");
+	    minder_step = 4;
+	    break;
+    case 4:
+	    printf("\r    >))'>");
+	    minder_step = 5;
+	    break;
+    case 5:
+	    printf("\r    <'((<");
+	    minder_step = 6;
+	    break;
+    case 6:
+	    printf("\r   <'((< ");
+	    minder_step = 7;
+	    break;
+    case 7:
+	    printf("\r  <'((<  ");
+	    minder_step = 8;
+	    break;
+    case 8:
+	    printf("\r <'((<   ");
+	    minder_step = 9;
+	    break;
+    case 9:
+	    printf("\r<'((<    ");
+	    minder_step = 0;
+	    break;
+    default:
+	    printf("\r>))'>    ");
+	    minder_step = 1;
+    }
+    fflush(stdout);
+}
+#endif /* CONFIG_MINDER_PRINT */
 
 /**
  * ARGUMENT PARSING
@@ -337,15 +390,20 @@ int main(int argc, char *argv[])
 {
     struct netif netif;
     int ret;
-#ifdef CONFIG_LWIP_SINGLETHREADED
+#if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
     uint64_t now;
+#endif
+#ifdef CONFIG_LWIP_SINGLETHREADED
     uint64_t ts_tcp = 0;
     uint64_t ts_etharp = 0;
     uint64_t ts_ipreass = 0;
     uint64_t ts_dns = 0;
     uint64_t ts_dhcp_fine = 0;
     uint64_t ts_dhcp_coarse = 0;
-#endif
+#endif /* CONFIG_LWIP_SINGLETHREADED */
+#ifdef CONFIG_MINDER_PRINT
+    uint64_t ts_minder = 0;
+#endif /* CONFIG_MINDER_PRINT */
     init_SEMAPHORE(&_vbd_lock, 1);
 
     /* -----------------------------------
@@ -492,9 +550,13 @@ int main(int argc, char *argv[])
      * Processing loop
      * ----------------------------------- */
     printf("*** MiniCache is up and running ***\n");
+#ifdef CONFIG_MINDER_PRINT
+    printf("\n");
+#endif
     while(likely(!shall_shutdown)) {
 	/* poll block devices */
 	shfs_poll_blkdevs();
+
 #ifdef CONFIG_LWIP_SINGLETHREADED
         /* NIC handling loop (single threaded lwip) */
 #ifdef CONFIG_NMWRAP
@@ -502,8 +564,13 @@ int main(int argc, char *argv[])
 #else
 	netfrontif_handle(&netif, RXBURST_LEN);
 #endif /* CONFIG_NMWRAP */
-	/* Process lwip network-related timers */
+#endif /* CONFIG_LWIP_SINGLETHREADED */
+
+#if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
         now = NSEC_TO_MSEC(NOW());
+#endif
+#ifdef CONFIG_LWIP_SINGLETHREADED
+	/* Process lwip network-related timers */
         TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
         TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
         TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
@@ -513,6 +580,9 @@ int main(int argc, char *argv[])
 	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
         }
 #endif /* CONFIG_LWIP_SINGLETHREADED */
+#ifdef CONFIG_MINDER_PRINT
+        TIMED(now, ts_minder,  MINDER_INTERVAL,  minder_print());
+#endif /* CONFIG_MINDER_PRINT */
         schedule(); /* yield CPU */
 
         if (unlikely(shall_suspend)) {

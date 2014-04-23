@@ -59,6 +59,7 @@ CFLAGS				+= -DCONFIG_AUTOMOUNT
 ######################################
 CONFIG_DEBUG			= y
 CONFIG_DEBUG_LWIP		= n
+CFLAGS				+= -DCONFIG_MINDER_PRINT
 //CFLAGS			+= -DHTTP_DEBUG
 //CFLAGS			+= -DSHFS_DEBUG
 //CFLAGS			+= -DSHELL_DEBUG
