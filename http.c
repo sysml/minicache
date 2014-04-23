@@ -80,8 +80,31 @@ static uint64_t __dprintf_tsref = 0;
 	    printf("line %4d: %s(): ",  __LINE__, __FUNCTION__); \
 	    printf((fmt),               ##__VA_ARGS__); \
 	} while(0)
+
+#ifdef __x86_64__
+#define get_caller()	  \
+	({ \
+		unsigned long bp; \
+		unsigned long *frame; \
+		asm("movq %%rbp, %0":"=r"(bp)); \
+		frame = (void*) bp; \
+		frame[1]; \
+	})
+#elif defined __x86_32__
+#define get_caller()	  \
+	({ \
+		unsigned long bp; \
+		unsigned long *frame; \
+		asm("movl %%ebp, %0":"=r"(bp)); \
+		frame = (void*) bp; \
+		frame[1]; \
+	})
 #else
-#define dprintf(fmt, ...)
+#define get_caller() 0
+#endif
+#else
+#define dprintf(fmt, ...) do {} while(0)
+#define get_caller() 0
 #endif
 
 
@@ -391,12 +414,14 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	return err;
 }
 
- static void httpsess_close(struct http_sess *hsess, int kill)
+static void httpsess_close(struct http_sess *hsess, int kill)
 {
 #if HTTP_MULTISERVER
 	struct http_srv *hs = hsess->hs;
 #endif
 	err_t err;
+
+	ASSERT(hsess != NULL);
 
 	/* disable tcp connection */
 	tcp_arg(hsess->tpcb,  NULL);
@@ -409,10 +434,9 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	/* close open file/wait for I/O exit */
 	/* TODO: This code might lead to server blocking */
 	hsess->chk_buf_idx = UINT_MAX; /* disable calling of httpsess_response from aio cb */
-	if (hsess->chk_buf_aiotoken[0])
-		shfs_aio_wait(hsess->chk_buf_aiotoken[0]);
-	if (hsess->chk_buf_aiotoken[1])
-		shfs_aio_wait(hsess->chk_buf_aiotoken[1]);
+
+	shfs_aio_wait(hsess->chk_buf_aiotoken[0]);
+	shfs_aio_wait(hsess->chk_buf_aiotoken[1]);
 	if (hsess->fd)
 		shfs_fio_close(hsess->fd);
 
@@ -431,7 +455,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	mempool_put(hsess->pobj);
 	--hs->nb_sess;
 
-	dprintf("HTTP session %s\n", (kill ? "killed" : "closed"));
+	dprintf("HTTP session %s (caller: 0x%x)\n", (kill ? "killed" : "closed"), get_caller());
 }
 
 static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
@@ -440,8 +464,9 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 	struct pbuf *q;
 	size_t plen;
 
-	/* receive error: close connection */
+	/* receive error: kill connection */
 	if (unlikely(!p || err != ERR_OK)) {
+		dprintf("Unexpected session error (p=%p, err=%d)\n", p, err);
 		if (p) {
 			/* inform TCP that we have taken the data */
 			tcp_recved(tpcb, p->tot_len);
@@ -743,7 +768,7 @@ static int httprecv_req_complete(struct http_parser *parser)
 			hsess->chunked = 1;
 			hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_ENC_CHUNKED];
 			hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_ENC_CHUNKED];
-			hsess->response_hdr.nb_slines    = 3;
+			hsess->response_hdr.nb_slines   += 1;
 		}
 
 		hsess->response_hdr.dline[0].len = snprintf(hsess->response_hdr.dline[0].b,
@@ -756,15 +781,12 @@ static int httprecv_req_complete(struct http_parser *parser)
 		                                            "%s%lu\r\n",
 		                                            _http_dhdr[HTTP_DHDR_SIZE],
 		                                            hsess->fsize);
-		/*
 		hsess->response_hdr.dline[2].len = snprintf(hsess->response_hdr.dline[2].b,
 		                                            HTTPHDR_BUFFER_MAXLEN,
 		                                            "%s%lu-%lu/%lu\r\n",
 		                                            _http_dhdr[HTTP_DHDR_RANGE],
 		                                            hsess->rfirst, hsess->rlast, hsess->fsize);
 		hsess->response_hdr.nb_dlines    = 3;
-		*/
-		hsess->response_hdr.nb_dlines    = 2;
 	}
 
 	/* Server string */
@@ -1003,7 +1025,10 @@ static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sen
 	left = min(shfs_vol.chunksize - chk_off, hsess->rlen - foff);
 	slen = min3(UINT16_MAX, avail, left);
 	err = httpsess_write(hsess, ((uint8_t *) (hsess->chk_buf[idx]->data)) + chk_off,
-	                     &slen, TCP_WRITE_FLAG_MORE);
+	                     &slen, TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
+	                    /* TODO: We need to copy because the buffers might be 
+	                     *  obsolete already but client has not yet acknowledged the
+	                     *  data yet */
 	*sent += slen;
 	if (unlikely(err != ERR_OK)) {
 		dprintf("[idx=%u] sending failed, aborting this round\n", idx);

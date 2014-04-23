@@ -11,7 +11,7 @@
 #include <mempool.h>
 #include <semaphore.h>
 
-#include <ipv4/lwip/ip_addr.h>
+#include <lwip/ip_addr.h>
 #include <netif/etharp.h>
 #include <lwip/netif.h>
 #include <lwip/inet.h>
@@ -41,7 +41,7 @@
 /* runs (func) a command on a timeout */
 #define TIMED(ts_now, ts_tmr, interval, func)                        \
 	do {                                                         \
-		if (unlikely(((ts_now) - (ts_tmr)) >= (interval))) { \
+		if (unlikely(((ts_now) - (ts_tmr)) > (interval))) {  \
 			if ((ts_tmr))                                \
 				(func);                              \
 			(ts_tmr) = (ts_now);                         \
@@ -346,28 +346,7 @@ int main(int argc, char *argv[])
     uint64_t ts_dhcp_fine = 0;
     uint64_t ts_dhcp_coarse = 0;
 #endif
-
     init_SEMAPHORE(&_vbd_lock, 1);
-
-    /* -----------------------------------
-     * argument parsing
-     * ----------------------------------- */
-    if (parse_args(argc, argv) < 0) {
-	    printf("Argument parsing error!\n" \
-	           "Please check your arguments\n");
-	    goto out;
-    }
-    if (args.startup_delay) {
-	    unsigned int s;
-	    printf("Startup delay");
-	    fflush(stdout);
-	    for (s = 0; s < args.startup_delay; ++s) {
-		    printf(".");
-		    fflush(stdout);
-		    msleep(1000);
-	    }
-	    printf("\n");
-    }
 
     /* -----------------------------------
      * banner
@@ -384,6 +363,27 @@ int main(int argc, char *argv[])
     printf("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printf("\n");
 #endif
+
+    /* -----------------------------------
+     * argument parsing
+     * ----------------------------------- */
+    if (parse_args(argc, argv) < 0) {
+	    printf("Argument parsing error!\n" \
+	           "Please check your arguments\n");
+	    goto out;
+    }
+
+    if (args.startup_delay) {
+	    unsigned int s;
+	    printf("Startup delay");
+	    fflush(stdout);
+	    for (s = 0; s < args.startup_delay; ++s) {
+		    printf(".");
+		    fflush(stdout);
+		    msleep(1000);
+	    }
+	    printf("\n");
+    }
 
     /* -----------------------------------
      * lwIP initialization
@@ -458,18 +458,21 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * filesystem automount
      * ----------------------------------- */
+    printf("Loading SHFS...\n");
     init_shfs();
+#ifdef CONFIG_AUTOMOUNT
     printf("Trying to mount cache filesystem...\n");
     ret = mount_shfs(args.vbd_id, args.nb_vbds);
     if (ret < 0)
 	    printf("ERROR: Could not mount cache filesystem\n");
+#endif
 
     /* -----------------------------------
      * service initialization
      * ----------------------------------- */
     printf("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
-    printf("Starting http server...\n");
+    printf("Starting HTTP server...\n");
     init_http(60); /* allow 60 simultaneous connections */
 
     /* add custom commands to the shell */
@@ -535,7 +538,7 @@ int main(int argc, char *argv[])
 	    printf("System is going down to reboot now\n");
     else
 	    printf("System is going down to halt now\n");
-    printf("Stopping http server...\n");
+    printf("Stopping HTTP server...\n");
     exit_http();
     printf("Stopping shell...\n");
     exit_shell();
