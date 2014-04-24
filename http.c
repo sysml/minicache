@@ -115,7 +115,6 @@ enum http_sess_state {
 	HSS_RESPONDING_HDR,
 	HSS_RESPONDING_MSG,
 	HSS_RESPONDING_EMSG,
-	HSS_CLOSING,
 };
 
 struct http_srv {
@@ -578,13 +577,6 @@ static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 		if (len) {
 			dprintf("Client acknowledged %u bytes, continue...\n", len);
 			 httpsess_respond(hsess);
-		}
-		break;
-	case HSS_CLOSING:
-		/* close session after all sent data were ack'ed */
-		if (likely(hsess->sent_infly == 0)) {
-			dprintf("Closing HTTP session\n");
-			httpsess_close(hsess, 0);
 		}
 		break;
 	default:
@@ -1065,7 +1057,6 @@ static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sen
 	return err;
 
  err_abort:
-	hsess->state = HSS_CLOSING;
 	return err;
 }
 
@@ -1106,6 +1097,8 @@ static void httpsess_respond(struct http_sess *hsess)
 	case HSS_RESPONDING_HDR:
 		/* send out header */
 		err = httpsess_write_hdr(hsess, &hsess->sent);
+		if (err)
+			goto err;
 
 		/* sending of hdr done? */
 		if (hsess->sent < hsess->response_hdr.total_len)
@@ -1135,29 +1128,40 @@ static void httpsess_respond(struct http_sess *hsess)
 			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err500p, len);
 			break;
 		}
+		if (err)
+			goto err;
 
 		if (hsess->sent == len) {
 			/* we are done serving the request */
-			hsess->state = HSS_CLOSING;
+			httpsess_close(hsess, 0);
 		}
 		break;
 	case HSS_RESPONDING_MSG:
 		/* send out data */
 		err = httpsess_write_shfsafio(hsess, &hsess->sent);
+		if (err)
+			goto err;
 
 		if (hsess->sent == hsess->rlen) {
 			/* we are done serving the request */
 			httpsess_flush(hsess);
 
 			if (hsess->keepalive)
+				/* wait for next request */
 				httpsess_reset(hsess);
 			else
-				hsess->state = HSS_CLOSING;
+				httpsess_close(hsess, 0);
 		}
 		break;
 	default:
-		/* unknown state -> close connection */
-		hsess->state = HSS_CLOSING;
+		/* unknown state -> kill connection */
+		httpsess_close(hsess, 1);
 		break;
 	}
+
+	return;
+
+ err:
+	/* error happened -> kill connection */
+	httpsess_close(hsess, 1);
 }
