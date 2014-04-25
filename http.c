@@ -177,12 +177,12 @@ struct http_sess {
 	int chunked; /* chunked sending enabled? */
 	struct _hdr_dbuffer chunk_hdr;
 	int keepalive;
-	int keepalive_timer; /* -1, timout disabled, 0 timeout expired */
+	int keepalive_timer; /* -1 timeout disabled, 0 timeout expired */
 
 	SHFS_FD fd;
-	char fmime[65]; /* mime type of file (fd) */
-	char fname[65]; /* name of file (fd) */
-	uint64_t fsize; /* file size (fd) */
+	char fmime[65]; /* mime type of file */
+	char fname[65]; /* name of file */
+	uint64_t fsize; /* file size */
 	uint64_t rfirst; /* (requested) first byte to read from file */
 	uint64_t rlast;  /* (requested) last byte to read from file */
 	uint64_t rlen; /* (requested) number of bytes to read */
@@ -431,7 +431,7 @@ static void httpsess_close(struct http_sess *hsess, int kill)
 	tcp_poll(hsess->tpcb, NULL, 0);
 
 	/* close open file/wait for I/O exit */
-	/* TODO: This code might lead to server blocking */
+	/* TODO: This code (shfs_aio_wait) might lead to server blocking */
 	hsess->chk_buf_idx = UINT_MAX; /* disable calling of httpsess_response from aio cb */
 
 	shfs_aio_wait(hsess->chk_buf_aiotoken[0]);
@@ -519,7 +519,7 @@ static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 	struct http_sess *hsess = argp;
 
 	if (unlikely(hsess->keepalive_timer == 0))
-		httpsess_close(hsess, 0); /* timeout expired: close connection */
+		httpsess_close(hsess, 0); /* keepalive timeout: close connection */
 	if (hsess->keepalive_timer > 0)
 		--hsess->keepalive_timer;
 	return ERR_OK;
@@ -665,6 +665,21 @@ static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_
 	return 0;
 }
 
+/* returns the field line number on success, -1 if it was not found */
+static inline int http_reqhdr_findfield(struct http_sess *hsess, const char *field)
+{
+	register unsigned l;
+
+	for (l = 0; l < hsess->request_hdr.nb_lines; ++l) {
+		if (strncasecmp(field, hsess->request_hdr.line[l].field.b,
+		                hsess->request_hdr.line[l].field.len) == 0) {
+			return (int) l;
+		}
+	}
+
+	return -1; /* not found */
+}
+
 /*******************************************************************************
  * HTTP Request handling
  ******************************************************************************/
@@ -674,6 +689,7 @@ static int httprecv_req_complete(struct http_parser *parser)
 	register uint32_t l;
 	register unsigned shdr_code;
 	register size_t url_offset = 0;
+	register int ret;
 
 	/* finalize request_hdr lines by adding terminating '\0' */
 	for (l = 0; l < hsess->request_hdr.nb_lines; ++l) {
@@ -709,70 +725,141 @@ static int httprecv_req_complete(struct http_parser *parser)
 			hsess->response_hdr.sline[3].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
 			hsess->response_hdr.nb_slines    = 4;
 			hsess->response_hdr.nb_dlines    = 0;
-		} else {
-			/* 500 Internal server error */
-			shdr_code = HTTP_SHDR_500(parser->http_major, parser->http_minor);
-			hsess->response_hdr.code         = 500;
-			hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
-			hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
-			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_HTML];
-			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_HTML];
-			hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_NOCACHE];
-			hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_NOCACHE];
-			hsess->response_hdr.sline[3].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
-			hsess->response_hdr.sline[3].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
-			hsess->response_hdr.nb_slines    = 4;
-			hsess->response_hdr.nb_dlines    = 0;
+			goto finalize_hdr;
 		}
-	} else {
-		/* 200 OK */
-		/* TODO: Range requests require actually different answers (e.g., 206 OK or 416 EINVAL)
-		 * see: http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.16 */
-		hsess->response_hdr.code = 200;
-		shfs_fio_size(hsess->fd, &hsess->fsize);
-		shfs_fio_mime(hsess->fd, hsess->fmime, sizeof(hsess->fmime));
-		shfs_fio_name(hsess->fd, hsess->fname, sizeof(hsess->fname));
-		hsess->rfirst = 0;
-		hsess->rlast  = hsess->fsize - 1;
-		hsess->rlen   = (hsess->rlast + 1) - hsess->rfirst;
-		if (hsess->rlen != 0) {
-			hsess->volchk_first = shfs_volchk_foff(hsess->fd, hsess->rfirst);                      /* first volume chunk of file */
-			hsess->volchk_last  = shfs_volchk_foff(hsess->fd, hsess->rlast + hsess->rfirst);       /* last volume chunk of file */
-			hsess->volchkoff_first = shfs_volchkoff_foff(hsess->fd, hsess->rfirst);                /* first byte in first chunk */
-			hsess->volchkoff_last  = shfs_volchkoff_foff(hsess->fd, hsess->rlast + hsess->rfirst); /* last byte in last chunk */
-		}
-		/* TODO: Check if request is in file bounds, otherwise ERR 416 */
 
-		shdr_code = HTTP_SHDR_OK(parser->http_major, parser->http_minor);
+		/* 500 Internal server error */
+		shdr_code = HTTP_SHDR_500(parser->http_major, parser->http_minor);
+		hsess->response_hdr.code         = 500;
 		hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
 		hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
-		if (http_should_keep_alive(&hsess->parser)) {
-			hsess->keepalive = 1;
-			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_KEEPALIVE];
-			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_KEEPALIVE];
-		} else {
-			hsess->keepalive = 0;
-			hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
-			hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
-		}
-		hsess->response_hdr.nb_slines            = 2;
-		if (0) { /* chunking is supported/requested by client */
-			hsess->chunked = 1;
-			hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_ENC_CHUNKED];
-			hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_ENC_CHUNKED];
-			hsess->response_hdr.nb_slines   += 1;
-		}
+		hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_HTML];
+		hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_HTML];
+		hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_NOCACHE];
+		hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_NOCACHE];
+		hsess->response_hdr.sline[3].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
+		hsess->response_hdr.sline[3].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
+		hsess->response_hdr.nb_slines    = 4;
+		hsess->response_hdr.nb_dlines    = 0;
+		goto finalize_hdr;
+	}
 
-		hsess->response_hdr.dline[0].len = snprintf(hsess->response_hdr.dline[0].b,
-		                                            HTTPHDR_BUFFER_MAXLEN,
-		                                            "%s%s\r\n",
-		                                            _http_dhdr[HTTP_DHDR_MIME],
-		                                            hsess->fmime);
-		hsess->response_hdr.dline[1].len = snprintf(hsess->response_hdr.dline[1].b,
-		                                            HTTPHDR_BUFFER_MAXLEN,
-		                                            "%s%lu\r\n",
-		                                            _http_dhdr[HTTP_DHDR_SIZE],
-		                                            hsess->fsize);
+	hsess->response_hdr.code = 200;	/* 200 OK */
+	shdr_code = HTTP_SHDR_OK(parser->http_major, parser->http_minor);
+	shfs_fio_size(hsess->fd, &hsess->fsize);
+	shfs_fio_mime(hsess->fd, hsess->fmime, sizeof(hsess->fmime));
+	shfs_fio_name(hsess->fd, hsess->fname, sizeof(hsess->fname));
+
+	/* File range requested? */
+	hsess->rfirst = 0;
+	hsess->rlast  = hsess->fsize - 1;
+	ret = http_reqhdr_findfield(hsess, "range");
+	if (ret >= 0) {
+		/* Since range requests require different answer codes
+		 * (e.g., 206 OK or 416 EINVAL), we need to check the
+		 * range request.
+		 * http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.16 */
+		if (strncasecmp("bytes=", hsess->request_hdr.line[ret].value.b, 6) == 0) {
+			uint64_t rfirst;
+			uint64_t rlast;
+
+			ret = sscanf(hsess->request_hdr.line[ret].value.b + 6,
+			             "%lu-%lu",
+			             &rfirst, &rlast);
+			if (ret == 1) {
+				/* only rfirst specified */
+				if (rfirst < hsess->rlast) {
+					/* OK */
+					hsess->rfirst = rfirst;
+					hsess->response_hdr.code = 206;
+				} else {
+					/* invalid */
+					hsess->response_hdr.code = 416;
+				}
+			} else if (ret == 2) {
+				/* only rfirst and rlast specified */
+				if ((rfirst < rlast) &&
+				    (rfirst < hsess->rlast) &&
+				    (rlast <= hsess->rlast)) {
+					/* OK */
+					hsess->rfirst = rfirst;
+					hsess->rlast = rlast;
+					hsess->response_hdr.code = 206;
+				} else {
+					/* invalid */
+					hsess->response_hdr.code = 416;
+				}
+			} else {
+				/* could not parse: invalid */
+				hsess->response_hdr.code = 416;
+			}
+
+			if (hsess->response_hdr.code == 416) {
+				/* response with 416 error header */
+				dprintf("Could not parse range request\n");
+				shdr_code = HTTP_SHDR_416(parser->http_major, parser->http_minor);
+				hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
+				hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
+				hsess->response_hdr.nb_slines    = 1;
+				hsess->response_hdr.nb_dlines    = 0;
+				goto finalize_hdr;
+			}
+
+			dprintf("Client requested range of element: %lu-%lu\n",
+			        hsess->rfirst, hsess->rlast);
+			hsess->response_hdr.code = 206;
+			shdr_code = HTTP_SHDR_206(parser->http_major, parser->http_minor);
+		}
+		/* ignore unknown range request
+		 * (as the server would not support it */
+	}
+	hsess->rlen   = (hsess->rlast + 1) - hsess->rfirst;
+	if (hsess->rlen != 0) {
+		hsess->volchk_first = shfs_volchk_foff(hsess->fd, hsess->rfirst);                      /* first volume chunk of file */
+		hsess->volchk_last  = shfs_volchk_foff(hsess->fd, hsess->rlast + hsess->rfirst);       /* last volume chunk of file */
+		hsess->volchkoff_first = shfs_volchkoff_foff(hsess->fd, hsess->rfirst);                /* first byte in first chunk */
+		hsess->volchkoff_last  = shfs_volchkoff_foff(hsess->fd, hsess->rlast + hsess->rfirst); /* last byte in last chunk */
+	}
+
+	/* Static OK header lines */
+	/* HTTP code */
+	hsess->response_hdr.sline[0].b   = _http_shdr    [shdr_code];
+	hsess->response_hdr.sline[0].len = _http_shdr_len[shdr_code];
+	/* keepalive */
+	if (http_should_keep_alive(&hsess->parser)) {
+		hsess->keepalive = 1;
+		hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_KEEPALIVE];
+		hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_KEEPALIVE];
+	} else {
+		hsess->keepalive = 0;
+		hsess->response_hdr.sline[1].b   = _http_shdr    [HTTP_SHDR_CONN_CLOSE];
+		hsess->response_hdr.sline[1].len = _http_shdr_len[HTTP_SHDR_CONN_CLOSE];
+	}
+	hsess->response_hdr.nb_slines            = 2;
+
+	/* File chunking supported/requested by client? */
+	if (0) { /* TODO: DISABLED */
+		hsess->chunked = 1;
+		hsess->response_hdr.sline[2].b   = _http_shdr    [HTTP_SHDR_ENC_CHUNKED];
+		hsess->response_hdr.sline[2].len = _http_shdr_len[HTTP_SHDR_ENC_CHUNKED];
+		hsess->response_hdr.nb_slines    = 3;
+	}
+
+	/* Dynamic OK header lines */
+	/* MIME */
+	hsess->response_hdr.dline[0].len = snprintf(hsess->response_hdr.dline[0].b,
+	                                            HTTPHDR_BUFFER_MAXLEN,
+	                                            "%s%s\r\n",
+	                                            _http_dhdr[HTTP_DHDR_MIME],
+	                                            hsess->fmime);
+	/* Content range/length */
+	hsess->response_hdr.dline[1].len = snprintf(hsess->response_hdr.dline[1].b,
+	                                            HTTPHDR_BUFFER_MAXLEN,
+	                                            "%s%lu\r\n",
+	                                            _http_dhdr[HTTP_DHDR_SIZE],
+	                                            hsess->rlen);
+	hsess->response_hdr.nb_dlines    = 2;
+	if (hsess->response_hdr.code == 206) {
 		hsess->response_hdr.dline[2].len = snprintf(hsess->response_hdr.dline[2].b,
 		                                            HTTPHDR_BUFFER_MAXLEN,
 		                                            "%s%lu-%lu/%lu\r\n",
@@ -781,6 +868,8 @@ static int httprecv_req_complete(struct http_parser *parser)
 		hsess->response_hdr.nb_dlines    = 3;
 	}
 
+ finalize_hdr:
+	/* Additional default static header lines */
 	/* Server string */
 	hsess->response_hdr.sline[hsess->response_hdr.nb_slines  ].b   = _http_shdr    [HTTP_SHDR_SERVER];
 	hsess->response_hdr.sline[hsess->response_hdr.nb_slines++].len = _http_shdr_len[HTTP_SHDR_SERVER];
@@ -788,7 +877,7 @@ static int httprecv_req_complete(struct http_parser *parser)
 	hsess->response_hdr.sline[hsess->response_hdr.nb_slines  ].b   = _http_shdr    [HTTP_SHDR_ACC_BYTERANGE];
 	hsess->response_hdr.sline[hsess->response_hdr.nb_slines++].len = _http_shdr_len[HTTP_SHDR_ACC_BYTERANGE];
 
-	/* final header length */
+	/* Final header length */
 	hsess->response_hdr.slines_tlen = 0;
 	for (l = 0; l < hsess->response_hdr.nb_slines; ++l)
 		hsess->response_hdr.slines_tlen += hsess->response_hdr.sline[l].len;
@@ -798,10 +887,11 @@ static int httprecv_req_complete(struct http_parser *parser)
 	hsess->response_hdr.eoh_off   = hsess->response_hdr.slines_tlen + hsess->response_hdr.dlines_tlen;
 	hsess->response_hdr.total_len = hsess->response_hdr.eoh_off + _http_shdr_len[HTTP_EOH];
 
-	/* start transmission */
+	/* Start transmission */
 	hsess->state = HSS_RESPONDING_HDR; /* switch to reply phase (disables parser) */
 	hsess->sent  = 0;
 	httpsess_respond(hsess);
+
 	return 0;
 }
 
@@ -944,7 +1034,7 @@ static inline int _httpsess_shfs_aioreq(struct http_sess *hsess, unsigned int id
 
 static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sent)
 {
-	register size_t foff;
+	register size_t roff, foff;
 	register uint16_t avail;
 	register uint16_t left;
 	register chk_t  cur_chk;
@@ -957,7 +1047,8 @@ static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sen
 	int ret;
 
 	idx = hsess->chk_buf_idx;
-	foff = *sent;  /* offset in file */
+	roff = *sent; /* offset in request */
+	foff = roff + hsess->rfirst;  /* offset in file */
 	cur_chk = shfs_volchk_foff(hsess->fd, foff);
  next:
 	err = ERR_OK;
@@ -970,12 +1061,10 @@ static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sen
 		hsess->chk_buf_addr[idx] = cur_chk;
 		ret = _httpsess_shfs_aioreq(hsess, idx);
 		if (unlikely(ret < 0)) {
+			/* !!! TODO: setup a retry when errno happend !!! */
 			if (ret == -ENOMEM) {
-				goto out; /* could not setup request: retry it later */
-				/* !!! TODO: setup a continue via poll */
-				dprintf("[idx=%u] retrying...\n", idx);
+				dprintf("[idx=%u] could not setup request (out of request objects)...\n", idx);
 			}
-
 			err = ERR_MEM; /* could not setup request at all: abort */
 			dprintf("[idx=%u] aborting...\n", idx);
 			goto err_abort;
@@ -1014,7 +1103,7 @@ static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sen
 		goto out;
 	}
 	chk_off = shfs_volchkoff_foff(hsess->fd, foff);
-	left = min(shfs_vol.chunksize - chk_off, hsess->rlen - foff);
+	left = min(shfs_vol.chunksize - chk_off, hsess->rlen - roff);
 	slen = min3(UINT16_MAX, avail, left);
 	err = httpsess_write(hsess, ((uint8_t *) (hsess->chk_buf[idx]->data)) + chk_off,
 	                     &slen, TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
@@ -1039,7 +1128,8 @@ static inline err_t httpsess_write_shfsafio(struct http_sess *hsess, size_t *sen
 		 * already finished at this point. Thus, no callback would be
 		 * called that resumes the transmission. That's why we need to
 		 * check for this case here */
-		foff += slen; /* new offset */
+		roff += slen; /* new offset */
+		foff += slen;
 		avail -= slen;
 		cur_chk = shfs_volchk_foff(hsess->fd, foff);
 		if (hsess->chk_buf_aiotoken[idx] == NULL &&
@@ -1087,7 +1177,23 @@ static inline err_t httpsess_write_shfssfio(struct http_sess *hsess, size_t *sen
 	return err;
 }
 
-/* will be called multiple times */
+/* closes a http session or wait for next request by client
+ * if keepalive was requested */
+static inline void httpsess_eof(struct http_sess *hsess)
+{
+	httpsess_flush(hsess);
+
+	if (hsess->keepalive) {
+		/* wait for next request */
+		httpsess_reset(hsess);
+	} else {
+		/* close connection */
+		httpsess_close(hsess, 0);
+	}
+}
+
+/* Send out http response
+ * Note: Will be called multiple times while a request is handled */
 static void httpsess_respond(struct http_sess *hsess)
 {
 	size_t len;
@@ -1097,71 +1203,73 @@ static void httpsess_respond(struct http_sess *hsess)
 	case HSS_RESPONDING_HDR:
 		/* send out header */
 		err = httpsess_write_hdr(hsess, &hsess->sent);
-		if (err)
-			goto err;
+		if (unlikely(err))
+			goto err_close;
 
-		/* sending of hdr done? */
-		if (hsess->sent < hsess->response_hdr.total_len)
-			break; /* no */
-		httpsess_flush(hsess);
-		hsess->sent = 0;
-		if (hsess->response_hdr.code >= 200 &&
-		    hsess->response_hdr.code < 300) {
-			hsess->state = HSS_RESPONDING_MSG;
-			break;
-		} else {
-			hsess->state = HSS_RESPONDING_EMSG;
+		if (hsess->sent == hsess->response_hdr.total_len) {
+			/* we are done */
+			if (hsess->response_hdr.code >= 200 &&
+			    hsess->response_hdr.code < 300) {
+				/* response body (file) */
+				hsess->state = HSS_RESPONDING_MSG;
+				hsess->sent = 0;
+			} else if (hsess->response_hdr.code == 404 ||
+			           hsess->response_hdr.code >= 500) {
+				/* error body */
+				hsess->state = HSS_RESPONDING_EMSG;
+				hsess->sent = 0;
+			} else {
+				/* no body */
+				httpsess_eof(hsess);
+			}
 		}
+		break;
+
 	case HSS_RESPONDING_EMSG:
 		/* send out error message */
 		switch (hsess->response_hdr.code) {
 		case 404:
+			/* Element not found */
 			len = _http_err404p_len;
 			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err404p, len);
 			break;
 		case 501:
+			/* Invalid request */
 			len = _http_err501p_len;
 			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err501p, len);
 			break;
 		default:
+			/* Internal server error */
 			len = _http_err500p_len;
 			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err500p, len);
 			break;
 		}
-		if (err)
-			goto err;
+		if (unlikely(err))
+			goto err_close;
 
-		if (hsess->sent == len) {
-			/* we are done serving the request */
-			httpsess_close(hsess, 0);
-		}
+		if (hsess->sent == len)
+			/* we are done */
+			httpsess_eof(hsess);
 		break;
+
 	case HSS_RESPONDING_MSG:
 		/* send out data */
 		err = httpsess_write_shfsafio(hsess, &hsess->sent);
-		if (err)
-			goto err;
+		if (unlikely(err))
+			goto err_close;
 
-		if (hsess->sent == hsess->rlen) {
-			/* we are done serving the request */
-			httpsess_flush(hsess);
-
-			if (hsess->keepalive)
-				/* wait for next request */
-				httpsess_reset(hsess);
-			else
-				httpsess_close(hsess, 0);
-		}
+		if (unlikely(hsess->sent == hsess->rlen))
+			/* we are done */
+			httpsess_eof(hsess);
 		break;
+
 	default:
-		/* unknown state -> kill connection */
-		httpsess_close(hsess, 1);
-		break;
+		/* unknown state?! */
+		goto err_close;
 	}
-
 	return;
 
- err:
+ err_close:
 	/* error happened -> kill connection */
 	httpsess_close(hsess, 1);
 }
