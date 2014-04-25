@@ -75,7 +75,7 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o shell.o http_parser.o http.o blkdev.o \
+STUB_APP_OBJS0  = main.o debug.o shell.o http_parser.o http.o blkdev.o \
 		  shfs.o shfs_check.o shfs_htable.o shfs_fio.o shfs_tools.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 

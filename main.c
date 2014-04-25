@@ -35,6 +35,8 @@
 #include "shfs.h"
 #include "shfs_tools.h"
 
+#include "debug.h"
+
 #define MAX_NB_VBD 64
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
@@ -59,43 +61,43 @@ static inline void minder_print(void)
 
     switch (minder_step) {
     case 1:
-	    printf("\r >))'>   ");
+	    printk("\r >))'>   ");
 	    minder_step = 2;
 	    break;
     case 2:
-	    printf("\r  >))'>  ");
+	    printk("\r  >))'>  ");
 	    minder_step = 3;
 	    break;
     case 3:
-	    printf("\r   >))'> ");
+	    printk("\r   >))'> ");
 	    minder_step = 4;
 	    break;
     case 4:
-	    printf("\r    >))'>");
+	    printk("\r    >))'>");
 	    minder_step = 5;
 	    break;
     case 5:
-	    printf("\r    <'((<");
+	    printk("\r    <'((<");
 	    minder_step = 6;
 	    break;
     case 6:
-	    printf("\r   <'((< ");
+	    printk("\r   <'((< ");
 	    minder_step = 7;
 	    break;
     case 7:
-	    printf("\r  <'((<  ");
+	    printk("\r  <'((<  ");
 	    minder_step = 8;
 	    break;
     case 8:
-	    printf("\r <'((<   ");
+	    printk("\r <'((<   ");
 	    minder_step = 9;
 	    break;
     case 9:
-	    printf("\r<'((<    ");
+	    printk("\r<'((<    ");
 	    minder_step = 0;
 	    break;
     default:
-	    printf("\r>))'>    ");
+	    printk("\r>))'>    ");
 	    minder_step = 1;
     }
     fflush(stdout);
@@ -152,7 +154,7 @@ static int parse_args(int argc, char *argv[])
          case 's': /* startup delay */
               ret = parse_args_setval_int(&ival, optarg);
               if (ret < 0 || ival < 0) {
-	           printf("invalid delay specified\n");
+	           printk("invalid delay specified\n");
 	           return -1;
               }
               args.startup_delay = (unsigned int) ival;
@@ -196,21 +198,21 @@ void app_shutdown(unsigned reason)
 {
     switch (reason) {
     case SHUTDOWN_poweroff:
-	    printf("Poweroff requested\n", reason);
+	    printk("Poweroff requested\n", reason);
 	    shall_reboot = 0;
 	    shall_shutdown = 1;
 	    break;
     case SHUTDOWN_reboot:
-	    printf("Reboot requested: %d\n", reason);
+	    printk("Reboot requested: %d\n", reason);
 	    shall_reboot = 1;
 	    shall_shutdown = 1;
 	    break;
     case SHUTDOWN_suspend:
-	    printf("Suspend requested: %d\n", reason);
+	    printk("Suspend requested: %d\n", reason);
 	    shall_suspend = 1;
 	    break;
     default:
-	    printf("Unknown shutdown action requested: %d. Ignoring\n", reason);
+	    printk("Unknown shutdown action requested: %d. Ignoring\n", reason);
 	    break;
     }
 }
@@ -404,36 +406,38 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
     uint64_t ts_minder = 0;
 #endif /* CONFIG_MINDER_PRINT */
+
+    init_debug();
     init_SEMAPHORE(&_vbd_lock, 1);
 
     /* -----------------------------------
      * banner
      * ----------------------------------- */
 #ifndef CONFIG_HIDE_BANNER
-    printf("\n");
-    printf("_|      _|  _|            _|    _|_|_|                      _|                \n");
-    printf("_|_|  _|_|      _|_|_|        _|          _|_|_|    _|_|_|  _|_|_|      _|_|  \n");
-    printf("_|  _|  _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|_|_|_|\n");
-    printf("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
-    printf("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
-    printf("\n");
-    printf("Copyright(C) 2013-1014 NEC Laboratories Europe Ltd.\n");
-    printf("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
-    printf("\n");
+    printk("\n");
+    printk("_|      _|  _|            _|    _|_|_|                      _|                \n");
+    printk("_|_|  _|_|      _|_|_|        _|          _|_|_|    _|_|_|  _|_|_|      _|_|  \n");
+    printk("_|  _|  _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|_|_|_|\n");
+    printk("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
+    printk("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
+    printk("\n");
+    printk("Copyright(C) 2013-1014 NEC Laboratories Europe Ltd.\n");
+    printk("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
+    printk("\n");
 #endif
 
     /* -----------------------------------
      * argument parsing
      * ----------------------------------- */
     if (parse_args(argc, argv) < 0) {
-	    printf("Argument parsing error!\n" \
+	    printk("Argument parsing error!\n" \
 	           "Please check your arguments\n");
 	    goto out;
     }
 
     if (args.startup_delay) {
 	    unsigned int s;
-	    printf("Startup delay");
+	    printk("Startup delay");
 	    fflush(stdout);
 	    for (s = 0; s < args.startup_delay; ++s) {
 		    printf(".");
@@ -446,7 +450,7 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
-    printf("Starting networking...\n");
+    printk("Starting networking...\n");
 #ifdef CONFIG_LWIP_SINGLETHREADED
     lwip_init(); /* single threaded */
 #else
@@ -505,7 +509,7 @@ int main(int argc, char *argv[])
      *                 there is no tcpip_ethinput() ; tcp_input()
      *                 handles ARP packets as well).
      */
-        printf("FATAL: Could not initialize the network interface\n");
+        printk("FATAL: Could not initialize the network interface\n");
         goto out;
     }
     netif_set_default(&netif);
@@ -516,21 +520,21 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * filesystem automount
      * ----------------------------------- */
-    printf("Loading SHFS...\n");
+    printk("Loading SHFS...\n");
     init_shfs();
 #ifdef CONFIG_AUTOMOUNT
-    printf("Trying to mount cache filesystem...\n");
+    printk("Trying to mount cache filesystem...\n");
     ret = mount_shfs(args.vbd_id, args.nb_vbds);
     if (ret < 0)
-	    printf("ERROR: Could not mount cache filesystem\n");
+	    printk("ERROR: Could not mount cache filesystem\n");
 #endif
 
     /* -----------------------------------
      * service initialization
      * ----------------------------------- */
-    printf("Starting shell...\n");
+    printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
-    printf("Starting HTTP server...\n");
+    printk("Starting HTTP server...\n");
     init_http(60); /* allow 60 simultaneous connections */
 
     /* add custom commands to the shell */
@@ -549,9 +553,9 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * Processing loop
      * ----------------------------------- */
-    printf("*** MiniCache is up and running ***\n");
+    printk("*** MiniCache is up and running ***\n");
 #ifdef CONFIG_MINDER_PRINT
-    printf("\n");
+    printk("\n");
 #endif
     while(likely(!shall_shutdown)) {
 	/* poll block devices */
@@ -586,13 +590,13 @@ int main(int argc, char *argv[])
         schedule(); /* yield CPU */
 
         if (unlikely(shall_suspend)) {
-            printf("System is going to suspend now\n");
+            printk("System is going to suspend now\n");
             netif_set_down(&netif);
             netif_remove(&netif);
 
             kernel_suspend();
 
-            printf("System woke up from suspend\n");
+            printk("System woke up from suspend\n");
             netif_set_default(&netif);
             netif_set_up(&netif);
             if (args.dhclient)
@@ -605,17 +609,17 @@ int main(int argc, char *argv[])
      * Shutdown
      * ----------------------------------- */
     if (shall_reboot)
-	    printf("System is going down to reboot now\n");
+	    printk("System is going down to reboot now\n");
     else
-	    printf("System is going down to halt now\n");
-    printf("Stopping HTTP server...\n");
+	    printk("System is going down to halt now\n");
+    printk("Stopping HTTP server...\n");
     exit_http();
-    printf("Stopping shell...\n");
+    printk("Stopping shell...\n");
     exit_shell();
-    printf("Unmounting cache filesystem...\n");
+    printk("Unmounting cache filesystem...\n");
     umount_shfs();
     exit_shfs();
-    printf("Stopping networking...\n");
+    printk("Stopping networking...\n");
     netif_set_down(&netif);
     netif_remove(&netif);
  out:

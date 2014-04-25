@@ -14,6 +14,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifdef SHELL_DEBUG
+#define ENABLE_DEBUG
+#endif
+#include "debug.h"
+
 #ifdef HAVE_LWIP
 #include <lwip/tcp.h>
 #endif
@@ -300,9 +305,7 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
     /* register cmd */
     sh->cmd_func[i] = func;
     sh->cmd_str[i] = cmd;
-#ifdef SHELL_DEBUG
-    printf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
-#endif
+    dprintf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
 
@@ -316,9 +319,7 @@ void shell_unregister_cmd(const char *cmd)
     if (i >= 0) {
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
-#ifdef SHELL_DEBUG
-        printf("shell: Command %i ('%s') unregistered\n", i, cmd);
-#endif
+        dprintf("shell: Command %i ('%s') unregistered\n", i, cmd);
     }
 }
 
@@ -507,9 +508,7 @@ static err_t shlsess_accept(void)
     }
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-#ifdef SHELL_DEBUG
-    printf("shell: Local session opened (%s)\n", sess->name);
-#endif
+    dprintf("shell: Local session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
@@ -535,10 +534,7 @@ static void shlsess_close(struct shell_sess *sess)
     /* close console descriptor */
     fclose(sess->cio);
 
-#ifdef SHELL_DEBUG
-    printf("shell: Local session closed (%s)\n", sess->name);
-    fflush(stdout);
-#endif
+    dprintf("shell: Local session closed (%s)\n", sess->name);
     xfree(sess);
 }
 
@@ -572,11 +568,10 @@ retry:
     }
     /*
 #ifdef SHELL_DEBUG
-    printf("shell: Received %u bytes from client: '", avail);
+    dprintf("shell: Received %u bytes from client: '", avail);
     for (i = 0; i < avail; i++)
-	    printf("%02x:", (unsigned char) buf[i]);
-    printf("'\n");
-    fflush(stdout);
+	    dprintf("%02x:", (unsigned char) buf[i]);
+    dprintf("'\n");
 #endif
     */
     return (ssize_t) avail;
@@ -590,10 +585,10 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
     uint16_t avail, sendlen;
     /*
 #ifdef SHELL_DEBUG
-    printf("shell: Sending %u bytes to client: '", len);
+    dprintf("shell: Sending %u bytes to client: '", len);
     for (i = 0; i < len; i++)
-	printf("%c", buf[i]);
-    printf("'\n");
+	dprintf("%c", buf[i]);
+    dprintf("'\n");
     fflush(stdout);
     i = 0;
 #endif
@@ -685,9 +680,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     tcp_setprio(sess->tpcb, SH_TCP_PRIO);
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-#ifdef SHELL_DEBUG
-    printf("shell: Remote session opened (%s)\n", sess->name);
-#endif
+    dprintf("shell: Remote session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
@@ -727,10 +720,7 @@ static void shrsess_close(struct shell_sess *sess)
         tcp_abort(sess->tpcb);
 
     /* release memory */
-#ifdef SHELL_DEBUG
-    printf("shell: Remote session closed (%s)\n", sess->name);
-    fflush(stdout);
-#endif
+    dprintf("shell: Remote session closed (%s)\n", sess->name);
     xfree(sess);
 }
 

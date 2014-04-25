@@ -17,6 +17,11 @@
 #include "http_data.h"
 #include "http.h"
 
+#ifdef HTTP_DEBUG
+#define ENABLE_DEBUG
+#endif
+#include "debug.h"
+
 #define HTTP_POLL_INTERVAL        10 /* = x * 500ms; 10 = 5s */
 #define HTTP_KEEPALIVE_TIMEOUT     3 /* = x * HTTP_POLL_INTERVAL */
 
@@ -53,60 +58,6 @@
         const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
         (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif
-
-#ifdef dprintf
-#undef dprintf
-#endif
-#ifdef HTTP_DEBUG
-static uint64_t __dprintf_tsref = 0;
-
-#define dprintf(fmt, ...)	\
-	do { \
-	    uint64_t mins = 0; \
-	    uint64_t secs = 0; \
-	    uint64_t usecs = 0; \
-	     \
-	    if (!__dprintf_tsref) \
-		    __dprintf_tsref = NOW(); \
-	     \
-	    /* msleep(250); */ \
-	    usecs = (NOW() - __dprintf_tsref) / 1000l; \
-	    secs = usecs / 1000000l; \
-	    usecs %= 1000000l; \
-	    mins = secs / 60; \
-	    secs %= 60; \
-	     \
-	    printf("[%lum%lu.%06lus] ", mins, secs, usecs); \
-	    printf("line %4d: %s(): ",  __LINE__, __FUNCTION__); \
-	    printf((fmt),               ##__VA_ARGS__); \
-	} while(0)
-
-#ifdef __x86_64__
-#define get_caller()	  \
-	({ \
-		unsigned long bp; \
-		unsigned long *frame; \
-		asm("movq %%rbp, %0":"=r"(bp)); \
-		frame = (void*) bp; \
-		frame[1]; \
-	})
-#elif defined __x86_32__
-#define get_caller()	  \
-	({ \
-		unsigned long bp; \
-		unsigned long *frame; \
-		asm("movl %%ebp, %0":"=r"(bp)); \
-		frame = (void*) bp; \
-		frame[1]; \
-	})
-#else
-#define get_caller() 0
-#endif
-#else
-#define dprintf(fmt, ...) do {} while(0)
-#define get_caller() 0
-#endif
-
 
 enum http_sess_state {
 	HSS_UNDEF = 0,
@@ -431,13 +382,14 @@ static void httpsess_close(struct http_sess *hsess, int kill)
 	tcp_poll(hsess->tpcb, NULL, 0);
 
 	/* close open file/wait for I/O exit */
-	/* TODO: This code (shfs_aio_wait) might lead to server blocking */
 	hsess->chk_buf_idx = UINT_MAX; /* disable calling of httpsess_response from aio cb */
 
+	printf("Wait for unfinished I/O...\n");
 	shfs_aio_wait(hsess->chk_buf_aiotoken[0]);
 	shfs_aio_wait(hsess->chk_buf_aiotoken[1]);
 	if (hsess->fd)
 		shfs_fio_close(hsess->fd);
+	printf("Done\n");
 
 	/* terminate connection */
 	if (kill)
