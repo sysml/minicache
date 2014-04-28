@@ -66,6 +66,13 @@ enum http_sess_state {
 	HSS_RESPONDING_HDR,
 	HSS_RESPONDING_MSG,
 	HSS_RESPONDING_EMSG,
+	HSS_CLOSING
+};
+
+enum http_sess_close {
+	HSC_CLOSE = 0, /* call tcp_close to close the connection */
+	HSC_ABORT, /* call tcp_abort */
+	HSC_KILL /* do not touch the tcp_pcb any more */
 };
 
 struct http_srv {
@@ -152,7 +159,7 @@ static struct http_srv *hs = NULL;
 #endif
 
 static err_t httpsess_accept (void *argp, struct tcp_pcb *new_tpcb, err_t err);
-static void  httpsess_close  (struct http_sess *hsess, int kill);
+static void  httpsess_close  (struct http_sess *hsess, enum http_sess_close type);
 static err_t httpsess_sent   (void *argp, struct tcp_pcb *tpcb, uint16_t len);
 static err_t httpsess_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 static void  httpsess_error  (void *argp, err_t err);
@@ -235,7 +242,7 @@ int init_http(int nb_sess)
 	return ret;
 
  err_free_tcp:
-	tcp_close(hs->tpcb);
+	tcp_abort(hs->tpcb);
  err_free_sesspool:
 	free_mempool(hs->sess_pool);
  err_free_hs:
@@ -254,7 +261,7 @@ void exit_http(struct http_srv *hs)
 void exit_http(void)
 #endif
 {
-	tcp_close(hs->tpcb);
+	tcp_abort(hs->tpcb);
 	free_mempool(hs->sess_pool);
 	xfree(hs);
 #if !(HTTP_MULTISERVER)
@@ -338,8 +345,6 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	tcp_err (hsess->tpcb, httpsess_error); /* err callback */
 	tcp_poll(hsess->tpcb, httpsess_poll, HTTP_POLL_INTERVAL); /* poll callback */
 	tcp_setprio(hsess->tpcb, HTTP_TCP_PRIO);
-	//tcp_nagle_enable(hsess->tpcb);
-	tcp_nagle_disable(hsess->tpcb);
 
 	/* init parser */
 	hsess->parser.data = hsess;
@@ -361,7 +366,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	return err;
 }
 
-static void httpsess_close(struct http_sess *hsess, int kill)
+static void httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 {
 #if HTTP_MULTISERVER
 	struct http_srv *hs = hsess->hs;
@@ -389,12 +394,16 @@ static void httpsess_close(struct http_sess *hsess, int kill)
 	dprintf("Done\n");
 
 	/* terminate connection */
-	if (kill)
-		tcp_abort(hsess->tpcb);
-	else {
+	switch (type) {
+	case HSC_CLOSE:
 		err = tcp_close(hsess->tpcb);
-		if (err != ERR_OK)
-			tcp_abort(hsess->tpcb);
+		if (likely(err == ERR_OK))
+			break;
+	case HSC_ABORT:
+		tcp_abort(hsess->tpcb);
+		break;
+	default: /* HSC_KILL */
+		break;
 	}
 
 	/* release memory */
@@ -421,7 +430,7 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 			pbuf_free(p);
 		}
 		/* close connection */
-		httpsess_close(hsess, 1);
+		httpsess_close(hsess, HSC_ABORT);
 		return ERR_OK;
 	}
 
@@ -437,12 +446,12 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 			if (unlikely(hsess->parser.upgrade)) {
 				/* protocol upgrade requested */
 				dprintf("Unsupported HTTP protocol upgrade requested: Dropping connection...\n");
-				httpsess_close(hsess, 0);
+				httpsess_close(hsess, HSC_CLOSE);
 			}
 			if (unlikely(plen != q->len)) {
 				/* parsing error happened: close conenction */
 				dprintf("HTTP protocol parsing error: Dropping connection...\n");
-				httpsess_close(hsess, 0);
+				httpsess_close(hsess, HSC_CLOSE);
 			}
 		}
 		break;
@@ -459,7 +468,7 @@ static void httpsess_error(void *argp, err_t err)
 {
 	struct http_sess *hsess = argp;
 	dprintf("Killing HTTP session due to error: %d\n", err);
-	httpsess_close(hsess, 1); /* kill connection */
+	httpsess_close(hsess, HSC_KILL); /* drop connection */
 }
 
 /* Is called every 5 sec */
@@ -468,7 +477,7 @@ static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 	struct http_sess *hsess = argp;
 
 	if (unlikely(hsess->keepalive_timer == 0))
-		httpsess_close(hsess, 0); /* keepalive timeout: close connection */
+		httpsess_close(hsess, HSC_CLOSE); /* keepalive timeout: close connection */
 	if (hsess->keepalive_timer > 0)
 		--hsess->keepalive_timer;
 	return ERR_OK;
@@ -1104,7 +1113,7 @@ static inline void httpsess_eof(struct http_sess *hsess)
 		httpsess_reset(hsess);
 	} else {
 		/* close connection */
-		httpsess_close(hsess, 0);
+		httpsess_close(hsess, HSC_CLOSE);
 	}
 }
 
@@ -1187,5 +1196,5 @@ static void httpsess_respond(struct http_sess *hsess)
 
  err_close:
 	/* error happened -> kill connection */
-	httpsess_close(hsess, 1);
+	httpsess_close(hsess, HSC_ABORT);
 }

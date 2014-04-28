@@ -85,6 +85,7 @@ enum shell_sess_state
     SSS_NONE = 0,
     SSS_ESTABLISHED,
     SSS_CLOSING,
+    SSS_KILLING
 };
 
 enum shell_sess_type
@@ -323,7 +324,7 @@ void shell_unregister_cmd(const char *cmd)
     }
 }
 
-static inline int sh_exec(FILE *cio, char *argb, size_t argb_len)
+static int sh_exec(FILE *cio, char *argb, size_t argb_len)
 {
     char *argv[MAX_NB_ARGS];
     int argc;
@@ -398,13 +399,15 @@ respawn:
         /* read sess->argb from cio */
         argb_p = 0;
         while (argb_p < sizeof(sess->argb) - 1) {
-            if (sess->state == SSS_CLOSING)
+            if (sess->state == SSS_CLOSING ||
+                sess->state == SSS_KILLING)
                 goto terminate;
             ret = fgetc(sess->cio);
             if (ret == EOF)
 	        goto terminate;
             sess->argb[argb_p] = (char) ret;
-            if (sess->state == SSS_CLOSING)
+            if (sess->state == SSS_CLOSING ||
+                sess->state == SSS_KILLING)
                 goto terminate;
 
             switch (sess->argb[argb_p]) {
@@ -440,8 +443,10 @@ respawn:
 
         ret = sh_exec(sess->cio, sess->argb, argb_p + 1);
         fflush(sess->cio);
-        if (ret == SH_CLOSE)
+        if (ret == SH_CLOSE) {
+	    sess->state = SSS_CLOSING;
             break;
+        }
     }
     if (sh->goodbye)
         fprintf(sess->cio, "%s\n", sh->goodbye);
@@ -453,10 +458,10 @@ respawn:
 terminate:
 #ifdef HAVE_LWIP
     if (sess->type == SST_REMOTE)
-        shrsess_close(sess);
+	    shrsess_close(sess);
     else
 #endif
-        shlsess_close(sess);
+	    shlsess_close(sess);
 }
 
 
@@ -553,7 +558,7 @@ static ssize_t shrsess_cio_read(void *argp, char *buf, int maxlen)
     int avail;
 
 retry:
-    if (sess->state == SSS_CLOSING)
+    if (sess->state == SSS_CLOSING || sess->state == SSS_KILLING)
         return EOF;
 
     avail = min(RXBUF_NB_AVAIL(sess), maxlen);
@@ -595,14 +600,16 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
     */
     while (i < len) {
 	    while((avail = tcp_sndbuf(sess->tpcb)) < 1) {
-		    if (sess->state == SSS_CLOSING)
+		    if (sess->state == SSS_CLOSING ||
+		        sess->state == SSS_KILLING)
 			    return (ssize_t) len;
 
 		    /* flush tcp buffer and retry it later */
 		    tcp_output(sess->tpcb);
 		    schedule();
 
-		    if (sess->state == SSS_CLOSING)
+		    if (sess->state == SSS_CLOSING ||
+		        sess->state == SSS_KILLING)
 			    return (ssize_t) len;
 	    }
 
@@ -612,7 +619,8 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
 		    /* retry later because of high memory pressure */
 		    schedule();
 
-		    if (sess->state == SSS_CLOSING)
+		    if (sess->state == SSS_CLOSING ||
+		        sess->state == SSS_KILLING)
 			    return (ssize_t) len;
 		    continue;
 	    }
@@ -715,9 +723,11 @@ static void shrsess_close(struct shell_sess *sess)
     tcp_poll(sess->tpcb, NULL, 0);
 
     /* terminate connection */
-    err = tcp_close(sess->tpcb);
-    if (err != ERR_OK)
-        tcp_abort(sess->tpcb);
+    if (sess->state != SSS_KILLING) {
+	    err = tcp_close(sess->tpcb);
+	    if (unlikely(err != ERR_OK))
+		    tcp_abort(sess->tpcb);
+    } /* on SSS_KILLING tpcb is not touched */
 
     /* release memory */
     dprintf("shell: Remote session closed (%s)\n", sess->name);
@@ -762,7 +772,7 @@ static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_
 static void shrsess_error(void *argp, err_t err)
 {
     struct shell_sess *sess = (struct shell_sess *) argp;
-    sess->state = SSS_CLOSING; /* close connection on errors */
+    sess->state = SSS_KILLING; /* kill connection on errors */
 }
 
 static err_t shrsess_poll(void *argp, struct tcp_pcb *tpcb)
