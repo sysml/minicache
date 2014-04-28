@@ -301,12 +301,13 @@ static int load_vol_htable(void)
 		ret = -ENOMEM;
 		goto err_free_btable;
 	}
+	memset(shfs_vol.htable_chunk_cache_state, 0, sizeof(int) * shfs_vol.htable_len);
+
 	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
 	if (!shfs_vol.htable_chunk_cache) {
 		ret = -ENOMEM;
 		goto err_free_chunkcachestate;
 	}
-	memset(shfs_vol.htable_chunk_cache_state, 0, sizeof(int *) * shfs_vol.htable_len);
 
 	/* load hash table chunk-wise and fill-out btable metadata */
 	dprintf("Reading hash table...\n");
@@ -316,9 +317,10 @@ static int load_vol_htable(void)
 		cur_htchk = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
 		if (cur_chk != cur_htchk || !chk_buf) {
 			/* allocate buffer and register it to htable chunk cache */
-			chk_buf = _xmalloc(shfs_vol.chunksize, 4096);
+			chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.stripesize);
 			if (!chk_buf) {
-				dprintf("Could not alloc chunk %u for htable\n", cur_htchk);
+				dprintf("Could not alloc chunk %u for htable (size: %lu, align: %lu)\n",
+				        cur_htchk, shfs_vol.chunksize, shfs_vol.stripesize);
 				ret = -ENOMEM;
 				goto err_free_chunkcache;
 			}
