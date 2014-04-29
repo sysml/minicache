@@ -34,6 +34,9 @@
 #define SH_RXBUFMASK (SH_RXBUFLEN - 1)
 #define SH_TCP_PRIO TCP_PRIO_MIN
 #define SH_LISTEN_PORT 23 /* telnet */
+#define SH_TCPKEEPALIVE_TIMEOUT 120 /* = x sec */
+#define SH_TCPKEEPALIVE_IDLE    60 /* = x sec */
+
 #endif
 
 #define SESSNAME_MAXLEN 16
@@ -686,6 +689,13 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     tcp_err(sess->tpcb, shrsess_error); /* err callback */
     tcp_poll(sess->tpcb, shrsess_poll, 0); /* poll callback */
     tcp_setprio(sess->tpcb, SH_TCP_PRIO);
+
+    /* TCP keepalive */
+    sess->tpcb->so_options |= SOF_KEEPALIVE;
+    sess->tpcb->keep_intvl = (SH_TCPKEEPALIVE_TIMEOUT * 1000);
+    sess->tpcb->keep_idle = (SH_TCPKEEPALIVE_IDLE * 1000);
+    sess->tpcb->keep_cnt = 1;
+
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
     dprintf("shell: Remote session opened (%s)\n", sess->name);

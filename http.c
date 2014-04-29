@@ -24,6 +24,8 @@
 
 #define HTTP_POLL_INTERVAL        10 /* = x * 500ms; 10 = 5s */
 #define HTTP_KEEPALIVE_TIMEOUT     3 /* = x * HTTP_POLL_INTERVAL */
+#define HTTP_TCPKEEPALIVE_TIMEOUT 90 /* = x sec */
+#define HTTP_TCPKEEPALIVE_IDLE    30 /* = x sec */
 
 #define HTTPHDR_URL_MAXLEN        67 /* '/' + ':' + 512 bits hash + '\0' */
 #define HTTPHDR_BUFFER_MAXLEN     64
@@ -159,12 +161,12 @@ static struct http_srv *hs = NULL;
 #endif
 
 static err_t httpsess_accept (void *argp, struct tcp_pcb *new_tpcb, err_t err);
-static void  httpsess_close  (struct http_sess *hsess, enum http_sess_close type);
+static err_t httpsess_close  (struct http_sess *hsess, enum http_sess_close type);
 static err_t httpsess_sent   (void *argp, struct tcp_pcb *tpcb, uint16_t len);
 static err_t httpsess_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 static void  httpsess_error  (void *argp, err_t err);
 static err_t httpsess_poll   (void *argp, struct tcp_pcb *tpcb);
-static void  httpsess_respond(struct http_sess *hsess);
+static err_t httpsess_respond(struct http_sess *hsess);
 static int httprecv_req_complete(struct http_parser *parser);
 static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len);
@@ -346,6 +348,12 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	tcp_poll(hsess->tpcb, httpsess_poll, HTTP_POLL_INTERVAL); /* poll callback */
 	tcp_setprio(hsess->tpcb, HTTP_TCP_PRIO);
 
+	/* Turn on TCP Keepalive */
+	hsess->tpcb->so_options |= SOF_KEEPALIVE;
+	hsess->tpcb->keep_intvl = (HTTP_TCPKEEPALIVE_TIMEOUT * 1000);
+	hsess->tpcb->keep_idle = (HTTP_TCPKEEPALIVE_IDLE * 1000);
+	hsess->tpcb->keep_cnt = 1;
+
 	/* init parser */
 	hsess->parser.data = hsess;
 	hsess->parser_settings = &hs->parser_settings;
@@ -366,7 +374,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	return err;
 }
 
-static void httpsess_close(struct http_sess *hsess, enum http_sess_close type)
+static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 {
 #if HTTP_MULTISERVER
 	struct http_srv *hs = hsess->hs;
@@ -401,8 +409,10 @@ static void httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 			break;
 	case HSC_ABORT:
 		tcp_abort(hsess->tpcb);
+		err = ERR_ABRT; /* lwip callback functions need to be notified */
 		break;
 	default: /* HSC_KILL */
+		err = ERR_OK;
 		break;
 	}
 
@@ -413,6 +423,7 @@ static void httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 	--hs->nb_sess;
 
 	dprintf("HTTP session %s (caller: 0x%x)\n", (kill ? "killed" : "closed"), get_caller());
+	return err;
 }
 
 static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
@@ -430,8 +441,7 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 			pbuf_free(p);
 		}
 		/* close connection */
-		httpsess_close(hsess, HSC_ABORT);
-		return ERR_OK;
+		return httpsess_close(hsess, HSC_ABORT);
 	}
 
 	switch (hsess->state) {
@@ -446,12 +456,16 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 			if (unlikely(hsess->parser.upgrade)) {
 				/* protocol upgrade requested */
 				dprintf("Unsupported HTTP protocol upgrade requested: Dropping connection...\n");
-				httpsess_close(hsess, HSC_CLOSE);
+				return httpsess_close(hsess, HSC_CLOSE);
 			}
 			if (unlikely(plen != q->len)) {
 				/* parsing error happened: close conenction */
 				dprintf("HTTP protocol parsing error: Dropping connection...\n");
-				httpsess_close(hsess, HSC_CLOSE);
+				return httpsess_close(hsess, HSC_CLOSE);
+			}
+			if (hsess->state == HSS_RESPONDING_HDR) {
+				/* parser switch to next phase -> start with replying */
+				return httpsess_respond(hsess);
 			}
 		}
 		break;
@@ -477,7 +491,7 @@ static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 	struct http_sess *hsess = argp;
 
 	if (unlikely(hsess->keepalive_timer == 0))
-		httpsess_close(hsess, HSC_CLOSE); /* keepalive timeout: close connection */
+		return httpsess_close(hsess, HSC_CLOSE); /* keepalive timeout: close connection */
 	if (hsess->keepalive_timer > 0)
 		--hsess->keepalive_timer;
 	return ERR_OK;
@@ -534,7 +548,7 @@ static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 		/* continue replying */
 		if (len) {
 			dprintf("Client acknowledged %u bytes, continue...\n", len);
-			 httpsess_respond(hsess);
+			return httpsess_respond(hsess);
 		}
 		break;
 	default:
@@ -667,6 +681,9 @@ static int httprecv_req_complete(struct http_parser *parser)
 	register size_t nb_slines = 0;
 	register size_t nb_dlines = 0;
 
+	/* Reset default values */
+	hsess->keepalive = 0;
+
 	/* finalize request_hdr lines by adding terminating '\0' */
 	for (l = 0; l < hsess->request_hdr.nb_lines; ++l) {
 		_hdr_dbuffer_terminate(&hsess->request_hdr.line[l].field);
@@ -767,6 +784,8 @@ static int httprecv_req_complete(struct http_parser *parser)
 	if (http_should_keep_alive(&hsess->parser)) {
 		hsess->keepalive = 1;
 		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_KEEPALIVE);
+	} else {
+		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_CLOSE);
 	}
 
 	/* MIME (by element or default) */
@@ -797,8 +816,6 @@ static int httprecv_req_complete(struct http_parser *parser)
 	/* Default header lines */
 	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_SERVER);
 	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_ACC_BYTERANGE);
-	if (!hsess->keepalive)
-		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_CLOSE);
 
 	/* Calculate final header length */
 	hsess->response_hdr.slines_tlen = 0;
@@ -815,7 +832,6 @@ static int httprecv_req_complete(struct http_parser *parser)
 	/* Switch to reply phase (stops parser) */
 	hsess->state = HSS_RESPONDING_HDR;
 	hsess->sent  = 0;
-	httpsess_respond(hsess);
 
 	return 0;
 }
@@ -1104,22 +1120,23 @@ static inline err_t httpsess_write_shfssfio(struct http_sess *hsess, size_t *sen
 
 /* closes a http session or wait for next request by client
  * if keepalive was requested */
-static inline void httpsess_eof(struct http_sess *hsess)
+static inline err_t httpsess_eof(struct http_sess *hsess)
 {
 	httpsess_flush(hsess);
 
 	if (hsess->keepalive) {
 		/* wait for next request */
 		httpsess_reset(hsess);
-	} else {
-		/* close connection */
-		httpsess_close(hsess, HSC_CLOSE);
+		return ERR_OK;
 	}
+
+	/* close connection */
+	return httpsess_close(hsess, HSC_CLOSE);
 }
 
 /* Send out http response
  * Note: Will be called multiple times while a request is handled */
-static void httpsess_respond(struct http_sess *hsess)
+static err_t httpsess_respond(struct http_sess *hsess)
 {
 	size_t len;
 	err_t err = ERR_OK;
@@ -1145,7 +1162,9 @@ static void httpsess_respond(struct http_sess *hsess)
 				hsess->sent = 0;
 			} else {
 				/* no body */
-				httpsess_eof(hsess);
+				err = httpsess_eof(hsess);
+				if (err != ERR_OK)
+					return err;
 			}
 		}
 		break;
@@ -1172,9 +1191,12 @@ static void httpsess_respond(struct http_sess *hsess)
 		if (unlikely(err))
 			goto err_close;
 
-		if (hsess->sent == len)
+		if (hsess->sent == len) {
 			/* we are done */
-			httpsess_eof(hsess);
+			err = httpsess_eof(hsess);
+			if (err != ERR_OK)
+				return err;
+		}
 		break;
 
 	case HSS_RESPONDING_MSG:
@@ -1183,9 +1205,12 @@ static void httpsess_respond(struct http_sess *hsess)
 		if (unlikely(err))
 			goto err_close;
 
-		if (unlikely(hsess->sent == hsess->rlen))
+		if (unlikely(hsess->sent == hsess->rlen)) {
 			/* we are done */
-			httpsess_eof(hsess);
+			err = httpsess_eof(hsess);
+			if (err != ERR_OK)
+				return err;
+		}
 		break;
 
 	default:
@@ -1196,5 +1221,5 @@ static void httpsess_respond(struct http_sess *hsess)
 
  err_close:
 	/* error happened -> kill connection */
-	httpsess_close(hsess, HSC_ABORT);
+	return httpsess_close(hsess, HSC_CLOSE);
 }
