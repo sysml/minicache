@@ -211,7 +211,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	        "                    %lu chunks (%ld KiB)\n" \
 	        "                    %s\n",
 	        shfs_vol.htable_nb_entries, shfs_vol.htable_nb_buckets,
-	        shfs_vol.htable_len, DIV_ROUND_UP(shfs_vol.htable_len, shfs_vol.chunksize) / 1024,
+	        shfs_vol.htable_len, (shfs_vol.htable_len * shfs_vol.chunksize) / 1024,
 	        shfs_vol.htable_bak_ref ? "2nd copy enabled" : "No copy");
 	fprintf(cio, "Entry size:         %lu Bytes (raw: %ld Bytes)\n",
 	        SHFS_HENTRY_SIZE, sizeof(struct shfs_hentry));
