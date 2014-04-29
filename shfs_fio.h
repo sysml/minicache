@@ -4,7 +4,7 @@
 #include "shfs_defs.h"
 #include "shfs.h"
 
-#define SFHS_HASH_INDICATOR_PREFIX ':'
+#define SFHS_HASH_INDICATOR_PREFIX '?'
 
 typedef struct shfs_hentry *SHFS_FD;
 
