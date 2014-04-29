@@ -261,7 +261,7 @@ void exit_http(struct http_srv *hs)
 void exit_http(void)
 #endif
 {
-	tcp_abort(hs->tpcb);
+	tcp_close(hs->tpcb);
 	free_mempool(hs->sess_pool);
 	xfree(hs);
 #if !(HTTP_MULTISERVER)
