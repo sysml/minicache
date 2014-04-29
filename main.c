@@ -121,6 +121,52 @@ static struct _args {
     unsigned int    startup_delay;
 } args;
 
+static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
+{
+	int ip0, ip1, ip2, ip3;
+	int rprefix;
+	uint32_t mask;
+
+	if (sscanf(buf, "%d.%d.%d.%d/%d", &ip0, &ip1, &ip2, &ip3, &rprefix) != 5)
+		return -1;
+	if ((ip0 < 0 || ip0 > 255) ||
+	    (ip1 < 0 || ip1 > 255) ||
+	    (ip2 < 0 || ip2 > 255) ||
+	    (ip3 < 0 || ip3 > 255) ||
+	    (rprefix < 0 || rprefix > 32))
+		return -1;
+
+	IP4_ADDR(out_ip, ip0, ip1, ip2, ip3);
+	if (rprefix == 0)
+		mask = 0x0;
+	else if (rprefix == 32)
+		mask = 0xFFFFFFFF;
+	else
+		mask = ~((1 << (32 - rprefix)) - 1);
+	IP4_ADDR(out_mask,
+	         (mask & 0xFF000000) >> 24,
+	         (mask & 0x00FF0000) >> 16,
+	         (mask & 0x0000FF00) >> 8,
+	         (mask & 0x000000FF));
+	return 0;
+}
+
+static int parse_args_setval_ipv4(struct ip_addr *out, const char *buf)
+{
+	int ip0, ip1, ip2, ip3;
+
+	if (sscanf(buf, "%d.%d.%d.%d", &ip0, &ip1, &ip2, &ip3) != 4)
+		return -1;
+	if ((ip0 < 0 || ip0 > 255) ||
+	    (ip1 < 0 || ip1 > 255) ||
+	    (ip2 < 0 || ip2 > 255) ||
+	    (ip3 < 0 || ip3 > 255))
+		return -1;
+
+	IP4_ADDR(out, ip0, ip1, ip2, ip3);
+	return 0;
+}
+
 static int parse_args_setval_int(int *out, const char *buf)
 {
 	if (sscanf(buf, "%d", out) != 1)
@@ -136,20 +182,20 @@ static int parse_args(int argc, char *argv[])
 
     /* default arguments */
     memset(&args, 0, sizeof(args));
-    IP4_ADDR(&args.ip,   10,  10,  10,  1);
-    IP4_ADDR(&args.mask, 255, 255, 255, 0);
-    IP4_ADDR(&args.gw,   0,   0,   0,   0);
-    IP4_ADDR(&args.dns0, 0,   0,   0,   0);
-    IP4_ADDR(&args.dns1, 0,   0,   0,   0);
+    IP4_ADDR(&args.ip,   192, 168, 128, 124);
+    IP4_ADDR(&args.mask, 255, 255, 255, 252);
+    IP4_ADDR(&args.gw,     0,   0,   0,   0);
+    IP4_ADDR(&args.dns0,   0,   0,   0,   0);
+    IP4_ADDR(&args.dns1,   0,   0,   0,   0);
     args.nb_vbds = 4;
     args.vbd_id[0] = 51712; /* xvda */
     args.vbd_id[1] = 51728; /* xvdb */
     args.vbd_id[2] = 51744; /* xvdc */
     args.vbd_id[3] = 51760; /* xvdd */
-    args.dhclient = 0;
+    args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
 
-     while ((opt = getopt(argc, argv, "s:")) != -1) {
+     while ((opt = getopt(argc, argv, "s:i:g:d:")) != -1) {
          switch(opt) {
          case 's': /* startup delay */
               ret = parse_args_setval_int(&ival, optarg);
@@ -158,6 +204,35 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
               }
               args.startup_delay = (unsigned int) ival;
+              break;
+         case 'i': /* IP address/mask */
+	      ret = parse_args_setval_ipv4cidr(&args.ip, &args.mask, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid host IP in CIDR notation specified (e.g., 192.168.0.2/24)\n");
+	           return -1;
+              }
+	      args.dhclient = 0;
+              break;
+         case 'g': /* gateway */
+	      ret = parse_args_setval_ipv4(&args.gw, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid gateway IP specified (e.g., 192.168.0.1)\n");
+	           return -1;
+              }
+              break;
+         case 'd': /* dns0 */
+	      ret = parse_args_setval_ipv4(&args.dns0, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid primary DNS IP specified (e.g., 192.168.0.1)\n");
+	           return -1;
+              }
+              break;
+         case 'e': /* dns1 */
+	      ret = parse_args_setval_ipv4(&args.dns1, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
+	           return -1;
+              }
               break;
          default:
 	      return -1;
@@ -514,8 +589,10 @@ int main(int argc, char *argv[])
     }
     netif_set_default(&netif);
     netif_set_up(&netif);
-    if (args.dhclient)
+    if (args.dhclient) {
+	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
+    }
 
     /* -----------------------------------
      * filesystem automount

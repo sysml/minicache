@@ -1217,9 +1217,9 @@ static err_t httpsess_respond(struct http_sess *hsess)
 		/* unknown state?! */
 		goto err_close;
 	}
-	return;
+	return ERR_OK;
 
  err_close:
 	/* error happened -> kill connection */
-	return httpsess_close(hsess, HSC_CLOSE);
+	return httpsess_close(hsess, HSC_ABORT);
 }
