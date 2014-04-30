@@ -111,7 +111,7 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	printf("Volume name:        %s\n", volname);
 	uuid_unparse(hdr_common->vol_uuid, str_uuid);
 	printf("Volume UUID:        %s\n", str_uuid);
-	strfmstimestamp(str_date, sizeof(str_date),
+	strftimestamp_s(str_date, sizeof(str_date),
 	                "%b %e, %g %H:%M", hdr_common->vol_ts_creation);
 	printf("Creation date:      %s\n", str_date);
 	printf("Chunksize:          %lu KiB\n",

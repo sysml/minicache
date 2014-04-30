@@ -20,6 +20,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_mime[sizeof(hentry->mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
+	char str_date[20];
 	unsigned int i;
 
 	down(&shfs_mount_lock);
@@ -40,22 +41,16 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
 			strncpy(str_name, hentry->name, sizeof(hentry->name));
 			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
-			if (shfs_vol.hlen <= 32)
-				fprintf(cio, "%c%-64s %12lu %12lu %-24s %s\n",
-				        SFHS_HASH_INDICATOR_PREFIX,
-				        str_hash,
-				        hentry->chunk,
-				        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-				        str_mime,
-				        str_name);
-			else
-				fprintf(cio, "%c%-128s %12lu %12lu %-24s %s\n",
-				        SFHS_HASH_INDICATOR_PREFIX,
-				        str_hash,
-				        hentry->chunk,
-				        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-				        str_mime,
-				        str_name);
+			strftimestamp_s(str_date, sizeof(str_date),
+			                "%b %e, %g %H:%M", hentry->ts_creation);
+			fprintf(cio, "%c%s %12lu %12lu %-24s %-16s %s\n",
+			        SFHS_HASH_INDICATOR_PREFIX,
+			        str_hash,
+			        hentry->chunk,
+			        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			        str_mime,
+			        str_date,
+			        str_name);
 		}
 	}
 
@@ -63,6 +58,55 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	up(&shfs_mount_lock);
 	return 0;
 }
+
+#if defined SHFS_HITSTATS || defined SHFS_MISSSTATS
+static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
+{
+	struct shfs_bentry *bentry;
+	char str_hash[(shfs_vol.hlen * 2) + 1];
+	char str_date[20];
+	unsigned int i;
+
+	down(&shfs_mount_lock);
+	if (!shfs_mounted) {
+		fprintf(cio, "No SHFS filesystem mounted\n");
+		goto out;
+	}
+
+	str_hash[(shfs_vol.hlen * 2)] = '\0';
+
+#ifdef SHFS_HITSTATS
+	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
+		bentry = shfs_btable_pick(shfs_vol.bt, i);
+		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
+			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
+			if (bentry->ts_laccess) {
+				strftimestamp_s(str_date, sizeof(str_date),
+				                "%b %e, %g %H:%M", bentry->ts_laccess);
+			} else {
+				str_date[0] = '-';
+				str_date[1] = '\0';
+			}
+
+			fprintf(cio, "%c%s %12lu %12lu %-16s\n",
+			        SFHS_HASH_INDICATOR_PREFIX,
+			        str_hash,
+			        bentry->nb_access, /* hits */
+			        0, /* misses */
+			        str_date);
+		}
+	}
+#endif /* SHFS_HITSTATS */
+
+#ifdef SHFS_MISSSTATS
+	fprintf(cio, "Note: Cache miss stats are not implemented yet.\n");
+#endif /* SHFS_MISSSTATS */
+
+ out:
+	up(&shfs_mount_lock);
+	return 0;
+}
+#endif
 
 static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 {
@@ -190,6 +234,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
 	unsigned int m;
 	char str_uuid[17];
+	char str_date[20];
 
 	down(&shfs_mount_lock);
 	if (!shfs_mounted) {
@@ -203,6 +248,9 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "Volume name:        %s\n", shfs_vol.volname);
 	uuid_unparse(shfs_vol.uuid, str_uuid);
 	fprintf(cio, "Volume UUID:        %s\n", str_uuid);
+	strftimestamp_s(str_date, sizeof(str_date),
+	                "%b %e, %g %H:%M", shfs_vol.ts_creation);
+	fprintf(cio, "Creation date:      %s\n", str_date);
 	fprintf(cio, "Chunksize:          %lu KiB\n",
 	        shfs_vol.chunksize / 1024);
 	fprintf(cio, "Volume size:        %lu KiB\n",
@@ -238,9 +286,22 @@ int register_shfs_tools(void)
 {
 	int ret;
 	ret = shell_register_cmd("ls", shcmd_shfs_ls);
+	if (ret < 0)
+		return ret;
 	ret = shell_register_cmd("file", shcmd_shfs_file);
+	if (ret < 0)
+		return ret;
 	ret = shell_register_cmd("df", shcmd_shfs_dumpfile);
+	if (ret < 0)
+		return ret;
 	ret = shell_register_cmd("cat", shcmd_shfs_cat);
+	if (ret < 0)
+		return ret;
+#if defined SHFS_HITSTATS || defined SHFS_MISSSTATS
+	ret = shell_register_cmd("stats", shcmd_shfs_stats);
+	if (ret < 0)
+		return ret;
+#endif
 	ret = shell_register_cmd("shfs-info", shcmd_shfs_info);
 	if (ret < 0)
 		return ret;
@@ -261,4 +322,12 @@ void hash_unparse(const hash512_t h, uint8_t hlen, char *out)
 
 	for (i = 0; i < hlen; i++)
 		snprintf(out + (2*i), 3, "%02x", h[i]);
+}
+
+size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec)
+{
+	struct tm *tm;
+	time_t *tsec = (time_t *) &ts_sec;
+	tm = localtime(tsec);
+	return strftime(s, slen, fmt, tm);
 }

@@ -16,6 +16,12 @@ struct shfs_bentry {
 	hash512_t hash;             /* if zero, this bucket entry is empty */
 	chk_t hentry_htchunk;       /* relative chunk:offfset addres to entry in htable */
 	off_t hentry_htoffset;
+
+	/* runtime data */
+#ifdef SHFS_HITSTATS
+	uint64_t ts_laccess;
+	uint64_t nb_access;
+#endif /* SHFS_HITSTATS */
 };
 
 /**

@@ -747,7 +747,7 @@ static int actn_addfile(struct job *j)
 	hentry->chunk = cchk;
 	hentry->offset = 0;
 	hentry->len = (uint64_t) fsize;
-	hentry->ts_creation = getmstimestamp();
+	hentry->ts_creation = gettimestamp_s();
 	memset(hentry->mime, 0, sizeof(hentry->mime));
 	memset(hentry->name, 0, sizeof(hentry->name));
 	if (j->optstr0) /* mime */
@@ -895,7 +895,7 @@ static int actn_ls(struct job *job)
 			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
 			strncpy(str_name, hentry->name, sizeof(hentry->name));
 			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
-			strfmstimestamp(str_date, sizeof(str_date),
+			strftimestamp_s(str_date, sizeof(str_date),
 			                "%b %e, %g %H:%M", hentry->ts_creation);
 			if (shfs_vol.hlen <= 32)
 				printf("%-64s %12lu %12lu %-24s %-16s %s\n",

@@ -144,6 +144,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	memcpy(shfs_vol.uuid, hdr_common->vol_uuid, 16);
 	memcpy(shfs_vol.volname, hdr_common->vol_name, 16);
 	shfs_vol.volname[17] = '\0'; /* ensure nullterminated volume name */
+	shfs_vol.ts_creation = hdr_common->vol_ts_creation;
 	shfs_vol.stripesize = hdr_common->member_stripesize;
 	shfs_vol.chunksize = SHFS_CHUNKSIZE(hdr_common);
 	shfs_vol.volsize = hdr_common->vol_size;

@@ -43,6 +43,8 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ## SHFS options
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
+CFLAGS				+= -DSHFS_HITSTATS
+CFLAGS				+= -DSHFS_MISSSTATS
 
 ######################################
 ## HTTPd options

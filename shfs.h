@@ -27,6 +27,7 @@ struct vol_member {
 struct vol_info {
 	uuid_t uuid;
 	char volname[17];
+	uint64_t ts_creation;
 	uint32_t chunksize;
 	chk_t volsize;
 

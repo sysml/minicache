@@ -77,8 +77,8 @@ typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 #define SHFS_MAGIC1 'H'
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
-#define SHFSv1_VERSION0 0x1
-#define SHFSv1_VERSION1 0x1
+#define SHFSv1_VERSION1 0x01
+#define SHFSv1_VERSION0 0x02
 
 struct shfs_hdr_common {
 	uint8_t            magic[4];
@@ -314,16 +314,11 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 	return 0;
 }
 
-#ifdef __MINIOS__
-#define getmstimestamp() (NOW() / 1000)
-#else
-static inline uint64_t getmstimestamp(void)
+static inline uint64_t gettimestamp_s(void)
 {
 	struct timeval now;
 	gettimeofday(&now, NULL);
-	return (((uint64_t) now.tv_sec * 1000) +
-	        ((uint64_t) now.tv_usec / 1000));
+	return (uint64_t) now.tv_sec;
 }
-#endif /* __MINIOS__ */
 
 #endif /* _SHFS_DEFS_H_ */

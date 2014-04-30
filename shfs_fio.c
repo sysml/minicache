@@ -9,10 +9,17 @@ static inline __attribute__((always_inline))
 struct shfs_bentry *_shfs_lookup_bentry_by_hash(const char *hash)
 {
 	hash512_t h;
+	struct shfs_bentry *bentry;
 
 	if (hash_parse(hash, h, shfs_vol.hlen) < 0)
 		return NULL;
-	return shfs_btable_lookup(shfs_vol.bt, h);
+	bentry = shfs_btable_lookup(shfs_vol.bt, h);
+#ifdef SHFS_MISSSTATS
+	if (!bentry) {
+		printk("MISS: Element %s is not in cache\n", hash);
+	}
+#endif
+	return bentry;
 }
 
 #ifdef SHFS_OPENBYNAME
@@ -89,8 +96,13 @@ SHFS_FD shfs_fio_open(const char *path)
 	hentry = (struct shfs_hentry *)
 		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 		 + bentry->hentry_htoffset);
-	if (hentry)
+	if (hentry) {
 		shfs_nb_open++;
+#ifdef SHFS_HITSTATS
+		bentry->ts_laccess = gettimestamp_s();
+		bentry->nb_access++;
+#endif
+        }
 	return (SHFS_FD) hentry;
 }
 

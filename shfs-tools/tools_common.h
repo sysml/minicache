@@ -80,12 +80,11 @@ static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
 		snprintf(out + (2*i), 3, "%02x", h[i]);
 }
 
-static inline size_t strfmstimestamp(char *s, size_t slen, const char *fmt, uint64_t msts)
+static inline size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec)
 {
 	struct tm *tm;
-	time_t tsec;
-	tsec = msts / 1000;
-	tm = localtime(&tsec);
+	time_t *tsec = (time_t *) &ts_sec;
+	tm = localtime(tsec);
 	return strftime(s, slen, fmt, tm);
 }
 

@@ -22,4 +22,6 @@ int register_shfs_tools(void);
 void uuid_unparse(const uuid_t uu, char *out);
 void hash_unparse(const hash512_t h, uint8_t hlen, char *out);
 
+size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec);
+
 #endif /* _SHFS_TOOLS_H_ */
