@@ -13,6 +13,7 @@
 #include <sched.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <time.h>
 
 #ifdef SHELL_DEBUG
 #define ENABLE_DEBUG
@@ -68,7 +69,7 @@
 
 struct shell {
     struct tcp_pcb *tpcb;
-    uint64_t ts_start;
+    struct timeval ts_start;
     const char *info;
     const char *welcome;
     const char *goodbye;
@@ -106,7 +107,7 @@ struct shell_sess {
     enum shell_sess_type type;
     enum shell_sess_state state;
 
-    uint64_t ts_start;
+    struct timeval ts_start;
     char *prompt;
     int echo; /* echo input */
     int respawn; /* respawn a closed session? */
@@ -136,6 +137,7 @@ static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
 static int shcmd_time(FILE *cio, int argc, char *argv[]);
 static int shcmd_uptime(FILE *cio, int argc, char *argv[]);
+static int shcmd_date(FILE *cio, int argc, char *argv[]);
 static int shcmd_who(FILE *cio, int argc, char *argv[]);
 static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
@@ -163,7 +165,8 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
         errno = ENOMEM;
         goto err_out;
     }
-    sh->ts_start = NOW(); /* timestamp of shell creation */
+
+    gettimeofday(&sh->ts_start, NULL); /* timestamp of shell creation */
     sh->welcome = SHELL_WELCOME;
     sh->goodbye = SHELL_GOODBYE;
     for (i = 0; i < MAX_NB_CMDS; i++) {
@@ -205,6 +208,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("who",    shcmd_who);
     shell_register_cmd("time",   shcmd_time);
     shell_register_cmd("uptime", shcmd_uptime);
+    shell_register_cmd("date",   shcmd_date);
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
 #endif
@@ -500,7 +504,7 @@ static err_t shlsess_accept(void)
     sess->echo = 1; /* enable echo of input on console */
     sess->respawn = 1; /* enable session respawning */
 
-    sess->ts_start = NOW();
+    gettimeofday(&sess->ts_start, NULL);
     sess->prompt = strdup(SHELL_PROMPT);
     if (!sess->prompt) {
         err = ERR_MEM;
@@ -662,7 +666,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
         err = ERR_MEM;
         goto err_free_sess;
     }
-    sess->ts_start = NOW();
+    gettimeofday(&sess->ts_start, NULL);
     sess->id = shell_get_free_sess_id();
 
     sess->cio_rxbuf_ridx = 0;
@@ -834,12 +838,14 @@ static int shcmd_who(FILE *cio, int argc, char *argv[])
 static int shcmd_uptime(FILE *cio, int argc, char *argv[])
 {
     /* shows shell uptime */
+    struct timeval now;
     uint64_t days = 0;
     uint64_t hours = 0;
     uint64_t mins = 0;
     uint64_t secs;
 
-    secs = (NOW() - sh->ts_start) / 1000000000l;
+    gettimeofday(&now, NULL);
+    secs = (now.tv_sec - sh->ts_start.tv_sec);
     mins = secs / 60;
     secs = secs % 60;
     hours = mins / 60;
@@ -851,6 +857,23 @@ static int shcmd_uptime(FILE *cio, int argc, char *argv[])
         fprintf(cio, "up %lu days %lu:%02lu:%02lu\n", days, hours, mins, secs);
     else
         fprintf(cio, "up %lu:%02lu:%02lu\n", hours, mins, secs);
+    return 0;
+}
+
+static int shcmd_date(FILE *cio, int argc, char *argv[])
+{
+    /* shows shell uptime */
+    struct timeval now;
+    struct tm *tm;
+    time_t tsec;
+    char str_date[64];
+
+    gettimeofday(&now, NULL);
+    tsec = (time_t) now.tv_sec;
+    tm = localtime(&tsec);
+
+    strftime(str_date, sizeof(str_date), "%c", tm);
+    fprintf(cio, "%s\n", str_date);
     return 0;
 }
 
