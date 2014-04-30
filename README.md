@@ -49,7 +49,7 @@ toolchain having lightweightIP 1.4.1 is required.
 
     git clone git@repos:joao/toolchain.git
     cd toolchain
-    git checkout feature/lwip-1.4.1
+    git checkout feature/lwip-latest
     cd ..
 
 Please follow the build procedure as described in 'toolchain/README'.
