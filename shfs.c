@@ -17,6 +17,11 @@
 #include "shfs_htable.h"
 #include "shfs_tools.h"
 
+#ifdef SHFS_DEBUG
+#define ENABLE_DEBUG
+#endif
+#include "debug.h"
+
 #ifndef CACHELINE_SIZE
 #define CACHELINE_SIZE 64
 #endif
@@ -53,9 +58,7 @@ static struct blkdev *shfs_checkopen_blkdev(unsigned int vbd_id, void *chk0)
 	if (blkdev_ssize(bd) > 4096 || blkdev_ssize(bd) < 512 ||
 	    !POWER_OF_2(blkdev_ssize(bd))) {
 		/* incompatible device */
-#ifdef SHFS_DEBUG
-		printf("Incompatible block size on vdb %u\n", vbd_id);
-#endif
+		dprintf("Incompatible block size on vdb %u\n", vbd_id);
 		goto err_close_bd;
 	}
 
@@ -63,9 +66,7 @@ static struct blkdev *shfs_checkopen_blkdev(unsigned int vbd_id, void *chk0)
 	rlen = 4096 / blkdev_ssize(bd);
 	ret = blkdev_sync_read(bd, 0, rlen, chk0);
 	if (ret < 0) {
-#ifdef SHFS_DEBUG
-		printf("Could not read from vdb %u: %d\n", vbd_id, ret);
-#endif
+		dprintf("Could not read from vdb %u: %d\n", vbd_id, ret);
 		errno = -ret;
 		goto err_close_bd;
 	}
@@ -73,9 +74,7 @@ static struct blkdev *shfs_checkopen_blkdev(unsigned int vbd_id, void *chk0)
 	/* Try to detect the SHFS disk label */
 	ret = shfs_detect_hdr0(chk0);
 	if (ret < 0) {
-#ifdef SHFS_DEBUG
-		printf("Invalid or unsupported SHFS label detected on vdb %u: %d\n", vbd_id, ret);
-#endif
+		dprintf("Invalid or unsupported SHFS label detected on vdb %u: %d\n", vbd_id, ret);
 		errno = -ret;
 		goto err_close_bd;
 	}
@@ -123,9 +122,8 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 		if (!bd) {
 			continue; /* try next device */
 		}
-#ifdef SHFS_DEBUG
-		printf("SHFSv1 label on vbd %u detected\n", bd->vbd_id);
-#endif
+		dprintf("SHFSv1 label on vbd %u detected\n", bd->vbd_id);
+
 		/* chk0 now contains the first chunk read from disk */
 		hdr_common = (void *)((uint8_t *) chk0 + BOOT_AREA_LENGTH);
 		detected_member[nb_detected_members].bd = bd;
@@ -172,10 +170,8 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 
 	}
 	if (shfs_vol.nb_members != hdr_common->member_count) {
-#ifdef SHFS_DEBUG
-		printf("Could not find correct member to vbd mapping for volume '%s'\n",
-		       shfs_vol.volname);
-#endif /* SHFS_DEBUG */
+		dprintf("Could not find correct member to vbd mapping for volume '%s'\n",
+		        shfs_vol.volname);
 		ret = -ENOENT;
 		goto err_close_bds;
 	}
@@ -183,20 +179,16 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	/* chunk and stripe size -> retrieve a device sector factor for each device */
 	if (shfs_vol.stripesize > 32768 || shfs_vol.stripesize < 4096 ||
 	    !POWER_OF_2(shfs_vol.stripesize)) {
-#ifdef SHFS_DEBUG
-		printf("Stripe size invalid on volume '%s'\n",
+		dprintf("Stripe size invalid on volume '%s'\n",
 		       shfs_vol.volname);
-#endif /* SHFS_DEBUG */
 		ret = -ENOENT;
 		goto err_close_bds;
 	}
 	for (i = 0; i < shfs_vol.nb_members; ++i) {
 		shfs_vol.member[i].sfactor = shfs_vol.stripesize / blkdev_ssize(shfs_vol.member[i].bd);
 		if (shfs_vol.member[i].sfactor == 0) {
-#ifdef SHFS_DEBUG
-			printf("Stripe size invalid on volume '%s'\n",
+			dprintf("Stripe size invalid on volume '%s'\n",
 			       shfs_vol.volname);
-#endif /* SHFS_DEBUG */
 			ret = -ENOENT;
 			goto err_close_bds;
 		}
@@ -206,10 +198,8 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	min_member_size = (shfs_vol.volsize / shfs_vol.nb_members) * (uint64_t) shfs_vol.chunksize;
 	for (i = 0; i < shfs_vol.nb_members; ++i) {
 		if (blkdev_size(shfs_vol.member[i].bd) < min_member_size) {
-#ifdef SHFS_DEBUG
-			printf("Member %u of volume '%s' is too small\n",
+			dprintf("Member %u of volume '%s' is too small\n",
 			       i, shfs_vol.volname);
-#endif /* SHFS_DEBUG */
 			ret = -ENOENT;
 			goto err_close_bds;
 		}
@@ -259,10 +249,8 @@ static int load_vol_hconf(void)
 		goto out;
 	}
 
-#ifdef SHFS_DEBUG
-	printf("Load SHFS configuration chunk\n");
-#endif /* SHFS_DEBUG */
-	ret = shfs_sync_read_chunk(1, 1, chk1);
+	dprintf("Loading SHFS configuration chunk...\n");
+	ret = shfs_read_chunk(1, 1, chk1);
 	if (ret < 0)
 		goto out_free_chk1;
 
@@ -297,9 +285,7 @@ static int load_vol_htable(void)
 	int ret;
 
 	/* allocate bucket table */
-#ifdef SHFS_DEBUG
-	printf("Allocating btable...\n");
-#endif /* SHFS_DEBUG */
+	dprintf("Allocating btable...\n");
 	shfs_vol.bt = shfs_alloc_btable(shfs_vol.htable_nb_buckets,
 	                                shfs_vol.htable_nb_entries_per_bucket,
 	                                shfs_vol.hlen);
@@ -309,40 +295,39 @@ static int load_vol_htable(void)
 	}
 
 	/* allocate chunk cache reference table */
-#ifdef SHFS_DEBUG
-	printf("Allocating chunk cache reference table...\n");
-#endif /* SHFS_DEBUG */
+	dprintf("Allocating chunk cache reference table...\n");
 	shfs_vol.htable_chunk_cache_state = _xmalloc(sizeof(int) * shfs_vol.htable_len, CACHELINE_SIZE);
 	if (!shfs_vol.htable_chunk_cache_state) {
 		ret = -ENOMEM;
 		goto err_free_btable;
 	}
+	memset(shfs_vol.htable_chunk_cache_state, 0, sizeof(int) * shfs_vol.htable_len);
+
 	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
 	if (!shfs_vol.htable_chunk_cache) {
 		ret = -ENOMEM;
 		goto err_free_chunkcachestate;
 	}
-	memset(shfs_vol.htable_chunk_cache_state, 0, sizeof(int *) * shfs_vol.htable_len);
 
 	/* load hash table chunk-wise and fill-out btable metadata */
-#ifdef SHFS_DEBUG
-	printf("Reading hash table...\n");
-#endif
+	dprintf("Reading hash table...\n");
 	chk_buf = NULL;
 	cur_chk = 0;
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
 		cur_htchk = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
 		if (cur_chk != cur_htchk || !chk_buf) {
 			/* allocate buffer and register it to htable chunk cache */
-			chk_buf = _xmalloc(shfs_vol.chunksize, 4096);
+			chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.stripesize);
 			if (!chk_buf) {
+				dprintf("Could not alloc chunk %u for htable (size: %lu, align: %lu)\n",
+				        cur_htchk, shfs_vol.chunksize, shfs_vol.stripesize);
 				ret = -ENOMEM;
 				goto err_free_chunkcache;
 			}
 			shfs_vol.htable_chunk_cache[cur_htchk]       = chk_buf;
 			shfs_vol.htable_chunk_cache_state[cur_htchk] = CCS_LOADED;
 
-			ret = shfs_sync_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
+			ret = shfs_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
 			if (ret < 0) {
 				goto err_free_chunkcache;
 			}
@@ -393,12 +378,17 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	ret = load_vol_cconf(vbd_id, count);
 	if (ret < 0)
 		goto err_out;
+
+	/* a memory pool required for async I/O requests */
+	shfs_vol.aiotoken_pool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _shfs_aio_token));
+	if (!shfs_vol.aiotoken_pool)
+		goto err_close_members;
 	shfs_mounted = 1;
 
 	/* load hash conf (uses shfs_sync_read_chunk) */
 	ret = load_vol_hconf();
 	if (ret < 0)
-		goto err_close_members;
+		goto err_free_aiotoken_pool;
 
 	/* load htable (uses shfs_sync_read_chunk)
 	 * This function also allocates htable_chunk_cache,
@@ -411,7 +401,7 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	 * doing I/O */
 	shfs_vol.chunkpool = alloc_mempool(CHUNKPOOL_NB_BUFFERS,
 	                                   shfs_vol.chunksize,
-	                                   4096,
+	                                   shfs_vol.stripesize,
 	                                   0, 0, NULL, NULL, 0);
 	if (!shfs_vol.chunkpool) {
 		shfs_mounted = 0;
@@ -430,6 +420,8 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	xfree(shfs_vol.htable_chunk_cache);
 	xfree(shfs_vol.htable_chunk_cache_state);
 	shfs_free_btable(shfs_vol.bt);
+ err_free_aiotoken_pool:
+	free_mempool(shfs_vol.aiotoken_pool);
  err_close_members:
 	for(i = 0; i < shfs_vol.nb_members; ++i)
 		close_blkdev(shfs_vol.member[i].bd);
@@ -448,8 +440,9 @@ int umount_shfs(void) {
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
 		if (shfs_nb_open ||
+		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
 		    mempool_free_count(shfs_vol.chunkpool) < CHUNKPOOL_NB_BUFFERS) {
-			/* there are still open files */
+			/* there are still open files and/or async I/O is happening */
 			up(&shfs_mount_lock);
 			return -EBUSY;
 		}
@@ -462,6 +455,7 @@ int umount_shfs(void) {
 		xfree(shfs_vol.htable_chunk_cache);
 		xfree(shfs_vol.htable_chunk_cache_state);
 		shfs_free_btable(shfs_vol.bt);
+		free_mempool(shfs_vol.aiotoken_pool);
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			close_blkdev(shfs_vol.member[i].bd);
 	}
@@ -470,39 +464,92 @@ int umount_shfs(void) {
 	return 0;
 }
 
-int shfs_sync_io_chunk(chk_t start, chk_t len, int write, void *buffer)
+/*
+ * Note: Async I/O token data access is atomic since none of these functions can
+ * be interrupted or yield the CPU. Even blkfront calls the callbacks outside
+ * of the interrupt context via blkdev_poll_req() and there is only the
+ * cooperative scheduler.
+ */
+static void _shfs_aio_cb(int ret, void *argp) {
+	SHFS_AIO_TOKEN *t = argp;
+
+	if (unlikely(ret < 0))
+		t->ret = ret;
+	--t->infly;
+
+	if (unlikely(t->infly == 0)) {
+		/* call user's callback */
+		if (t->cb)
+			t->cb(t, t->cb_cookie, t->cb_argp);
+	}
+}
+
+SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
+                               shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp)
 {
 	int ret;
 	chk_t end, c;
 	sector_t start_sec, len_sec;
 	unsigned int m;
-	uint8_t *wptr = buffer;
+	uint8_t *ptr = buffer;
+	struct mempool_obj *t_obj;
+	SHFS_AIO_TOKEN *t;
 
-	if (!shfs_mounted)
-		return -ENODEV;
+	if (!shfs_mounted) {
+		errno = ENODEV;
+		goto err_out;
+	}
+	/* check if each member has enough request objects available for this operation */
+	for (m = 0; m < shfs_vol.nb_members; ++m) {
+		if (blkdev_avail_req(shfs_vol.member[m].bd) < len) {
+			errno = ENOMEM;
+			goto err_out;
+		}
+	}
 
+	/* pick token */
+	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
+	if (!t_obj) {
+		errno = ENOMEM;
+		goto err_out;
+	}
+	t = t_obj->data;
+	t->p_obj = t_obj;
+	t->ret = 0;
+	t->infly = 0;
+	t->cb = cb;
+	t->cb_cookie = cb_cookie;
+	t->cb_argp = cb_argp;
+
+	/* setup requests */
 	end = start + len;
 	for (c = start; c < end; c++) {
 		for (m = 0; m < shfs_vol.nb_members; ++m) {
 			/* TODO: Try using shift instead of multiply */
 			start_sec = c * shfs_vol.member[m].sfactor;
 			len_sec = shfs_vol.member[m].sfactor;
-#ifdef SHFS_DEBUG
-			printf("blkdev_sync_io member=%u, start=%lus, len=%lus, wptr=%p\n",
-			       m, start_sec, len_sec, wptr);
-#endif /* SHFS_DEBUG */
-			ret = blkdev_sync_io(shfs_vol.member[m].bd, start_sec, len_sec, write, wptr);
-			if (ret < 0) {
-#ifdef SHFS_DEBUG
-				printf("Error while reading from member %u: %d\n", m, ret);
-#endif /* SHFS_DEBUG */
-				return ret;
+			dprintf("shfs_aio_chunk: member=%u, start=%lu (%lus), len=1 (%lus), ptr=@%p\n",
+			        m, c, start_sec, len_sec, ptr);
+			ret = blkdev_async_io(shfs_vol.member[m].bd, start_sec, len_sec, write, ptr,
+			                      _shfs_aio_cb, t);
+			if (unlikely(ret < 0)) {
+				dprintf("Error while setting up async I/O request for member %u: %d. ", m, ret);
+				dprintf("Cancelling request...\n");
+				t->cb = NULL; /* erase callback */
+				shfs_aio_wait(t);
+				errno = -ret;
+				goto err_free_token;
 			}
-			wptr += shfs_vol.stripesize;
-		}
+			++t->infly;
+			ptr += shfs_vol.stripesize;
+			}
 	}
+	return t;
 
-	return 0;
+ err_free_token:
+	mempool_put(t_obj);
+ err_out:
+	return NULL;
 }
 
 void exit_shfs(void) {

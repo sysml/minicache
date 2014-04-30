@@ -11,7 +11,7 @@
 #include <mempool.h>
 #include <semaphore.h>
 
-#include <ipv4/lwip/ip_addr.h>
+#include <lwip/ip_addr.h>
 #include <netif/etharp.h>
 #include <lwip/netif.h>
 #include <lwip/inet.h>
@@ -30,24 +30,79 @@
 #include <lwip-netfront.h>
 #endif
 
-#include "httpd.h"
+#include "http.h"
 #include "shell.h"
 #include "shfs.h"
 #include "shfs_tools.h"
 
+#include "debug.h"
+
 #define MAX_NB_VBD 64
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
+#endif /* CONFIG_LWIP_MINIMAL */
+
 /* runs (func) a command on a timeout */
 #define TIMED(ts_now, ts_tmr, interval, func)                        \
 	do {                                                         \
-		if (unlikely(((ts_now) - (ts_tmr)) >= (interval))) { \
+		if (unlikely(((ts_now) - (ts_tmr)) > (interval))) {  \
 			if ((ts_tmr))                                \
 				(func);                              \
 			(ts_tmr) = (ts_now);                         \
 		}                                                    \
 	} while(0)
-#endif /* CONFIG_LWIP_MINIMAL */
+
+#ifdef CONFIG_MINDER_PRINT
+#define MINDER_INTERVAL 500
+
+static inline void minder_print(void)
+{
+    static int minder_step = 0;
+
+    switch (minder_step) {
+    case 1:
+	    printk("\r >))'>   ");
+	    minder_step = 2;
+	    break;
+    case 2:
+	    printk("\r  >))'>  ");
+	    minder_step = 3;
+	    break;
+    case 3:
+	    printk("\r   >))'> ");
+	    minder_step = 4;
+	    break;
+    case 4:
+	    printk("\r    >))'>");
+	    minder_step = 5;
+	    break;
+    case 5:
+	    printk("\r    <'((<");
+	    minder_step = 6;
+	    break;
+    case 6:
+	    printk("\r   <'((< ");
+	    minder_step = 7;
+	    break;
+    case 7:
+	    printk("\r  <'((<  ");
+	    minder_step = 8;
+	    break;
+    case 8:
+	    printk("\r <'((<   ");
+	    minder_step = 9;
+	    break;
+    case 9:
+	    printk("\r<'((<    ");
+	    minder_step = 0;
+	    break;
+    default:
+	    printk("\r>))'>    ");
+	    minder_step = 1;
+    }
+    fflush(stdout);
+}
+#endif /* CONFIG_MINDER_PRINT */
 
 /**
  * ARGUMENT PARSING
@@ -66,6 +121,52 @@ static struct _args {
     unsigned int    startup_delay;
 } args;
 
+static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
+{
+	int ip0, ip1, ip2, ip3;
+	int rprefix;
+	uint32_t mask;
+
+	if (sscanf(buf, "%d.%d.%d.%d/%d", &ip0, &ip1, &ip2, &ip3, &rprefix) != 5)
+		return -1;
+	if ((ip0 < 0 || ip0 > 255) ||
+	    (ip1 < 0 || ip1 > 255) ||
+	    (ip2 < 0 || ip2 > 255) ||
+	    (ip3 < 0 || ip3 > 255) ||
+	    (rprefix < 0 || rprefix > 32))
+		return -1;
+
+	IP4_ADDR(out_ip, ip0, ip1, ip2, ip3);
+	if (rprefix == 0)
+		mask = 0x0;
+	else if (rprefix == 32)
+		mask = 0xFFFFFFFF;
+	else
+		mask = ~((1 << (32 - rprefix)) - 1);
+	IP4_ADDR(out_mask,
+	         (mask & 0xFF000000) >> 24,
+	         (mask & 0x00FF0000) >> 16,
+	         (mask & 0x0000FF00) >> 8,
+	         (mask & 0x000000FF));
+	return 0;
+}
+
+static int parse_args_setval_ipv4(struct ip_addr *out, const char *buf)
+{
+	int ip0, ip1, ip2, ip3;
+
+	if (sscanf(buf, "%d.%d.%d.%d", &ip0, &ip1, &ip2, &ip3) != 4)
+		return -1;
+	if ((ip0 < 0 || ip0 > 255) ||
+	    (ip1 < 0 || ip1 > 255) ||
+	    (ip2 < 0 || ip2 > 255) ||
+	    (ip3 < 0 || ip3 > 255))
+		return -1;
+
+	IP4_ADDR(out, ip0, ip1, ip2, ip3);
+	return 0;
+}
+
 static int parse_args_setval_int(int *out, const char *buf)
 {
 	if (sscanf(buf, "%d", out) != 1)
@@ -81,28 +182,57 @@ static int parse_args(int argc, char *argv[])
 
     /* default arguments */
     memset(&args, 0, sizeof(args));
-    IP4_ADDR(&args.ip,   10,  10,  10,  1);
-    IP4_ADDR(&args.mask, 255, 255, 255, 0);
-    IP4_ADDR(&args.gw,   0,   0,   0,   0);
-    IP4_ADDR(&args.dns0, 0,   0,   0,   0);
-    IP4_ADDR(&args.dns1, 0,   0,   0,   0);
+    IP4_ADDR(&args.ip,   192, 168, 128, 124);
+    IP4_ADDR(&args.mask, 255, 255, 255, 252);
+    IP4_ADDR(&args.gw,     0,   0,   0,   0);
+    IP4_ADDR(&args.dns0,   0,   0,   0,   0);
+    IP4_ADDR(&args.dns1,   0,   0,   0,   0);
     args.nb_vbds = 4;
     args.vbd_id[0] = 51712; /* xvda */
     args.vbd_id[1] = 51728; /* xvdb */
     args.vbd_id[2] = 51744; /* xvdc */
     args.vbd_id[3] = 51760; /* xvdd */
-    args.dhclient = 0;
+    args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
 
-     while ((opt = getopt(argc, argv, "s:")) != -1) {
+     while ((opt = getopt(argc, argv, "s:i:g:d:")) != -1) {
          switch(opt) {
          case 's': /* startup delay */
               ret = parse_args_setval_int(&ival, optarg);
               if (ret < 0 || ival < 0) {
-	           printf("invalid delay specified\n");
+	           printk("invalid delay specified\n");
 	           return -1;
               }
               args.startup_delay = (unsigned int) ival;
+              break;
+         case 'i': /* IP address/mask */
+	      ret = parse_args_setval_ipv4cidr(&args.ip, &args.mask, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid host IP in CIDR notation specified (e.g., 192.168.0.2/24)\n");
+	           return -1;
+              }
+	      args.dhclient = 0;
+              break;
+         case 'g': /* gateway */
+	      ret = parse_args_setval_ipv4(&args.gw, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid gateway IP specified (e.g., 192.168.0.1)\n");
+	           return -1;
+              }
+              break;
+         case 'd': /* dns0 */
+	      ret = parse_args_setval_ipv4(&args.dns0, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid primary DNS IP specified (e.g., 192.168.0.1)\n");
+	           return -1;
+              }
+              break;
+         case 'e': /* dns1 */
+	      ret = parse_args_setval_ipv4(&args.dns1, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
+	           return -1;
+              }
               break;
          default:
 	      return -1;
@@ -143,21 +273,21 @@ void app_shutdown(unsigned reason)
 {
     switch (reason) {
     case SHUTDOWN_poweroff:
-	    printf("Poweroff requested\n", reason);
+	    printk("Poweroff requested\n", reason);
 	    shall_reboot = 0;
 	    shall_shutdown = 1;
 	    break;
     case SHUTDOWN_reboot:
-	    printf("Reboot requested: %d\n", reason);
+	    printk("Reboot requested: %d\n", reason);
 	    shall_reboot = 1;
 	    shall_shutdown = 1;
 	    break;
     case SHUTDOWN_suspend:
-	    printf("Suspend requested: %d\n", reason);
+	    printk("Suspend requested: %d\n", reason);
 	    shall_suspend = 1;
 	    break;
     default:
-	    printf("Unknown shutdown action requested: %d. Ignoring\n", reason);
+	    printk("Unknown shutdown action requested: %d. Ignoring\n", reason);
 	    break;
     }
 }
@@ -263,6 +393,73 @@ static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
     return ret;
 }
 
+#if LWIP_STATS_DISPLAY
+#include <lwip/stats.h>
+
+static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
+{
+	stats_display();
+	return 0;
+}
+#endif
+
+static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
+{
+	struct netif *netif;
+	int is_up;
+	uint8_t flags;
+
+	for (netif = netif_list; netif != NULL; netif = netif->next) {
+		is_up = netif_is_up(netif);
+		flags = netif->flags;
+
+		/* name + mac */
+		fprintf(cio, "%c%c%c%c      ",
+		        (netif->name[0] ? netif->name[0] : ' '),
+		        (netif->name[1] ? netif->name[1] : ' '),
+		        (netif->name[2] ? netif->name[2] : ' '),
+		        (netif == netif_default ? '*' : ' '));
+		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
+		        netif->hwaddr[0], netif->hwaddr[1],
+		        netif->hwaddr[2], netif->hwaddr[3],
+		        netif->hwaddr[4], netif->hwaddr[5]);
+		/* flags + mtu */
+		fprintf(cio, "          ");
+		if (flags & NETIF_FLAG_UP)
+			fprintf(cio, "UP ");
+		if (flags & NETIF_FLAG_BROADCAST)
+			fprintf(cio, "BROADCAST ");
+		if (flags & NETIF_FLAG_POINTTOPOINT)
+			fprintf(cio, "P2P ");
+		if (flags & NETIF_FLAG_DHCP)
+			fprintf(cio, "DHCP ");
+		if (flags & NETIF_FLAG_ETHARP)
+			fprintf(cio, "ARP ");
+		if (flags & NETIF_FLAG_ETHERNET)
+			fprintf(cio, "ETHERNET ");
+		fprintf(cio, "MTU:%u\n", netif->mtu);
+	        /* ip addr */
+		if (is_up) {
+			fprintf(cio, "          inet addr:%u.%u.%u.%u",
+			        ip4_addr1(&netif->ip_addr),
+			        ip4_addr2(&netif->ip_addr),
+			        ip4_addr3(&netif->ip_addr),
+			        ip4_addr4(&netif->ip_addr));
+			fprintf(cio, " Mask:%u.%u.%u.%u",
+			        ip4_addr1(&netif->netmask),
+			        ip4_addr2(&netif->netmask),
+			        ip4_addr3(&netif->netmask),
+			        ip4_addr4(&netif->netmask));
+			fprintf(cio, " Gw:%u.%u.%u.%u\n",
+			        ip4_addr1(&netif->gw),
+			        ip4_addr2(&netif->gw),
+			        ip4_addr3(&netif->gw),
+			        ip4_addr4(&netif->gw));
+		}
+	}
+	return 0;
+}
+
 /**
  * MAIN
  */
@@ -270,29 +467,52 @@ int main(int argc, char *argv[])
 {
     struct netif netif;
     int ret;
-#ifdef CONFIG_LWIP_SINGLETHREADED
+#if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
     uint64_t now;
+#endif
+#ifdef CONFIG_LWIP_SINGLETHREADED
     uint64_t ts_tcp = 0;
     uint64_t ts_etharp = 0;
     uint64_t ts_ipreass = 0;
     uint64_t ts_dns = 0;
     uint64_t ts_dhcp_fine = 0;
     uint64_t ts_dhcp_coarse = 0;
-#endif
+#endif /* CONFIG_LWIP_SINGLETHREADED */
+#ifdef CONFIG_MINDER_PRINT
+    uint64_t ts_minder = 0;
+#endif /* CONFIG_MINDER_PRINT */
 
+    init_debug();
     init_SEMAPHORE(&_vbd_lock, 1);
+
+    /* -----------------------------------
+     * banner
+     * ----------------------------------- */
+#ifndef CONFIG_HIDE_BANNER
+    printk("\n");
+    printk("_|      _|  _|            _|    _|_|_|                      _|                \n");
+    printk("_|_|  _|_|      _|_|_|        _|          _|_|_|    _|_|_|  _|_|_|      _|_|  \n");
+    printk("_|  _|  _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|_|_|_|\n");
+    printk("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
+    printk("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
+    printk("\n");
+    printk("Copyright(C) 2013-1014 NEC Laboratories Europe Ltd.\n");
+    printk("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
+    printk("\n");
+#endif
 
     /* -----------------------------------
      * argument parsing
      * ----------------------------------- */
     if (parse_args(argc, argv) < 0) {
-	    printf("Argument parsing error!\n" \
+	    printk("Argument parsing error!\n" \
 	           "Please check your arguments\n");
 	    goto out;
     }
+
     if (args.startup_delay) {
 	    unsigned int s;
-	    printf("Startup delay");
+	    printk("Startup delay");
 	    fflush(stdout);
 	    for (s = 0; s < args.startup_delay; ++s) {
 		    printf(".");
@@ -305,7 +525,7 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
-    printf("Starting networking...\n");
+    printk("Starting networking...\n");
 #ifdef CONFIG_LWIP_SINGLETHREADED
     lwip_init(); /* single threaded */
 #else
@@ -364,47 +584,60 @@ int main(int argc, char *argv[])
      *                 there is no tcpip_ethinput() ; tcp_input()
      *                 handles ARP packets as well).
      */
-        printf("FATAL: Could not initialize the network interface\n");
+        printk("FATAL: Could not initialize the network interface\n");
         goto out;
     }
     netif_set_default(&netif);
     netif_set_up(&netif);
-    if (args.dhclient)
+    if (args.dhclient) {
+	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
+    }
 
     /* -----------------------------------
      * filesystem automount
      * ----------------------------------- */
+    printk("Loading SHFS...\n");
     init_shfs();
-    printf("Trying to mount cache filesystem...\n");
+#ifdef CONFIG_AUTOMOUNT
+    printk("Trying to mount cache filesystem...\n");
     ret = mount_shfs(args.vbd_id, args.nb_vbds);
     if (ret < 0)
-	    printf("ERROR: Could not mount cache filesystem\n");
+	    printk("ERROR: Could not mount cache filesystem\n");
+#endif
 
     /* -----------------------------------
      * service initialization
      * ----------------------------------- */
-    printf("Starting shell...\n");
+    printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
-    printf("Starting httpd...\n");
-    init_httpd();
+    printk("Starting HTTP server...\n");
+    init_http(60); /* allow 60 simultaneous connections */
 
     /* add custom commands to the shell */
     shell_register_cmd("halt", shcmd_halt);
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
     shell_register_cmd("lsvbd", shcmd_lsvbd);
+    shell_register_cmd("ifconfig", shcmd_ifconfig);
     shell_register_cmd("mount", shcmd_mount_shfs);
     shell_register_cmd("umount", shcmd_umount_shfs);
+#if LWIP_STATS_DISPLAY
+    shell_register_cmd("lwip-stats", shcmd_lwipstats);
+#endif
     register_shfs_tools();
 
     /* -----------------------------------
      * Processing loop
      * ----------------------------------- */
-    printf("*** MiniCache is up and running ***\n");
+    printk("*** MiniCache is up and running ***\n");
+#ifdef CONFIG_MINDER_PRINT
+    printk("\n");
+#endif
     while(likely(!shall_shutdown)) {
 	/* poll block devices */
 	shfs_poll_blkdevs();
+
 #ifdef CONFIG_LWIP_SINGLETHREADED
         /* NIC handling loop (single threaded lwip) */
 #ifdef CONFIG_NMWRAP
@@ -412,8 +645,13 @@ int main(int argc, char *argv[])
 #else
 	netfrontif_handle(&netif, RXBURST_LEN);
 #endif /* CONFIG_NMWRAP */
-	/* Process lwip network-related timers */
+#endif /* CONFIG_LWIP_SINGLETHREADED */
+
+#if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
         now = NSEC_TO_MSEC(NOW());
+#endif
+#ifdef CONFIG_LWIP_SINGLETHREADED
+	/* Process lwip network-related timers */
         TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
         TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
         TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
@@ -423,16 +661,19 @@ int main(int argc, char *argv[])
 	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
         }
 #endif /* CONFIG_LWIP_SINGLETHREADED */
+#ifdef CONFIG_MINDER_PRINT
+        TIMED(now, ts_minder,  MINDER_INTERVAL,  minder_print());
+#endif /* CONFIG_MINDER_PRINT */
         schedule(); /* yield CPU */
 
         if (unlikely(shall_suspend)) {
-            printf("System is going to suspend now\n");
+            printk("System is going to suspend now\n");
             netif_set_down(&netif);
             netif_remove(&netif);
 
             kernel_suspend();
 
-            printf("System woke up from suspend\n");
+            printk("System woke up from suspend\n");
             netif_set_default(&netif);
             netif_set_up(&netif);
             if (args.dhclient)
@@ -445,17 +686,17 @@ int main(int argc, char *argv[])
      * Shutdown
      * ----------------------------------- */
     if (shall_reboot)
-	    printf("System is going down to reboot now\n");
+	    printk("System is going down to reboot now\n");
     else
-	    printf("System is going down to halt now\n");
-    printf("Stopping httpd...\n");
-    exit_httpd();
-    printf("Stopping shell...\n");
+	    printk("System is going down to halt now\n");
+    printk("Stopping HTTP server...\n");
+    exit_http();
+    printk("Stopping shell...\n");
     exit_shell();
-    printf("Unmounting cache filesystem...\n");
+    printk("Unmounting cache filesystem...\n");
     umount_shfs();
     exit_shfs();
-    printf("Stopping networking...\n");
+    printk("Stopping networking...\n");
     netif_set_down(&netif);
     netif_remove(&netif);
  out:

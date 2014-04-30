@@ -49,7 +49,7 @@ toolchain having lightweightIP 1.4.1 is required.
 
     git clone git@repos:joao/toolchain.git
     cd toolchain
-    git checkout feature/lwip-1.4.1
+    git checkout feature/lwip-latest
     cd ..
 
 Please follow the build procedure as described in 'toolchain/README'.
@@ -76,7 +76,6 @@ included in the command search of your shell:
     cd minicache
     git submodule init
     git submodule update
-    cd ..
 
 #### Configure (optional)
 You can configure your build by enabling/disabling features in MiniCache's
@@ -100,9 +99,7 @@ Mini-OS's standard netfront (vif) is enabled with the following settings:
 
 #### Build
 
-    cd minicache
     make -j8 all
-    cd ..
 
 #### Build SHFS Tools
 The SHFS tools are required to create and maintain SHFS filesystems.
@@ -119,11 +116,11 @@ following example as a basis:
     kernel        = './build/minicache_x86_64.gz'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '32'
+    memory        = '128'
 
     name          = 'minicache'
 
-    vif           = ['mac=00:16:3e:ba:be:12,bridge=expbr0' ]
+    vif           = [ 'mac=00:16:3e:ba:be:12,bridge=expbr0' ]
 
     # One FS image and 3 RAM-based drives
     disk          = [ 'file:/root/workspace/minicache/demofs.img,xvda,w',
@@ -132,7 +129,18 @@ following example as a basis:
                       'phy:/dev/ram15,xvdd,w' ]
 
 Thanks to Cosmos, you can set the executable bit to this file and instantiate
-the VM like a regular binary that is executed in Domain-0:
+the VM like a regular binary that is executed in Domain-0. The parameters
+are passed as kernel parameters to the image:
 
     chmod a+x minicache
-    ./minicache
+    ./minicache -i 192.168.0.2/24 -g 192.168.0.1
+
+
+### MiniCache Parameters
+
+    -s [sec]               Startup delay in seconds
+    -i [IPv4/Route prefix] Host IP address in CIDR notation
+                           (if not specified, DHCP is enabled)
+    -g [IPv4]              Gateway IP address
+    -d [IPv4]              Primary DNS server
+    -e [IPv4]              Secondary DNS server

@@ -14,6 +14,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifdef SHELL_DEBUG
+#define ENABLE_DEBUG
+#endif
+#include "debug.h"
+
 #ifdef HAVE_LWIP
 #include <lwip/tcp.h>
 #endif
@@ -29,6 +34,9 @@
 #define SH_RXBUFMASK (SH_RXBUFLEN - 1)
 #define SH_TCP_PRIO TCP_PRIO_MIN
 #define SH_LISTEN_PORT 23 /* telnet */
+#define SH_TCPKEEPALIVE_TIMEOUT 120 /* = x sec */
+#define SH_TCPKEEPALIVE_IDLE    60 /* = x sec */
+
 #endif
 
 #define SESSNAME_MAXLEN 16
@@ -80,6 +88,7 @@ enum shell_sess_state
     SSS_NONE = 0,
     SSS_ESTABLISHED,
     SSS_CLOSING,
+    SSS_KILLING
 };
 
 enum shell_sess_type
@@ -107,18 +116,15 @@ struct shell_sess {
 
     /* console i/o */
     char argb[ARGB_LEN]; /* argument buffer */
-    FILE *cio; /* stdout for console */
+    FILE *cio; /* stdin/stdout of session */
 
     int cons_fd; /* serial console on SSS_LOCAL */
 #ifdef HAVE_LWIP
     struct tcp_pcb *tpcb; /* TCP PCB */
-    cookie_io_functions_t cio_funcs; /* tcp i/o on non SSS_LOCAL */
     /* rx buffer (tcp session) */
     char cio_rxbuf[SH_RXBUFLEN];
     uint16_t cio_rxbuf_ridx;
     uint16_t cio_rxbuf_widx;
-    struct wait_queue_head cio_rxbuf_wq_rd;
-    struct wait_queue_head cio_rxbuf_wq_wr;
 #endif
 
 };
@@ -303,9 +309,7 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
     /* register cmd */
     sh->cmd_func[i] = func;
     sh->cmd_str[i] = cmd;
-#ifdef SHELL_DEBUG
-    printf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
-#endif
+    dprintf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
 
@@ -319,13 +323,11 @@ void shell_unregister_cmd(const char *cmd)
     if (i >= 0) {
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
-#ifdef SHELL_DEBUG
-        printf("shell: Command %i ('%s') unregistered\n", i, cmd);
-#endif
+        dprintf("shell: Command %i ('%s') unregistered\n", i, cmd);
     }
 }
 
-static inline int sh_exec(FILE *cio, char *argb, size_t argb_len)
+static int sh_exec(FILE *cio, char *argb, size_t argb_len)
 {
     char *argv[MAX_NB_ARGS];
     int argc;
@@ -400,13 +402,15 @@ respawn:
         /* read sess->argb from cio */
         argb_p = 0;
         while (argb_p < sizeof(sess->argb) - 1) {
-            if (sess->state == SSS_CLOSING)
+            if (sess->state == SSS_CLOSING ||
+                sess->state == SSS_KILLING)
                 goto terminate;
             ret = fgetc(sess->cio);
             if (ret == EOF)
 	        goto terminate;
             sess->argb[argb_p] = (char) ret;
-            if (sess->state == SSS_CLOSING)
+            if (sess->state == SSS_CLOSING ||
+                sess->state == SSS_KILLING)
                 goto terminate;
 
             switch (sess->argb[argb_p]) {
@@ -442,8 +446,10 @@ respawn:
 
         ret = sh_exec(sess->cio, sess->argb, argb_p + 1);
         fflush(sess->cio);
-        if (ret == SH_CLOSE)
+        if (ret == SH_CLOSE) {
+	    sess->state = SSS_CLOSING;
             break;
+        }
     }
     if (sh->goodbye)
         fprintf(sess->cio, "%s\n", sh->goodbye);
@@ -455,10 +461,10 @@ respawn:
 terminate:
 #ifdef HAVE_LWIP
     if (sess->type == SST_REMOTE)
-        shrsess_close(sess);
+	    shrsess_close(sess);
     else
 #endif
-        shlsess_close(sess);
+	    shlsess_close(sess);
 }
 
 
@@ -510,17 +516,15 @@ static err_t shlsess_accept(void)
     }
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-#ifdef SHELL_DEBUG
-    printf("shell: Local session opened (%s)\n", sess->name);
-#endif
+    dprintf("shell: Local session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
-    free(sess->prompt);
+    xfree(sess->prompt);
 err_close_cons:
     close(sess->cons_fd);
 err_free_sess:
-    free(sess);
+    xfree(sess);
 err_out:
     return err;
 }
@@ -533,15 +537,12 @@ static void shlsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    free(sess->prompt);
+    xfree(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
 
-#ifdef SHELL_DEBUG
-    printf("shell: Local session closed (%s)\n", sess->name);
-    fflush(stdout);
-#endif
+    dprintf("shell: Local session closed (%s)\n", sess->name);
     xfree(sess);
 }
 
@@ -553,14 +554,14 @@ static void shlsess_close(struct shell_sess *sess)
 #define RXBUF_NB_AVAIL(s) ((SH_RXBUFLEN  + (s)->cio_rxbuf_widx - (s)->cio_rxbuf_ridx) & SH_RXBUFMASK)
 #define RXBUF_NB_FREE(s)  ((SH_RXBUFMASK + (s)->cio_rxbuf_ridx - (s)->cio_rxbuf_widx) & SH_RXBUFMASK)
 
-static ssize_t shrsess_cio_read(void *argp, char *buf, size_t maxlen)
+static ssize_t shrsess_cio_read(void *argp, char *buf, int maxlen)
 {
     struct shell_sess *sess = argp;
-    size_t i;
-    size_t avail;
+    int i;
+    int avail;
 
 retry:
-    if (sess->state == SSS_CLOSING)
+    if (sess->state == SSS_CLOSING || sess->state == SSS_KILLING)
         return EOF;
 
     avail = min(RXBUF_NB_AVAIL(sess), maxlen);
@@ -575,42 +576,43 @@ retry:
     }
     /*
 #ifdef SHELL_DEBUG
-    printf("shell: Received %u bytes from client: '", avail);
+    dprintf("shell: Received %u bytes from client: '", avail);
     for (i = 0; i < avail; i++)
-	    printf("%02x:", (unsigned char) buf[i]);
-    printf("'\n");
-    fflush(stdout);
+	    dprintf("%02x:", (unsigned char) buf[i]);
+    dprintf("'\n");
 #endif
     */
     return (ssize_t) avail;
 }
 
-static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
+static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
 {
     struct shell_sess *sess = argp;
     err_t err = ERR_OK;
-    size_t i = 0;
+    int i = 0;
     uint16_t avail, sendlen;
     /*
 #ifdef SHELL_DEBUG
-    printf("shell: Sending %u bytes to client: '", len);
+    dprintf("shell: Sending %u bytes to client: '", len);
     for (i = 0; i < len; i++)
-	printf("%c", buf[i]);
-    printf("'\n");
+	dprintf("%c", buf[i]);
+    dprintf("'\n");
     fflush(stdout);
     i = 0;
 #endif
     */
     while (i < len) {
 	    while((avail = tcp_sndbuf(sess->tpcb)) < 1) {
-		    if (sess->state == SSS_CLOSING)
+		    if (sess->state == SSS_CLOSING ||
+		        sess->state == SSS_KILLING)
 			    return (ssize_t) len;
 
 		    /* flush tcp buffer and retry it later */
 		    tcp_output(sess->tpcb);
 		    schedule();
 
-		    if (sess->state == SSS_CLOSING)
+		    if (sess->state == SSS_CLOSING ||
+		        sess->state == SSS_KILLING)
 			    return (ssize_t) len;
 	    }
 
@@ -620,7 +622,8 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
 		    /* retry later because of high memory pressure */
 		    schedule();
 
-		    if (sess->state == SSS_CLOSING)
+		    if (sess->state == SSS_CLOSING ||
+		        sess->state == SSS_KILLING)
 			    return (ssize_t) len;
 		    continue;
 	    }
@@ -662,15 +665,16 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     sess->ts_start = NOW();
     sess->id = shell_get_free_sess_id();
 
-    sess->cio_funcs.read = shrsess_cio_read;
-    sess->cio_funcs.write = shrsess_cio_write;
-    sess->cio_funcs.seek = NULL;
-    sess->cio_funcs.close = NULL;
     sess->cio_rxbuf_ridx = 0;
     sess->cio_rxbuf_widx = 0;
-    init_waitqueue_head(&sess->cio_rxbuf_wq_rd);
-    init_waitqueue_head(&sess->cio_rxbuf_wq_wr);
-    sess->cio = fopencookie(sess, "r+", sess->cio_funcs);
+    sess->cio = funopen(sess,
+                        shrsess_cio_read,
+                        shrsess_cio_write,
+                        NULL, NULL);
+    if (!sess->cio) {
+	err = ERR_MEM;
+	goto err_free_prompt;
+    }
 
     snprintf(sess->name, SESSNAME_MAXLEN, SESSNAME_RFMT, sess->id);
     sess->thread = create_thread(sess->name, sh_session, sess);
@@ -685,30 +689,37 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     tcp_err(sess->tpcb, shrsess_error); /* err callback */
     tcp_poll(sess->tpcb, shrsess_poll, 0); /* poll callback */
     tcp_setprio(sess->tpcb, SH_TCP_PRIO);
+
+    /* TCP keepalive */
+    sess->tpcb->so_options |= SOF_KEEPALIVE;
+    sess->tpcb->keep_intvl = (SH_TCPKEEPALIVE_TIMEOUT * 1000);
+    sess->tpcb->keep_idle = (SH_TCPKEEPALIVE_IDLE * 1000);
+    sess->tpcb->keep_cnt = 1;
+
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-#ifdef SHELL_DEBUG
-    printf("shell: Remote session opened (%s)\n", sess->name);
-#endif
+    dprintf("shell: Remote session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
-    free(sess->prompt);
+    xfree(sess->prompt);
 err_free_sess:
-    free(sess);
+    xfree(sess);
 err_out:
     return err;
 }
 
 static void shrsess_close(struct shell_sess *sess)
 {
+    err_t err;
+
     BUG_ON(sess->type != SST_REMOTE);
 
     /* unregister session */
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    free(sess->prompt);
+    xfree(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
@@ -721,12 +732,15 @@ static void shrsess_close(struct shell_sess *sess)
     tcp_err(sess->tpcb, NULL);
     tcp_poll(sess->tpcb, NULL, 0);
 
+    /* terminate connection */
+    if (sess->state != SSS_KILLING) {
+	    err = tcp_close(sess->tpcb);
+	    if (unlikely(err != ERR_OK))
+		    tcp_abort(sess->tpcb);
+    } /* on SSS_KILLING tpcb is not touched */
+
     /* release memory */
-    tcp_close(sess->tpcb);
-#ifdef SHELL_DEBUG
-    printf("shell: Remote session closed (%s)\n", sess->name);
-    fflush(stdout);
-#endif
+    dprintf("shell: Remote session closed (%s)\n", sess->name);
     xfree(sess);
 }
 
@@ -768,7 +782,7 @@ static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_
 static void shrsess_error(void *argp, err_t err)
 {
     struct shell_sess *sess = (struct shell_sess *) argp;
-    sess->state = SSS_CLOSING; /* close connection on errors */
+    sess->state = SSS_KILLING; /* kill connection on errors */
 }
 
 static err_t shrsess_poll(void *argp, struct tcp_pcb *tpcb)
@@ -807,11 +821,12 @@ static int shcmd_help(FILE *cio, int argc, char *argv[])
 static int shcmd_who(FILE *cio, int argc, char *argv[])
 {
     /* list opened sessions */
+    /* TODO: Copy session name before printing (session might close while printing) */
     int32_t i;
 
     for (i = 0; i < MAX_NB_SESS; i++){
         if (sh->sess[i])
-            fprintf(cio, " %s\n", sh->sess[i]->name);
+	        fprintf(cio, " %s\n", sh->sess[i]->name);
     }
     return 0;
 }

@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 
+#define MAX_REQUESTS 256
 #define MAX_DISKSIZE (1ll << 40) /* 1 TB */
 
 typedef uint64_t sector_t;

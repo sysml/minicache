@@ -34,8 +34,10 @@ CONFIG_NMWRAP_SYNCRX		= n
 ######################################
 _GITSHA1			= $(shell git rev-parse --short HEAD || echo "?")
 CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\"" \
-				   -DSHELL_WELCOME="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\n\nType 'help' to get an overview of available commands\"" \
-				   -DSHELL_PROMPT="\"mc\#\""
+				   -DSHELL_WELCOME="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\n\nType 'help' to get an overview of available commands\""
+//CFLAGS			+= -DSHELL_PROMPT="\"mc\#\""
+# colored prompt #
+CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 
 ######################################
 ## SHFS options
@@ -48,14 +50,19 @@ CFLAGS				+= -DSHFS_OPENBYNAME
 CFLAGS				+= -DHTTPD_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
 
 ######################################
+## General MiniCache options
+######################################
+CFLAGS				+= -DCONFIG_AUTOMOUNT
 
 ######################################
 ## Debugging options
 ######################################
 CONFIG_DEBUG			= y
 CONFIG_DEBUG_LWIP		= n
-//CFLAGS			+= -DSHFS_DEBUG \
-//				   -DSHELL_DEBUG
+CFLAGS				+= -DCONFIG_MINDER_PRINT
+//CFLAGS			+= -DHTTP_DEBUG
+//CFLAGS			+= -DSHFS_DEBUG
+//CFLAGS			+= -DSHELL_DEBUG
 
 ######################################
 ## MiniOS path
@@ -68,8 +75,8 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o shell.o httpd.o blkdev.o \
-		  shfs.o shfs_check.o shfs_htable.o shfs_fio.o shfs_fio_httpd.o shfs_tools.o
+STUB_APP_OBJS0  = main.o debug.o shell.o http_parser.o http.o blkdev.o \
+		  shfs.o shfs_check.o shfs_htable.o shfs_fio.o shfs_tools.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk
