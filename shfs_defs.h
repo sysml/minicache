@@ -311,6 +311,9 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 		h[i >> 1] = (nu << 4) | nl;
 	}
 
+	if (in[i] != '\0')
+		return -1;
+
 	return 0;
 }
 

@@ -36,7 +36,6 @@ struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	unsigned int i;
-	size_t strcmp_len;
 	size_t name_len;
 
 	name_len = strlen(name);
@@ -46,8 +45,10 @@ struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
 			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 			 + bentry->hentry_htoffset);
 
-		strcmp_len = min(name_len, sizeof(hentry->name));
-		if (strncmp(name, hentry->name, strcmp_len) == 0) {
+		if (name_len > sizeof(hentry->name))
+			continue;
+
+		if (strncmp(name, hentry->name, sizeof(hentry->name)) == 0) {
 			/* we found it - hooray! */
 			return bentry;
 		}
