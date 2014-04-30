@@ -746,16 +746,14 @@ static int actn_addfile(struct job *j)
 	hash_copy(hentry->hash, fhash, shfs_vol.hlen);
 	hentry->chunk = cchk;
 	hentry->offset = 0;
-	hentry->access_count = 0;
 	hentry->len = (uint64_t) fsize;
-	if (j->optstr0) { /* mime */
-		memset(hentry->mime, 0, sizeof(hentry->mime));
+	hentry->ts_creation = getmstimestamp();
+	memset(hentry->mime, 0, sizeof(hentry->mime));
+	memset(hentry->name, 0, sizeof(hentry->name));
+	if (j->optstr0) /* mime */
 		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
-	}
-	if (j->optstr1) { /* filename */
-		memset(hentry->name, 0, sizeof(hentry->name));
+	if (j->optstr1) /* filename */
 		strncpy(hentry->name, j->optstr1, sizeof(hentry->name));
-	}
 	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
 	/* copy file */
@@ -865,24 +863,28 @@ static int actn_ls(struct job *job)
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_mime[sizeof(hentry->mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
+	char str_date[20];
 	unsigned int i;
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
+	str_date[0] = '\0';
 
 	if (shfs_vol.hlen <= 32)
-		printf("%-64s %12s %12s %-16s %s\n",
+		printf("%-64s %12s %12s %-24s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
 		       "Size (chk)",
 		       "MIME",
+		       "Added",
 		       "Name");
 	else
-		printf("%-128s %12s %12s %-16s %s\n",
+		printf("%-128s %12s %12s %-24s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
 		       "Size (chk)",
 		       "MIME",
+		       "Added",
 		       "Name");
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
 		bentry = shfs_btable_pick(shfs_vol.bt, i);
@@ -893,19 +895,23 @@ static int actn_ls(struct job *job)
 			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
 			strncpy(str_name, hentry->name, sizeof(hentry->name));
 			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
+			strfmstimestamp(str_date, sizeof(str_date),
+			                "%b %e, %g %H:%M", hentry->ts_creation);
 			if (shfs_vol.hlen <= 32)
-				printf("%-64s %12lu %12lu %-16s %s\n",
+				printf("%-64s %12lu %12lu %-24s %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
 				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
+				       str_date,
 				       str_name);
 			else
-				printf("%-128s %12lu %12lu %-16s %s\n",
+				printf("%-128s %12lu %12lu %-24s %-16s %s\n",
 				       str_hash,
 				       hentry->chunk,
 				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
 				       str_mime,
+				       str_date,
 				       str_name);
 		}
 	}

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 
 #include "shfs_defs.h"
 
@@ -77,6 +78,15 @@ static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
 
 	for (i = 0; i < hlen; i++)
 		snprintf(out + (2*i), 3, "%02x", h[i]);
+}
+
+static inline size_t strfmstimestamp(char *s, size_t slen, const char *fmt, uint64_t msts)
+{
+	struct tm *tm;
+	time_t tsec;
+	tsec = msts / 1000;
+	tm = localtime(&tsec);
+	return strftime(s, slen, fmt, tm);
 }
 
 #endif /* _TOOLS_COMMON_ */

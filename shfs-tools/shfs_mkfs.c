@@ -239,7 +239,7 @@ static void mkfs(struct disk *d, struct args *args)
 #warning "Could not detect byte-order"
 #endif
 	hdr_common->vol_encoding = SENC_UNSPECIFIED;
-	hdr_common->vol_creation_ts = 0; /* TO BE DONE */
+	hdr_common->vol_ts_creation = getmstimestamp();
 
 	/* setup striping as single disk, only */
 	uuid_generate(hdr_common->member_uuid);

@@ -11,11 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
+#ifndef __MINIOS__
+#include <uuid/uuid.h>
+#include <mhash.h>
+#endif /* __MINIOS__ */
 
 typedef uint64_t chk_t;
-#ifndef _UUID_UUID_H
+#ifdef __MINIOS__
 typedef uint8_t uuid_t[16];
-#endif /* _UUID_UUID_H */
+#endif /* __MINIOS__ */
 typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 
 #define SHFS_MAX_NB_MEMBERS 32
@@ -73,7 +78,7 @@ typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
 #define SHFSv1_VERSION0 0x1
-#define SHFSv1_VERSION1 0x0
+#define SHFSv1_VERSION1 0x1
 
 struct shfs_hdr_common {
 	uint8_t            magic[4];
@@ -83,7 +88,7 @@ struct shfs_hdr_common {
 	uint8_t            vol_byteorder;
 	uint8_t            vol_encoding;
 	chk_t              vol_size;
-	uint64_t           vol_creation_ts;
+	uint64_t           vol_ts_creation;
 	uint32_t           member_stripesize; /* at least 4 KiB (because of first chunk), blkfront can handle at most 32 KiB */
 	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
@@ -117,8 +122,6 @@ struct shfs_hentry {
 	uint64_t           len; /* length (bytes) */
 	char               mime[64]; /* internet media type */
 	uint64_t           ts_creation;
-	uint64_t           ts_laccess;
-	uint64_t           access_count;
 	char               name[64];
 } __attribute__((packed));
 
@@ -140,7 +143,7 @@ struct shfs_hentry {
 	(((hentry_no) % (hentries_per_chunk)) * SHFS_HENTRY_SIZE)
 
 
-#ifndef _UUID_UUID_H
+#ifdef __MINIOS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)
 {
 	return memcmp(uu1, uu2, sizeof(uuid_t));
@@ -164,7 +167,7 @@ static inline void uuid_copy(uuid_t dst, const uuid_t src)
 {
 	memcpy(dst, src, sizeof(uuid_t));
 }
-#endif /* _UUID_UUID_H */
+#endif /* __MINIOS__ */
 
 static inline void hash_copy(hash512_t dst, const hash512_t src, uint8_t hlen)
 {
@@ -310,5 +313,17 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 
 	return 0;
 }
+
+#ifdef __MINIOS__
+#define getmstimestamp() (NOW() / 1000)
+#else
+static inline uint64_t getmstimestamp(void)
+{
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	return (((uint64_t) now.tv_sec * 1000) +
+	        ((uint64_t) now.tv_usec / 1000));
+}
+#endif /* __MINIOS__ */
 
 #endif /* _SHFS_DEFS_H_ */
