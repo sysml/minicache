@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <signal.h>
 
 #include <uuid/uuid.h>
@@ -754,6 +755,8 @@ static int actn_addfile(struct job *j)
 		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
 	if (j->optstr1) /* filename */
 		strncpy(hentry->name, j->optstr1, sizeof(hentry->name));
+	else
+		strncpy(hentry->name, basename(j->path), sizeof(hentry->name));
 	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
 	/* copy file */
