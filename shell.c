@@ -914,8 +914,8 @@ static int shcmd_time(FILE *cio, int argc, char *argv[])
     /* run a shell command while measuring its execution time */
     int ret = 0;
     int32_t cmdi;
-    uint64_t ts_start = 0;
-    uint64_t ts_end = 0;
+    struct timeval tm_start;
+    struct timeval tm_end;
     uint64_t mins = 0;
     uint64_t secs = 0;
     uint64_t usecs = 0;
@@ -930,12 +930,16 @@ static int shcmd_time(FILE *cio, int argc, char *argv[])
         goto out;
     }
 
-    ts_start = NOW();
+    gettimeofday(&tm_start, NULL);
     ret = sh->cmd_func[cmdi](cio, argc - 1, &argv[1]);
-    ts_end = NOW();
+    gettimeofday(&tm_end, NULL);
 
-    usecs = (ts_end - ts_start) / 1000l;
-    secs = usecs / 1000000l;
+    if (tm_end.tv_usec < tm_start.tv_usec) {
+	    tm_end.tv_usec += 1000000l;
+	    --tm_end.tv_sec;
+    }
+    usecs = (tm_end.tv_usec - tm_start.tv_usec);
+    secs = usecs / 1000000l + (tm_end.tv_sec - tm_start.tv_sec);
     usecs %= 1000000l;
     mins = secs / 60;
     secs %= 60;
