@@ -135,7 +135,9 @@ static struct shell *sh = NULL; /* will be initialized first */
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
+static int shcmd_clear(FILE *cio, int argc, char *argv[]);
 static int shcmd_time(FILE *cio, int argc, char *argv[]);
+static int shcmd_repeat(FILE *cio, int argc, char *argv[]);
 static int shcmd_uptime(FILE *cio, int argc, char *argv[]);
 static int shcmd_date(FILE *cio, int argc, char *argv[]);
 static int shcmd_who(FILE *cio, int argc, char *argv[]);
@@ -204,9 +206,11 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("help",   shcmd_help);
     shell_register_cmd("info",   shcmd_info);
     shell_register_cmd("exit",   shcmd_exit);
+    shell_register_cmd("clear",  shcmd_clear);
     shell_register_cmd("echo",   shcmd_echo);
     shell_register_cmd("who",    shcmd_who);
     shell_register_cmd("time",   shcmd_time);
+    shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
     shell_register_cmd("date",   shcmd_date);
 #ifdef SHELL_DEBUG
@@ -883,6 +887,14 @@ static int shcmd_exit(FILE *cio, int argc, char *argv[])
     return SH_CLOSE;
 }
 
+static int shcmd_clear(FILE *cio, int argc, char *argv[])
+{
+    /* echo args */
+    fprintf(cio, "\e[H\e[J");
+    fflush(cio);
+    return 0;
+}
+
 static int shcmd_echo(FILE *cio, int argc, char *argv[])
 {
     /* echo args */
@@ -931,6 +943,43 @@ static int shcmd_time(FILE *cio, int argc, char *argv[])
  out:
     fprintf(cio, "%s: command runtime %lum%lu.%06lus\n", argv[1], mins, secs, usecs);
     return ret;
+}
+
+
+static int shcmd_repeat(FILE *cio, int argc, char *argv[])
+{
+    /* run a shell command multiple times */
+    int ret = 0;
+    int32_t cmdi;
+    unsigned int arg_times, arg_delay;
+    int do_delay = 0;
+
+    if (argc <= 3)
+	goto usage;
+    if (sscanf(argv[1], "%u", &arg_times) != 1)
+        goto usage;
+    if (sscanf(argv[2], "%u", &arg_delay) != 1)
+	goto usage;
+    cmdi = shell_get_cmd_index(argv[3]);
+    if (cmdi < 0) {
+        fprintf(cio, "%s: command not found\n", argv[3]);
+        return 0;
+    }
+
+    while (arg_times != 0 && ret >= 0 && ret != SH_CLOSE) {
+	if (do_delay)
+	    msleep(arg_delay);
+	shcmd_clear(cio, 0, NULL);
+	ret = sh->cmd_func[cmdi](cio, argc - 3, &argv[3]);
+	fflush(cio);
+	do_delay = 1;
+	--arg_times;
+    }
+    return ret;
+
+ usage:
+    fprintf(cio, "Usage: %s [times] [delay-ms] [command] [[args]]...\n", argv[0]);
+    return -1;
 }
 
 
