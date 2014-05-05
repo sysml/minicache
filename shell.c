@@ -829,12 +829,34 @@ static int shcmd_help(FILE *cio, int argc, char *argv[])
 static int shcmd_who(FILE *cio, int argc, char *argv[])
 {
     /* list opened sessions */
-    /* TODO: Copy session name before printing (session might close while printing) */
+    struct timeval now;
+    uint64_t days = 0;
+    uint64_t hours = 0;
+    uint64_t mins = 0;
+    uint64_t secs;
+    char str_name[32];
     int32_t i;
 
+    gettimeofday(&now, NULL);
     for (i = 0; i < MAX_NB_SESS; i++){
-        if (sh->sess[i])
-	        fprintf(cio, " %s\n", sh->sess[i]->name);
+        if (sh->sess[i]) {
+	    secs = (now.tv_sec - sh->sess[i]->ts_start.tv_sec);
+	    mins = secs / 60;
+	    secs = secs % 60;
+	    hours = mins / 60;
+	    mins = mins % 60;
+	    days = hours / 24;
+	    hours = hours % 24;
+	    strncpy(str_name, sh->sess[i]->name, sizeof(str_name));
+	    str_name[sizeof(str_name) - 1] = '\0';
+
+	    if (days)
+		fprintf(cio, " %s: up %lu days %lu:%02lu:%02lu\n",
+		        str_name, days, hours, mins, secs);
+	    else
+		fprintf(cio, " %s: up %lu:%02lu:%02lu\n",
+		        str_name, hours, mins, secs);
+	    }
     }
     return 0;
 }
