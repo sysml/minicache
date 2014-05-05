@@ -8,20 +8,20 @@
 #include <hexdump.h>
 
 #include "shfs.h"
-#include "shfs_htable.h"
+#include "shfs_btable.h"
 #include "shfs_tools.h"
 #include "shfs_fio.h"
 #include "shell.h"
 
 static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 {
+	struct htable_el *el;
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_mime[sizeof(hentry->mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
 	char str_date[20];
-	unsigned int i;
 
 	down(&shfs_mount_lock);
 	if (!shfs_mounted) {
@@ -32,26 +32,24 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
 
-	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
 		hentry = (struct shfs_hentry *)
 			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 			 + bentry->hentry_htoffset);
-		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
-			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
-			strncpy(str_name, hentry->name, sizeof(hentry->name));
-			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
-			strftimestamp_s(str_date, sizeof(str_date),
-			                "%b %e, %g %H:%M", hentry->ts_creation);
-			fprintf(cio, "%c%s %12lu %12lu %-24s %-16s %s\n",
-			        SFHS_HASH_INDICATOR_PREFIX,
-			        str_hash,
-			        hentry->chunk,
-			        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-			        str_mime,
-			        str_date,
-			        str_name);
-		}
+		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
+		strncpy(str_name, hentry->name, sizeof(hentry->name));
+		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
+		strftimestamp_s(str_date, sizeof(str_date),
+		                "%b %e, %g %H:%M", hentry->ts_creation);
+		fprintf(cio, "%c%s %12lu %12lu %-24s %-16s %s\n",
+		        SFHS_HASH_INDICATOR_PREFIX,
+		        str_hash,
+		        hentry->chunk,
+		        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+		        str_mime,
+		        str_date,
+		        str_name);
 	}
 
  out:
@@ -62,10 +60,10 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 #if defined SHFS_HITSTATS || defined SHFS_MISSSTATS
 static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
 {
+	struct htable_el *el;
 	struct shfs_bentry *bentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_date[20];
-	unsigned int i;
 
 	down(&shfs_mount_lock);
 	if (!shfs_mounted) {
@@ -76,25 +74,23 @@ static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 
 #ifdef SHFS_HITSTATS
-	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
-		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
-			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
-			if (bentry->ts_laccess) {
-				strftimestamp_s(str_date, sizeof(str_date),
-				                "%b %e, %g %H:%M", bentry->ts_laccess);
-			} else {
-				str_date[0] = '-';
-				str_date[1] = '\0';
-			}
-
-			fprintf(cio, "%c%s %12lu %12lu %-16s\n",
-			        SFHS_HASH_INDICATOR_PREFIX,
-			        str_hash,
-			        bentry->nb_access, /* hits */
-			        0, /* misses */
-			        str_date);
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
+		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
+		if (bentry->ts_laccess) {
+			strftimestamp_s(str_date, sizeof(str_date),
+			                "%b %e, %g %H:%M", bentry->ts_laccess);
+		} else {
+			str_date[0] = '-';
+			str_date[1] = '\0';
 		}
+
+		fprintf(cio, "%c%s %12lu %12lu %-16s\n",
+		        SFHS_HASH_INDICATOR_PREFIX,
+		        str_hash,
+		        bentry->nb_access, /* hits */
+		        0, /* misses */
+		        str_date);
 	}
 #endif /* SHFS_HITSTATS */
 

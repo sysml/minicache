@@ -3,7 +3,7 @@
  */
 #include "shfs_fio.h"
 #include "shfs.h"
-#include "shfs_htable.h"
+#include "shfs_btable.h"
 
 static inline __attribute__((always_inline))
 struct shfs_bentry *_shfs_lookup_bentry_by_hash(const char *hash)
@@ -26,21 +26,18 @@ struct shfs_bentry *_shfs_lookup_bentry_by_hash(const char *hash)
 /*
  * Unfortunately, opening by name ends up in an
  * expensive search algorithm: O(n^2)
- *
- * The next bad thing is, that we need to touch all
- * hentries...
  */
 static inline __attribute__((always_inline))
 struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
 {
+	struct htable_el *el;
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
-	unsigned int i;
 	size_t name_len;
 
 	name_len = strlen(name);
-	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
 		hentry = (struct shfs_hentry *)
 			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 			 + bentry->hentry_htoffset);

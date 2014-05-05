@@ -12,7 +12,7 @@
 #include <mhash.h>
 
 #include "shfs_admin.h"
-#include "shfs_htable.h"
+#include "shfs_btable.h"
 #include "shfs_alloc.h"
 
 unsigned int verbosity = 0;
@@ -510,11 +510,12 @@ static void load_vol_htable(void)
 			shfs_vol.htable_chunk_cache_state[cur_htchk] = 0x0;
 		}
 
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
+		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf
+                         + SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk));
+
+		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
-		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf + bentry->hentry_htoffset);
-		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
 	}
 }
 
@@ -523,9 +524,9 @@ static void load_vol_htable(void)
  */
 static void load_vol_alist(void)
 {
+	struct htable_el *el;
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
-	unsigned int i;
 	int ret;
 
 	dprintf(D_L0, "Initializing volume allocator...\n");
@@ -548,18 +549,15 @@ static void load_vol_alist(void)
 	}
 
 	dprintf(D_L0, "Registering containers to allocator...\n");
-	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
-
-		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
-			hentry = (struct shfs_hentry *)
-				((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
-				 + bentry->hentry_htoffset);
-			shfs_alist_register(shfs_vol.al,
-			                    hentry->chunk,
-			                    DIV_ROUND_UP(hentry->offset + hentry->len,
-			                                 shfs_vol.chunksize));
-		}
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
+		hentry = (struct shfs_hentry *)
+			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+			 + bentry->hentry_htoffset);
+		shfs_alist_register(shfs_vol.al,
+		                    hentry->chunk,
+		                    DIV_ROUND_UP(hentry->offset + hentry->len,
+		                                 shfs_vol.chunksize));
 	}
 }
 
@@ -734,7 +732,7 @@ static int actn_addfile(struct job *j)
 		ret = -1;
 		goto err_free_tmp_chk;
 	}
-	bentry = shfs_btable_getfreeb(shfs_vol.bt, fhash);
+	bentry = shfs_btable_addentry(shfs_vol.bt, fhash);
 	if (!bentry) {
 		eprintf("Target bucket of hash table is full\n");
 		ret = -1;
@@ -743,7 +741,6 @@ static int actn_addfile(struct job *j)
 	hentry = (struct shfs_hentry *)
 		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 		 + bentry->hentry_htoffset);
-	hash_copy(bentry->hash, fhash, shfs_vol.hlen);
 	hash_copy(hentry->hash, fhash, shfs_vol.hlen);
 	hentry->chunk = cchk;
 	hentry->offset = 0;
@@ -851,8 +848,8 @@ static int actn_rmfile(struct job *job)
 
 	/* clear htable entry */
 	dprintf(D_L0, "Clearing hash table entry...\n");
+	shfs_btable_rmentry(shfs_vol.bt, h);
 	hash_clear(hentry->hash, shfs_vol.hlen);
-	hash_clear(bentry->hash, shfs_vol.hlen);
 	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
  out:
@@ -861,13 +858,13 @@ static int actn_rmfile(struct job *job)
 
 static int actn_ls(struct job *job)
 {
+	struct htable_el *el;
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_mime[sizeof(hentry->mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
 	char str_date[20];
-	unsigned int i;
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
@@ -889,36 +886,33 @@ static int actn_ls(struct job *job)
 		       "MIME",
 		       "Added",
 		       "Name");
-	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
 		hentry = (struct shfs_hentry *)
 			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 			 + bentry->hentry_htoffset);
-		if (!hash_is_zero(bentry->hash, shfs_vol.hlen)) {
-			hash_unparse(bentry->hash, shfs_vol.hlen, str_hash);
-			strncpy(str_name, hentry->name, sizeof(hentry->name));
-			strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
-			strftimestamp_s(str_date, sizeof(str_date),
-			                "%b %e, %g %H:%M", hentry->ts_creation);
-			if (shfs_vol.hlen <= 32)
-				printf("%-64s %12lu %12lu %-24s %-16s %s\n",
-				       str_hash,
-				       hentry->chunk,
-				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-				       str_mime,
-				       str_date,
-				       str_name);
-			else
-				printf("%-128s %12lu %12lu %-24s %-16s %s\n",
-				       str_hash,
-				       hentry->chunk,
-				       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-				       str_mime,
-				       str_date,
-				       str_name);
-		}
+		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
+		strncpy(str_name, hentry->name, sizeof(hentry->name));
+		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
+		strftimestamp_s(str_date, sizeof(str_date),
+		                "%b %e, %g %H:%M", hentry->ts_creation);
+		if (shfs_vol.hlen <= 32)
+			printf("%-64s %12lu %12lu %-24s %-16s %s\n",
+			       str_hash,
+			       hentry->chunk,
+			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       str_mime,
+			       str_date,
+			       str_name);
+		else
+			printf("%-128s %12lu %12lu %-24s %-16s %s\n",
+			       str_hash,
+			       hentry->chunk,
+			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       str_mime,
+			       str_date,
+			       str_name);
 	}
-
 	return 0;
 }
 

@@ -14,7 +14,7 @@
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
-#include "shfs_htable.h"
+#include "shfs_btable.h"
 #include "shfs_tools.h"
 
 #ifdef SHFS_DEBUG
@@ -329,17 +329,21 @@ static int load_vol_htable(void)
 			shfs_vol.htable_chunk_cache_state[cur_htchk] = CCS_LOADED;
 
 			ret = shfs_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
-			if (ret < 0) {
+			if (ret < 0)
 				goto err_free_chunkcache;
-			}
 			cur_chk = cur_htchk;
 		}
 
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
+		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf
+                         + SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk));
+
+		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
-		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf + bentry->hentry_htoffset);
-		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
+#ifdef SHFS_HITSTATS
+		bentry->ts_laccess = 0;
+		bentry->nb_access = 0;
+#endif /* SHFS_HITSTATS */
 	}
 
 	return 0;

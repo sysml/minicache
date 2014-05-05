@@ -13,7 +13,7 @@ LDLIBS += -luuid -lmhash
 
 shfs_mkfs: shfs_mkfs.o tools_common.o
 
-shfs_admin: shfs_admin.o tools_common.o shfs_htable.o shfs_alloc.o shfs_check.o
+shfs_admin: shfs_admin.o htable.o tools_common.o shfs_alloc.o shfs_check.o
 
 all: shfs_mkfs shfs_admin
 

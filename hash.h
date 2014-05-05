@@ -122,10 +122,10 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 			nu = in[i] - '0';
 			break;
 		case 'a' ... 'f':
-			nu = in[i] - ('a' + 10);
+			nu = in[i] - 'a' + 10;
 			break;
 		case 'A' ... 'F':
-			nu = in[i] - ('A' + 10);
+			nu = in[i] - 'A' + 10;
 			break;
 		case '\0':
 		default:
@@ -139,10 +139,10 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 			nl = in[i] - '0';
 			break;
 		case 'a' ... 'f':
-			nl = in[i] - ('a' + 10);
+			nl = in[i] - 'a' + 10;
 			break;
 		case 'A' ... 'F':
-			nl = in[i] - ('A' + 10);
+			nl = in[i] - 'A' + 10;
 			break;
 		case '\0':
 		default:
