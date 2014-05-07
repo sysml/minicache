@@ -14,6 +14,9 @@
 #include "blkdev.h"
 
 #include "shfs_defs.h"
+#ifdef SHFS_STATS
+#include "shfs_stats_data.h"
+#endif
 
 #define MAX_NB_TRY_BLKDEVS 64
 #define CHUNKPOOL_NB_BUFFERS 128
@@ -49,6 +52,10 @@ struct vol_info {
 
 	struct mempool *aiotoken_pool; /* async io tokens */
 	struct mempool *chunkpool; /* buffers for chunk I/O */
+
+#ifdef SHFS_STATS
+	struct shfs_mstats mstats;
+#endif
 };
 
 /* htable_chunk_cache_state */

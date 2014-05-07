@@ -16,6 +16,9 @@
 #include "shfs_defs.h"
 #include "shfs_btable.h"
 #include "shfs_tools.h"
+#ifdef SHFS_STATS
+#include "shfs_stats_data.h"
+#endif
 
 #ifdef SHFS_DEBUG
 #define ENABLE_DEBUG
@@ -340,10 +343,15 @@ static int load_vol_htable(void)
 		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
-#ifdef SHFS_HITSTATS
-		bentry->ts_laccess = 0;
-		bentry->nb_access = 0;
-#endif /* SHFS_HITSTATS */
+#ifdef SHFS_STATS
+		bentry->hstats.laccess = 0;
+		bentry->hstats.h = 0;
+		bentry->hstats.m = 0;
+#ifdef SHFS_STATS_HTTP
+		bentry->hstats.p = 0;
+		bentry->hstats.f = 0;
+#endif
+#endif /* SHFS_STATS */
 	}
 
 	return 0;
@@ -413,10 +421,22 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 		goto err_free_htable;
 	}
 
+#ifdef SHFS_STATS
+	ret = shfs_init_mstats(shfs_vol.htable_nb_buckets,
+	                       shfs_vol.htable_nb_entries_per_bucket,
+	                       shfs_vol.hlen);
+	if (!ret < 0) {
+		shfs_mounted = 0;
+		goto  err_free_chunkpool;
+	}
+#endif
+
 	shfs_nb_open = 0;
 	up(&shfs_mount_lock);
 	return 0;
 
+ err_free_chunkpool:
+	free_mempool(shfs_vol.chunkpool);
  err_free_htable:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
 		if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
@@ -463,6 +483,9 @@ int umount_shfs(void) {
 		free_mempool(shfs_vol.aiotoken_pool);
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			close_blkdev(shfs_vol.member[i].bd);
+#ifdef SHFS_STATS
+		shfs_free_mstats();
+#endif
 	}
 	shfs_mounted = 0;
 	up(&shfs_mount_lock);

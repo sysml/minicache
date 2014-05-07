@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <errno.h>
+#include "likely.h"
 #include "hash.h"
 
 /*
@@ -61,12 +62,8 @@ struct htable_el {
  *
  * Because of locality reasons during a bucket search, the hash values of the
  * elements are separated from the element data area
- *
- * If an align is passed to the memory pool allocator, the beginning of
- * the object data area (regardingless to head- and tailroom) will be aligned.
  */
 struct htable_bkt {
-	uint32_t nb_el; /* number of added elements */
 	size_t el_size; /* size of an element */
 	size_t el_private_len;
 	void *el; /* element list reference */
@@ -159,8 +156,8 @@ void free_htable(struct htable *ht);
  */
 static inline struct htable_el *htable_pick(struct htable *ht, uint64_t el_idx)
 {
-	uint32_t bkt_idx;
-	uint32_t el_idx_bkt;
+	register uint32_t bkt_idx;
+	register uint32_t el_idx_bkt;
 	struct htable_bkt *b;
 
 	/* TODO: Check for overflows */
@@ -187,12 +184,14 @@ static inline struct htable_el *htable_pick(struct htable *ht, uint64_t el_idx)
  */
 static inline struct htable_el *htable_lookup(struct htable *ht, hash512_t h)
 {
-	uint32_t i;
-	uint32_t bkt_idx;
+	register uint32_t i;
+	register uint32_t bkt_idx;
 	struct htable_bkt *b;
 
-	if (hash_is_zero(h, ht->hlen))
-		goto enoent;
+	if (unlikely(hash_is_zero(h, ht->hlen))) {
+		errno = EINVAL;
+		goto err_out;
+	}
 
 	bkt_idx = _htable_bkt_no(h, ht->hlen, ht->nb_bkts);
 	b = ht->b[bkt_idx];
@@ -202,8 +201,8 @@ static inline struct htable_el *htable_lookup(struct htable *ht, hash512_t h)
 	}
 
 	/* no entry found */
- enoent:
 	errno = ENOENT;
+ err_out:
 	return NULL;
 }
 
@@ -211,14 +210,19 @@ static inline struct htable_el *htable_lookup(struct htable *ht, hash512_t h)
  * Tries to add an element for a given hash value
  *  and returns it on success (NULL on failure (e.g., bucket is full))
  *
- * Note: User data area is not be initialized
+ * Note: User data area might not be initialized
  */
 static inline struct htable_el *htable_add(struct htable *ht, hash512_t h)
 {
-	uint32_t i;
-	uint32_t bkt_idx;
+	register uint32_t i;
+	register uint32_t bkt_idx;
 	struct htable_bkt *b;
 	struct htable_el *el;
+
+	if (unlikely(hash_is_zero(h, ht->hlen))) {
+		errno = EINVAL;
+		goto err_out;
+	}
 
 	bkt_idx = _htable_bkt_no(h, ht->hlen, ht->nb_bkts);
 	b = ht->b[bkt_idx];
@@ -248,7 +252,73 @@ static inline struct htable_el *htable_add(struct htable *ht, hash512_t h)
 
 	/* bucket is full, cannot store hash */
 	errno = ENOBUFS;
+ err_out:
 	return NULL;
+}
+
+/*
+ * Tries to lookup an element for a given hash value and adds a new
+ * one if it does not exist.
+ *  If it exists, the element is returned. Also, is_new is set to 0.
+ *  If it does not exist, it creates a new entry and returns this one
+ *  instead (is_new is set to 1).
+ *  On failure, NULL is returned (e.g., bucket is full)
+ *
+ * Note: User data area might not be initialized
+ */
+static inline struct htable_el *htable_lookup_add(struct htable *ht, hash512_t h, int *is_new)
+{
+	register int empty_slot_found = 0;
+	register uint32_t i, e = 0;
+	register uint32_t bkt_idx;
+	struct htable_bkt *b;
+	struct htable_el *el;
+
+	if (unlikely(hash_is_zero(h, ht->hlen))) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	bkt_idx = _htable_bkt_no(h, ht->hlen, ht->nb_bkts);
+	b = ht->b[bkt_idx];
+	for (i = 0; i < ht->el_per_bkt; ++i) {
+		if (hash_compare(b->h[i], h, ht->hlen) == 0) {
+			if (is_new)
+				*is_new = 0;
+			return _htable_bkt_el(b, i);
+		}
+		if (!empty_slot_found) {
+			if (hash_is_zero(b->h[i], ht->hlen)) {
+				e = i;
+				empty_slot_found = 1;
+			}
+		}
+	}
+
+	if (unlikely(!empty_slot_found)) {
+		/* bucket is full */
+		errno = ENOBUFS;
+		return NULL;
+	}
+
+	/* insert new element */
+	hash_copy(b->h[e], h, ht->hlen);
+	el = _htable_bkt_el(b, e);
+	if (!ht->head) {
+		ht->head = el;
+		ht->tail = el;
+		el->prev = NULL;
+		el->next = NULL;
+	} else {
+		ht->tail->next = el;
+		el->prev = ht->tail;
+		el->next = NULL;
+		ht->tail = el;
+	}
+
+	if (is_new)
+		*is_new = 1;
+	return el;
 }
 
 /*
@@ -285,5 +355,18 @@ static inline void htable_rm(struct htable *ht, hash512_t h)
 #define htable_lhead(ht) ((ht)->head)
 
 #define foreach_htable_el(ht, el) for((el) = (ht)->head; (el) != NULL; (el) = (el)->next)
+
+/*
+ * Quickly erases all elements of the hash table
+ */
+static inline void htable_clear(struct htable *ht)
+{
+	struct htable_el *el;
+
+	foreach_htable_el(ht, el)
+		hash_clear(*el->h, ht->hlen);
+	ht->head = NULL;
+	ht->tail = NULL;
+}
 
 #endif /* _HTABLE_H_ */

@@ -94,6 +94,9 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 			el = _htable_bkt_el(bkt, j);
 			el->h = &bkt->h[j];
 			el->private = (void *) (((uint8_t *) el) + el_hdr_size);
+
+			//dprintf("entry %3lu:%02lu (%p): h = @%p; private = @%p\n",
+			//        i, j, el, el->h, el->private);
 		}
 	}
 

@@ -11,6 +11,9 @@
 #include "shfs_btable.h"
 #include "shfs_tools.h"
 #include "shfs_fio.h"
+#ifdef SHFS_STATS
+#include "shfs_stats.h"
+#endif
 #include "shell.h"
 
 static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
@@ -57,46 +60,56 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	return 0;
 }
 
-#if defined SHFS_HITSTATS || defined SHFS_MISSSTATS
-static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
+#ifdef SHFS_STATS
+static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, struct shfs_el_stats *stats)
 {
-	struct htable_el *el;
-	struct shfs_bentry *bentry;
+	FILE *cio = (FILE *) argp;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_date[20];
 
+	if (stats->laccess) {
+		hash_unparse(h, shfs_vol.hlen, str_hash);
+		strftimestamp_s(str_date, sizeof(str_date),
+		                "%b %e, %g %H:%M", stats->laccess);
+#ifdef SHFS_STATS_HTTP
+		fprintf(cio, "%c%s %c%c %6lu %6lu %6lu %6lu %-16s\n",
+		        SFHS_HASH_INDICATOR_PREFIX,
+		        str_hash,
+		        available ? 'I' : ' ',
+		        available ? 'N' : ' ',
+		        stats->h, /* hits */
+		        stats->p, /* completed partial file request */
+		        stats->f, /* completed full file request */
+			stats->m, /* missed */
+		        str_date);
+#else
+		fprintf(cio, "%c%s %c%c %8lu %8lu %-16s\n",
+		        SFHS_HASH_INDICATOR_PREFIX,
+		        str_hash,
+		        available ? 'I' : ' ',
+		        available ? 'N' : ' ',
+		        stats->h, /* hits */
+		        stats->m, /* missed */
+		        str_date);
+#endif
+	}
+
+	return 0;
+}
+
+static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
+{
 	down(&shfs_mount_lock);
 	if (!shfs_mounted) {
 		fprintf(cio, "No SHFS filesystem mounted\n");
 		goto out;
 	}
 
-	str_hash[(shfs_vol.hlen * 2)] = '\0';
-
-#ifdef SHFS_HITSTATS
-	foreach_htable_el(shfs_vol.bt, el) {
-		bentry = el->private;
-		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
-		if (bentry->ts_laccess) {
-			strftimestamp_s(str_date, sizeof(str_date),
-			                "%b %e, %g %H:%M", bentry->ts_laccess);
-		} else {
-			str_date[0] = '-';
-			str_date[1] = '\0';
-		}
-
-		fprintf(cio, "%c%s %12lu %12lu %-16s\n",
-		        SFHS_HASH_INDICATOR_PREFIX,
-		        str_hash,
-		        bentry->nb_access, /* hits */
-		        0, /* misses */
-		        str_date);
-	}
-#endif /* SHFS_HITSTATS */
-
-#ifdef SHFS_MISSSTATS
-	fprintf(cio, "Note: Cache miss stats are not implemented yet.\n");
-#endif /* SHFS_MISSSTATS */
+	shfs_dump_stats(_shcmd_shfs_print_el_stats, cio);
+	if (shfs_vol.mstats.i)
+		fprintf(cio, "Invalid element requests: %8lu\n", shfs_vol.mstats.i);
+	if (shfs_vol.mstats.e)
+		fprintf(cio, "Errors on requests:       %8lu\n", shfs_vol.mstats.e);
 
  out:
 	up(&shfs_mount_lock);
@@ -271,8 +284,6 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 		fprintf(cio, "    Block size:     %u\n", blkdev_ssize(shfs_vol.member[m].bd));
 	}
 
-
-
  out:
 	up(&shfs_mount_lock);
 	return 0;
@@ -293,7 +304,7 @@ int register_shfs_tools(void)
 	ret = shell_register_cmd("cat", shcmd_shfs_cat);
 	if (ret < 0)
 		return ret;
-#if defined SHFS_HITSTATS || defined SHFS_MISSSTATS
+#ifdef SHFS_STATS
 	ret = shell_register_cmd("stats", shcmd_shfs_stats);
 	if (ret < 0)
 		return ret;

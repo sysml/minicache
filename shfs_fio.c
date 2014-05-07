@@ -1,22 +1,38 @@
 /*
  *
  */
+#include "likely.h"
 #include "shfs_fio.h"
 #include "shfs.h"
 #include "shfs_btable.h"
+
+#ifdef SHFS_STATS
+#include "shfs_stats.h"
+#endif
 
 static inline __attribute__((always_inline))
 struct shfs_bentry *_shfs_lookup_bentry_by_hash(const char *hash)
 {
 	hash512_t h;
 	struct shfs_bentry *bentry;
+#ifdef SHFS_STATS
+	struct shfs_el_stats *estats;
+#endif
 
-	if (hash_parse(hash, h, shfs_vol.hlen) < 0)
+	if (hash_parse(hash, h, shfs_vol.hlen) < 0) {
+#ifdef SHFS_STATS
+		++shfs_vol.mstats.i;
+#endif
 		return NULL;
+	}
 	bentry = shfs_btable_lookup(shfs_vol.bt, h);
-#ifdef SHFS_MISSSTATS
-	if (!bentry) {
-		printk("MISS: Element %s is not in cache\n", hash);
+#ifdef SHFS_STATS
+	if (unlikely(!bentry)) {
+		estats = shfs_stats_from_mstats(h);
+		if (likely(estats != NULL)) {
+			estats->laccess = gettimestamp_s();
+			++estats->m;
+		}
 	}
 #endif
 	return bentry;
@@ -50,6 +66,10 @@ struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
 			return bentry;
 		}
 	}
+
+#ifdef SHFS_STATS
+	++shfs_vol.mstats.i;
+#endif
 	return NULL;
 }
 #endif
@@ -65,6 +85,9 @@ SHFS_FD shfs_fio_open(const char *path)
 {
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
+#ifdef SHFS_STATS
+	struct shfs_el_stats *estats;
+#endif
 
 	if (!shfs_mounted) {
 		errno = ENODEV;
@@ -83,6 +106,9 @@ SHFS_FD shfs_fio_open(const char *path)
 		bentry = _shfs_lookup_bentry_by_name(path);
 #else
 		bentry = NULL;
+#ifdef SHFS_STATS
+		++shfs_vol.mstats.i;
+#endif
 #endif
 	}
 	if (!bentry) {
@@ -96,11 +122,17 @@ SHFS_FD shfs_fio_open(const char *path)
 		 + bentry->hentry_htoffset);
 	if (hentry) {
 		shfs_nb_open++;
-#ifdef SHFS_HITSTATS
-		bentry->ts_laccess = gettimestamp_s();
-		bentry->nb_access++;
+#ifdef SHFS_STATS
+		estats = shfs_stats_from_bentry(bentry);
+		estats->laccess = gettimestamp_s();
+		++estats->h;
 #endif
         }
+#ifdef SHFS_STATS
+	else {
+		++shfs_vol.mstats.e;
+	}
+#endif
 	return (SHFS_FD) hentry;
 }
 

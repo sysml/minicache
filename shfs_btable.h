@@ -16,9 +16,16 @@
 #ifndef ASSERT
 #define ASSERT assert
 #endif
-#endif
+#else /* __MINIOS__ */
+#include <mini-os/lib.h>
+#endif /* __MINIOS__ */
+
 #include "shfs_defs.h"
 #include "htable.h"
+
+#ifdef SHFS_STATS
+#include "shfs_stats_data.h"
+#endif
 
 #ifndef CACHELINE_SIZE
 #define CACHELINE_SIZE 64
@@ -32,11 +39,9 @@ struct shfs_bentry {
 	chk_t hentry_htchunk;       /* relative chunk:offfset addres to entry in SHFS htable */
 	off_t hentry_htoffset;
 
-	/* runtime data */
-#ifdef SHFS_HITSTATS
-	uint64_t ts_laccess;
-	uint64_t nb_access;
-#endif /* SHFS_HITSTATS */
+#ifdef SHFS_STATS
+	struct shfs_el_stats hstats;
+#endif /* SHFS_STATS */
 };
 
 #define shfs_alloc_btable(nb_bkts, ent_per_bkt, hlen) \

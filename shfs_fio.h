@@ -12,7 +12,7 @@ typedef struct shfs_hentry *SHFS_FD;
  * Opens a file/object via hash or name depending on
  * the first character of path:
  *
- * Hash: ":024a5bec"
+ * Hash: "?024a5bec"
  * Name: "index.html"
  */
 SHFS_FD shfs_fio_open(const char *path);
@@ -37,7 +37,7 @@ void shfs_fio_size(SHFS_FD f, uint64_t *out);
 #define shfs_volchkoff_foff(f, foff) \
 	(((f)->offset + (foff)) % shfs_vol.chunksize)
 
-/* Check macros to test if a */
+/* Check macros to test if a address is within file bounds */
 #define shfs_is_fchk_in_bound(f, fchk) \
 	(DIV_ROUND_UP(((f)->offset + (f)->len), shfs_vol.chunksize) > (fchk))
 #define shfs_is_foff_in_bound(f, foff) \

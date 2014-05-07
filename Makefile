@@ -43,8 +43,9 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ## SHFS options
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
-CFLAGS				+= -DSHFS_HITSTATS
-CFLAGS				+= -DSHFS_MISSSTATS
+CFLAGS				+= -DSHFS_STATS
+# advanced statsistics from HTTP
+CFLAGS				+= -DSHFS_STATS_HTTP
 
 ######################################
 ## HTTPd options
@@ -78,7 +79,7 @@ STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
 STUB_APP_OBJS0  = main.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
-		  shfs.o shfs_check.o shfs_fio.o shfs_tools.o
+		  shfs.o shfs_check.o shfs_fio.o shfs_tools.o shfs_stats.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk

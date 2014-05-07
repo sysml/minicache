@@ -12,6 +12,9 @@
 #include <mempool.h>
 #include "shfs.h"
 #include "shfs_fio.h"
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+#include "shfs_stats.h"
+#endif
 
 #include "http_parser.h"
 #include "http_data.h"
@@ -1140,6 +1143,9 @@ static err_t httpsess_respond(struct http_sess *hsess)
 {
 	size_t len;
 	err_t err = ERR_OK;
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+	struct shfs_el_stats *estats;
+#endif
 
 	switch (hsess->state) {
 	case HSS_RESPONDING_HDR:
@@ -1207,6 +1213,13 @@ static err_t httpsess_respond(struct http_sess *hsess)
 
 		if (unlikely(hsess->sent == hsess->rlen)) {
 			/* we are done */
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+			estats = shfs_stats_from_fd(hsess->fd);
+			if (hsess->fsize == hsess->rlen)
+				++estats->f; /* full file was requested */
+			else
+				++estats->p; /* partial file was requested */
+#endif
 			err = httpsess_eof(hsess);
 			if (err != ERR_OK)
 				return err;
