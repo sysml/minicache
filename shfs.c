@@ -286,6 +286,9 @@ static int load_vol_htable(void)
 	void *chk_buf;
 	chk_t cur_chk, cur_htchk;
 	unsigned int i;
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
+	unsigned int j;
+#endif
 	int ret;
 
 	/* allocate bucket table */
@@ -348,8 +351,11 @@ static int load_vol_htable(void)
 		bentry->hstats.h = 0;
 		bentry->hstats.m = 0;
 #ifdef SHFS_STATS_HTTP
-		bentry->hstats.p = 0;
-		bentry->hstats.f = 0;
+		bentry->hstats.c = 0;
+#ifdef SHFS_STATS_HTTP_DPC
+		for (j=0; j<SHFS_STATS_HTTP_DPCR; ++j)
+			bentry->hstats.p[j] = 0;
+#endif
 #endif
 #endif /* SHFS_STATS */
 	}

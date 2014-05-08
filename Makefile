@@ -44,8 +44,26 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
 CFLAGS				+= -DSHFS_STATS
-# advanced statsistics from HTTP
+
+# Advanced statistics from HTTP
+#  This enables counting the number of successful downloads
+#  (including range requests) and download progress
+#  counters (see: DPCR)
 CFLAGS				+= -DSHFS_STATS_HTTP
+
+CFLAGS				+= -DSHFS_STATS_HTTP_DPC
+# Download progress counters resolution (DPCR)
+#  e.g., DPDR=6 means 6 counter values:
+#  VAL1: HTTP request counts that downloaded >=   0% of file
+#  VAL2: HTTP request counts that downloaded >=  20% of file
+#  VAL3: HTTP request counts that downloaded >=  40% of file
+#  VAL4: HTTP request counts that downloaded >=  60% of file
+#  VAL5: HTTP request counts that downloaded >=  80% of file
+#  VAL6: HTTP request counts that downloaded  = 100% of file
+#
+#  Note: DPCR has to be at least 2 for a 0% and 100% counter
+#        otherwise this feature is disabled
+CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 
 ######################################
 ## HTTPd options

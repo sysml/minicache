@@ -66,24 +66,31 @@ static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, st
 	FILE *cio = (FILE *) argp;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 	char str_date[20];
+#if defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
+	register unsigned int i;
+#endif
 
 	if (stats->laccess) {
 		hash_unparse(h, shfs_vol.hlen, str_hash);
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", stats->laccess);
 #ifdef SHFS_STATS_HTTP
-		fprintf(cio, "%c%s %c%c %6lu %6lu %6lu %6lu %-16s\n",
+		fprintf(cio, "%c%s %c%c %6u [ %6u | ",
 		        SFHS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        available ? 'I' : ' ',
 		        available ? 'N' : ' ',
 		        stats->h, /* hits */
-		        stats->p, /* completed partial file request */
-		        stats->f, /* completed full file request */
+		        stats->c ); /* completed file request */
+#ifdef SHFS_STATS_HTTP_DPC
+		for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i)
+			fprintf(cio, "%6u ", stats->p[i] );
+#endif
+		fprintf(cio, "] %6u %-16s\n",
 			stats->m, /* missed */
 		        str_date);
 #else
-		fprintf(cio, "%c%s %c%c %8lu %8lu %-16s\n",
+		fprintf(cio, "%c%s %c%c %8u %8u %-16s\n",
 		        SFHS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        available ? 'I' : ' ',
