@@ -117,7 +117,9 @@ static struct _args {
     struct ip_addr  dns1;
 
     unsigned int    nb_vbds;
-    unsigned int    vbd_id[16];
+    unsigned int    vbd_id[32];
+    int             vbd_detect;
+
     unsigned int    startup_delay;
 } args;
 
@@ -187,15 +189,12 @@ static int parse_args(int argc, char *argv[])
     IP4_ADDR(&args.gw,     0,   0,   0,   0);
     IP4_ADDR(&args.dns0,   0,   0,   0,   0);
     IP4_ADDR(&args.dns1,   0,   0,   0,   0);
-    args.nb_vbds = 4;
-    args.vbd_id[0] = 51712; /* xvda */
-    args.vbd_id[1] = 51728; /* xvdb */
-    args.vbd_id[2] = 51744; /* xvdc */
-    args.vbd_id[3] = 51760; /* xvdd */
+    args.nb_vbds = 0;
+    args.vbd_detect = 1;
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
 
-     while ((opt = getopt(argc, argv, "s:i:g:d:")) != -1) {
+     while ((opt = getopt(argc, argv, "s:i:g:d:b:")) != -1) {
          switch(opt) {
          case 's': /* startup delay */
               ret = parse_args_setval_int(&ival, optarg);
@@ -233,6 +232,19 @@ static int parse_args(int argc, char *argv[])
 	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
+              break;
+         case 'b': /* virtual block device (specified manually to skip detection) */
+	      ret = parse_args_setval_int(&ival, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid block device id specified\n");
+	           return -1;
+              }
+	      if (args.nb_vbds == sizeof(args.vbd_id)) {
+		      printk("only %u block devices can be specified\n", sizeof(args.vbd_id));
+	           return -1;
+	      }
+	      args.vbd_detect = 0; /* disable vbd detection */
+	      args.vbd_id[args.nb_vbds++] = (unsigned int) ival;
               break;
          default:
 	      return -1;
@@ -299,12 +311,16 @@ struct semaphore _vbd_lock;
 
 static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 {
+    unsigned int vbd_id[32];
+    unsigned int nb_vbds;
     struct blkdev *bd;
     unsigned int i ,j;
     int inuse;
 
+    nb_vbds = detect_blkdevs(vbd_id, sizeof(vbd_id));
+
     down(&_vbd_lock);
-    for (i = 0; i < args.nb_vbds; ++i) {
+    for (i = 0; i < nb_vbds; ++i) {
 	    /* because blkfront does not support opening the same device for
 	     * multiple times, we need to check if a device was already
 	     * opened by SHFS */
@@ -312,18 +328,18 @@ static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 	    bd = NULL;
 	    if (shfs_mounted)
 		    for (j = 0; j < shfs_vol.nb_members; ++j) {
-			    if (shfs_vol.member[j].bd->vbd_id == args.vbd_id[i]) {
+			    if (shfs_vol.member[j].bd->vbd_id == vbd_id[i]) {
 				    bd = shfs_vol.member[j].bd;
 				    inuse = 1;
 				    break;
 			    }
 		    }
 	    if (!bd)
-		    bd = open_blkdev(args.vbd_id[i], O_RDONLY);
+		    bd = open_blkdev(vbd_id[i], O_RDONLY);
 
 	    if (bd) {
 		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
-		            args.vbd_id[i],
+		            vbd_id[i],
 		            blkdev_ssize(bd),
 		            blkdev_size(bd),
 		            inuse ? ", inuse" : "");
@@ -523,6 +539,14 @@ int main(int argc, char *argv[])
     }
 
     /* -----------------------------------
+     * detect available block devices
+     * ----------------------------------- */
+    if (args.vbd_detect) {
+	    printk("Detecting block devices...\n");
+	    args.nb_vbds = detect_blkdevs(args.vbd_id, sizeof(args.vbd_id));
+    }
+
+    /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
     printk("Starting networking...\n");
@@ -600,10 +624,10 @@ int main(int argc, char *argv[])
     printk("Loading SHFS...\n");
     init_shfs();
 #ifdef CONFIG_AUTOMOUNT
-    printk("Trying to mount cache filesystem...\n");
+    printk("Automount cache filesystem...\n");
     ret = mount_shfs(args.vbd_id, args.nb_vbds);
     if (ret < 0)
-	    printk("ERROR: Could not mount cache filesystem\n");
+	    printk("Warning: Could not find or mount a cache filesystem\n");
 #endif
 
     /* -----------------------------------

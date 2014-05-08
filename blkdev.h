@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 
-#define MAX_REQUESTS 256
+#define MAX_REQUESTS 64
 #define MAX_DISKSIZE (1ll << 40) /* 1 TB */
 
 typedef uint64_t sector_t;
@@ -16,7 +16,7 @@ struct blkdev {
   struct blkfront_dev *dev;
   struct blkfront_info info;
   struct mempool *reqpool;
-  char nname[128];
+  char nname[64];
   unsigned int vbd_id;
   int mode;
 };
@@ -32,6 +32,7 @@ struct _blkdev_req {
   void *cb_argp;
 };
 
+unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb);
 struct blkdev *open_blkdev(unsigned int vbd_id, int mode);
 void close_blkdev(struct blkdev *bd);
 

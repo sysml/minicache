@@ -1,6 +1,7 @@
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
+#include <xenbus.h>
 #include <limits.h>
 #include <errno.h>
 
@@ -19,6 +20,37 @@
   const typeof( ((type *)0)->member ) *__mptr = (ptr);\
   (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif /* container_of */
+
+unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb)
+{
+  register unsigned int i = 0;
+  register unsigned int found = 0;
+  char path[128];
+  int ival;
+  char *xb_errmsg;
+  char **vbd_entries;
+
+  snprintf(path, sizeof(path), "/local/domain/%u/device/vbd", xenbus_get_self_id());
+  xb_errmsg = xenbus_ls(XBT_NIL, path, &vbd_entries);
+  if (xb_errmsg || (!vbd_entries)) {
+    if (xb_errmsg)
+      free(xb_errmsg);
+    return 0;
+  }
+
+  /* interate through list */
+  while (vbd_entries[i] != NULL) {
+    if (found < max_nb) {
+      if (sscanf(vbd_entries[i], "%d", &ival) == 1) {
+        vbd_ids[found++] = (unsigned int) ival;
+      }
+    }
+    free(vbd_entries[i++]);
+  }
+
+  free(vbd_entries);
+  return found;
+}
 
 struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 {
