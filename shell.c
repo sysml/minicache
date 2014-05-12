@@ -75,7 +75,7 @@ struct shell {
     const char *goodbye;
 
     /* commands register */
-    const char *cmd_str[MAX_NB_CMDS];
+    char *cmd_str[MAX_NB_CMDS];
     shfunc_ptr_t cmd_func[MAX_NB_CMDS];
 
     /* shell sessions */
@@ -259,6 +259,10 @@ void exit_shell(void)
     if (sh->tpcb)
         tcp_close(sh->tpcb);
 #endif
+    for (i = 0; i < MAX_NB_CMDS; i++) {
+        if(sh->cmd_str[i])
+            free(sh->cmd_str[i]);
+    }
     xfree(sh);
 }
 
@@ -315,8 +319,12 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
     }
 
     /* register cmd */
+    sh->cmd_str[i] = strdup(cmd);
+    if (!sh->cmd_str[i]) {
+	errno = ENOMEM;
+	return -1;
+    }
     sh->cmd_func[i] = func;
-    sh->cmd_str[i] = cmd;
     dprintf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
@@ -329,6 +337,7 @@ void shell_unregister_cmd(const char *cmd)
 
     i = shell_get_cmd_index(cmd);
     if (i >= 0) {
+        free(sh->cmd_str[i]);
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
         dprintf("shell: Command %i ('%s') unregistered\n", i, cmd);
