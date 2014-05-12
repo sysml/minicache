@@ -34,6 +34,7 @@
 #include "shell.h"
 #include "shfs.h"
 #include "shfs_tools.h"
+#include "ctldir.h"
 
 #include "debug.h"
 
@@ -307,106 +308,28 @@ void app_shutdown(unsigned reason)
 /**
  * VBD MGMT
  */
-struct semaphore _vbd_lock;
-
 static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 {
     unsigned int vbd_id[32];
     unsigned int nb_vbds;
     struct blkdev *bd;
-    unsigned int i ,j;
-    int inuse;
+    unsigned int i;
 
     nb_vbds = detect_blkdevs(vbd_id, sizeof(vbd_id));
 
-    down(&_vbd_lock);
     for (i = 0; i < nb_vbds; ++i) {
-	    /* because blkfront does not support opening the same device for
-	     * multiple times, we need to check if a device was already
-	     * opened by SHFS */
-	    inuse = 0;
-	    bd = NULL;
-	    if (shfs_mounted)
-		    for (j = 0; j < shfs_vol.nb_members; ++j) {
-			    if (shfs_vol.member[j].bd->vbd_id == vbd_id[i]) {
-				    bd = shfs_vol.member[j].bd;
-				    inuse = 1;
-				    break;
-			    }
-		    }
-	    if (!bd)
-		    bd = open_blkdev(vbd_id[i], O_RDONLY);
+	    bd = open_blkdev(vbd_id[i], O_RDONLY);
 
 	    if (bd) {
 		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
 		            vbd_id[i],
 		            blkdev_ssize(bd),
 		            blkdev_size(bd),
-		            inuse ? ", inuse" : "");
-
-		    if (!inuse)
-			    close_blkdev(bd);
+		            bd->refcount >= 2 ? ", inuse" : "");
+		    close_blkdev(bd);
 	    }
     }
-    up(&_vbd_lock);
     return 0;
-}
-
-static int shcmd_mount_shfs(FILE *cio, int argc, char *argv[])
-{
-    unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
-    unsigned int count;
-    unsigned int i, j;
-    int ret;
-
-    if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
-	    fprintf(cio, "At most %u devices are supported\n", MAX_NB_TRY_BLKDEVS);
-	    return -1;
-    }
-    if ((argc) == 1) {
-	    fprintf(cio, "Usage: %s [vbd_id]...\n", argv[0]);
-	    return -1;
-    }
-    for (i = 1; i < argc; ++i) {
-	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
-		    fprintf(cio, "Invalid argument %u\n", i);
-		    return -1;
-	    }
-    }
-    count = argc - 1;
-
-    /* search for duplicates in the list
-     * This is unfortunately an ugly & slow way of how it is done here... */
-    for (i = 0; i < count; ++i)
-	    for (j = 0; j < count; ++j)
-		    if (i != j && vbd_id[i] == vbd_id[j]) {
-			    fprintf(cio, "Found duplicates in the list\n");
-			    return -1;
-		    }
-
-    down(&_vbd_lock);
-    if (shfs_mounted) {
-	    up(&_vbd_lock);
-	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
-	    return -1;
-    }
-    ret = mount_shfs(vbd_id, count);
-    up(&_vbd_lock);
-    if (ret < 0)
-	    fprintf(cio, "Could not mount: %s\n", strerror(-ret));
-    return ret;
-}
-
-static int shcmd_umount_shfs(FILE *cio, int argc, char *argv[])
-{
-    int ret;
-
-    down(&_vbd_lock);
-    ret = umount_shfs();
-    up(&_vbd_lock);
-    if (ret < 0)
-	    fprintf(cio, "Could not unmount: %s\n", strerror(-ret));
-    return ret;
 }
 
 #if LWIP_STATS_DISPLAY
@@ -482,6 +405,7 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     struct netif netif;
+    struct ctldir *cd;
     int ret;
 #if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
     uint64_t now;
@@ -499,7 +423,6 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_MINDER_PRINT */
 
     init_debug();
-    init_SEMAPHORE(&_vbd_lock, 1);
 
     /* -----------------------------------
      * banner
@@ -644,12 +567,10 @@ int main(int argc, char *argv[])
     shell_register_cmd("suspend", shcmd_suspend);
     shell_register_cmd("lsvbd", shcmd_lsvbd);
     shell_register_cmd("ifconfig", shcmd_ifconfig);
-    shell_register_cmd("mount", shcmd_mount_shfs);
-    shell_register_cmd("umount", shcmd_umount_shfs);
+    register_shfs_tools();
 #if LWIP_STATS_DISPLAY
     shell_register_cmd("lwip-stats", shcmd_lwipstats);
 #endif
-    register_shfs_tools();
 
     /* -----------------------------------
      * Processing loop

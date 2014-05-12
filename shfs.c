@@ -387,11 +387,15 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 
 	down(&shfs_mount_lock);
 
-	BUG_ON(shfs_mounted);
 	if (count == 0) {
 		ret = -EINVAL;
 		goto err_out;
 	}
+	if (shfs_mounted) {
+		ret = -EALREADY;
+		goto err_out;
+	}
+	shfs_mounted = 0;
 
 	/* load common volume information and open devices */
 	ret = load_vol_cconf(vbd_id, count);
@@ -456,8 +460,8 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
  err_close_members:
 	for(i = 0; i < shfs_vol.nb_members; ++i)
 		close_blkdev(shfs_vol.member[i].bd);
- err_out:
 	shfs_mounted = 0;
+ err_out:
 	up(&shfs_mount_lock);
 	return ret;
 }

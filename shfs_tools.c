@@ -245,6 +245,57 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
+{
+    unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
+    unsigned int count;
+    unsigned int i, j;
+    int ret;
+
+    if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
+	    fprintf(cio, "At most %u devices are supported\n", MAX_NB_TRY_BLKDEVS);
+	    return -1;
+    }
+    if ((argc) == 1) {
+	    fprintf(cio, "Usage: %s [vbd_id]...\n", argv[0]);
+	    return -1;
+    }
+    for (i = 1; i < argc; ++i) {
+	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
+		    fprintf(cio, "Invalid argument %u\n", i);
+		    return -1;
+	    }
+    }
+    count = argc - 1;
+
+    /* search for duplicates in the list
+     * This is unfortunately an ugly & slow way of how it is done here... */
+    for (i = 0; i < count; ++i)
+	    for (j = 0; j < count; ++j)
+		    if (i != j && vbd_id[i] == vbd_id[j]) {
+			    fprintf(cio, "Found duplicates in the list\n");
+			    return -1;
+		    }
+
+    ret = mount_shfs(vbd_id, count);
+    if (ret == -EALREADY) {
+	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
+	    return -1;
+    }
+    if (ret < 0)
+	    fprintf(cio, "Could not mount: %s\n", strerror(-ret));
+    return ret;
+}
+
+static int shcmd_shfs_umount(FILE *cio, int argc, char *argv[])
+{
+    int ret;
+
+    ret = umount_shfs();
+    if (ret < 0)
+	    fprintf(cio, "Could not unmount: %s\n", strerror(-ret));
+    return ret;
+}
 
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
@@ -299,6 +350,14 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 int register_shfs_tools(void)
 {
 	int ret;
+
+	/* shell commands */
+	ret = shell_register_cmd("mount", shcmd_shfs_mount);
+	if (ret < 0)
+		return ret;
+	ret = shell_register_cmd("umount", shcmd_shfs_umount);
+	if (ret < 0)
+		return ret;
 	ret = shell_register_cmd("ls", shcmd_shfs_ls);
 	if (ret < 0)
 		return ret;
