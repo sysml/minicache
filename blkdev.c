@@ -21,6 +21,8 @@
   (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif /* container_of */
 
+struct blkdev *_open_bd_list = NULL;
+
 unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb)
 {
   register unsigned int i = 0;
@@ -56,6 +58,22 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 {
   struct blkdev *bd;
 
+  /* search in blkdev list if device is already open */
+  for (bd = _open_bd_list; bd != NULL; bd = bd->_next) {
+	  if (bd->vbd_id == vbd_id) {
+		  /* found: device is already open, check if
+		   *  requested permissions are available */
+		  if (((mode & O_WRONLY) && !(bd->info.mode & O_WRONLY)) ||
+		      ((mode & O_RDONLY) && !(bd->info.mode & O_RDONLY))) {
+			  errno = EACCES;
+			  goto err;
+		  }
+
+		  ++bd->refcount;
+		  return bd;
+	  }
+  }
+
   bd = xmalloc(struct blkdev);
   if (!bd) {
 	errno = ENOMEM;
@@ -69,6 +87,7 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
   }
 
   bd->vbd_id = vbd_id;
+  bd->refcount = 1;
   snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", vbd_id);
 
   bd->dev = init_blkfront(bd->nname, &(bd->info));
@@ -77,12 +96,18 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 	goto err_free_reqpool;
   }
 
-  bd->mode = mode & bd->info.mode;
   if (((mode & O_WRONLY) && !(bd->info.mode & O_WRONLY)) ||
-	  ((mode & O_RDONLY) && !(bd->info.mode & O_RDONLY))) {
+      ((mode & O_RDONLY) && !(bd->info.mode & O_RDONLY))) {
 	errno = EACCES;
 	goto err_shutdown_blkfront;
   }
+
+  /* link new element to the head of _open_bd_list */
+  bd->_prev = NULL;
+  bd->_next = _open_bd_list;
+  _open_bd_list = bd;
+  if (bd->_next)
+    bd->_next->_prev = bd;
   return bd;
 
  err_shutdown_blkfront:
@@ -97,12 +122,20 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 
 void close_blkdev(struct blkdev *bd)
 {
-  if (!bd)
-	return;
+  --bd->refcount;
+  if (bd->refcount == 0) {
+    /* unlink element from _open_bd_list */
+    if (bd->_next)
+      bd->_next->_prev = bd->_prev;
+    if (bd->_prev)
+      bd->_prev->_next = bd->_next;
+    else
+      _open_bd_list = bd->_next;
 
-  shutdown_blkfront(bd->dev);
-  free_mempool(bd->reqpool);
-  xfree(bd);
+    shutdown_blkfront(bd->dev);
+    free_mempool(bd->reqpool);
+    xfree(bd);
+  }
 }
 
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret)
