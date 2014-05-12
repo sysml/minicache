@@ -318,15 +318,18 @@ static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
     nb_vbds = detect_blkdevs(vbd_id, sizeof(vbd_id));
 
     for (i = 0; i < nb_vbds; ++i) {
-	    bd = open_blkdev(vbd_id[i], O_RDONLY);
+	    bd = open_blkdev(vbd_id[i], 0x0);
 
 	    if (bd) {
 		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
 		            vbd_id[i],
 		            blkdev_ssize(bd),
 		            blkdev_size(bd),
-		            bd->refcount >= 2 ? ", inuse" : "");
+		            bd->refcount >= 2 ? ", in use" : "");
 		    close_blkdev(bd);
+	    } else {
+		    if (errno == EBUSY)
+			    fprintf(cio, " %u: in exclusive use\n", vbd_id[i]);
 	    }
     }
     return 0;

@@ -61,10 +61,17 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
   /* search in blkdev list if device is already open */
   for (bd = _open_bd_list; bd != NULL; bd = bd->_next) {
 	  if (bd->vbd_id == vbd_id) {
-		  /* found: device is already open, check if
-		   *  requested permissions are available */
-		  if (((mode & O_WRONLY) && !(bd->info.mode & O_WRONLY)) ||
-		      ((mode & O_RDONLY) && !(bd->info.mode & O_RDONLY))) {
+		  /* found: device is already open,
+		   *  now we check if it was/shall be opened
+		   *  exclusively and requested permissions
+		   *  are available */
+		  if (mode & O_EXCL ||
+		      bd->exclusive) {
+			  errno = EBUSY;
+			  goto err;
+		  }
+		  if (((mode & O_WRONLY) && !(bd->info.mode & (O_WRONLY | O_RDWR))) ||
+		      ((mode & O_RDWR) && !(bd->info.mode & O_RDWR))) {
 			  errno = EACCES;
 			  goto err;
 		  }
@@ -88,6 +95,7 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 
   bd->vbd_id = vbd_id;
   bd->refcount = 1;
+  bd->exclusive = !!(mode & O_EXCL);
   snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", vbd_id);
 
   bd->dev = init_blkfront(bd->nname, &(bd->info));
@@ -96,8 +104,8 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 	goto err_free_reqpool;
   }
 
-  if (((mode & O_WRONLY) && !(bd->info.mode & O_WRONLY)) ||
-      ((mode & O_RDONLY) && !(bd->info.mode & O_RDONLY))) {
+  if (((mode & O_WRONLY) && !(bd->info.mode & (O_WRONLY | O_RDWR))) ||
+      ((mode & O_RDWR) && !(bd->info.mode & O_RDWR))) {
 	errno = EACCES;
 	goto err_shutdown_blkfront;
   }

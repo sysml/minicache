@@ -19,6 +19,7 @@ struct blkdev {
   char nname[64];
   unsigned int vbd_id;
 
+  int exclusive;
   unsigned int refcount;
   struct blkdev *_next;
   struct blkdev *_prev;
@@ -99,8 +100,7 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
 static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,
                                   int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {
-	if (unlikely((!write && !(bd->info.mode & O_RDONLY)) &&
-	             ( write && !(bd->info.mode & O_WRONLY)))) {
+	if (unlikely(write && !(bd->info.mode & (O_WRONLY | O_RDWR)))) {
 		/* write access on non-writable device or read access on non-readable device */
 		return -EACCES;
 	}
