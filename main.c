@@ -121,6 +121,8 @@ static struct _args {
     unsigned int    vbd_id[32];
     int             vbd_detect;
 
+    int             no_ctldir;
+
     unsigned int    startup_delay;
 } args;
 
@@ -194,8 +196,9 @@ static int parse_args(int argc, char *argv[])
     args.vbd_detect = 1;
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
+    args.no_ctldir = 0;
 
-     while ((opt = getopt(argc, argv, "s:i:g:d:b:")) != -1) {
+     while ((opt = getopt(argc, argv, "s:i:g:d:b:h")) != -1) {
          switch(opt) {
          case 's': /* startup delay */
               ret = parse_args_setval_int(&ival, optarg);
@@ -247,6 +250,10 @@ static int parse_args(int argc, char *argv[])
 	      args.vbd_detect = 0; /* disable vbd detection */
 	      args.vbd_id[args.nb_vbds++] = (unsigned int) ival;
               break;
+         case 'h': /* hide xenstore control entries */
+	      args.no_ctldir = 1;
+              break;
+
          default:
 	      return -1;
          }
@@ -408,7 +415,7 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     struct netif netif;
-    struct ctldir *cd;
+    struct ctldir *cd = NULL;
     int ret;
 #if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
     uint64_t now;
@@ -462,6 +469,18 @@ int main(int argc, char *argv[])
 		    msleep(1000);
 	    }
 	    printf("\n");
+    }
+
+    /* -----------------------------------
+     * control dir
+     * ----------------------------------- */
+    if (!args.no_ctldir) {
+	    printk("Initialize xenstore control entries...\n");
+	    cd = create_ctldir("minicache");
+	    if (!cd) {
+		    printk("Warning: Could not initialize xenstore control entries: %s\n", strerror(errno));
+		    printk("         Disabling xenstore cotrol entries\n");
+	    }
     }
 
     /* -----------------------------------
@@ -574,6 +593,18 @@ int main(int argc, char *argv[])
 #if LWIP_STATS_DISPLAY
     shell_register_cmd("lwip-stats", shcmd_lwipstats);
 #endif
+
+    /* -----------------------------------
+     * control dir
+     * ----------------------------------- */
+    if (cd) {
+	    printk("Registering xenstore control entries...\n");
+	    ret = ctldir_start_watcher(cd);
+	    if (ret < 0) {
+		    printk("FATAL: Could not register xenstore control entries: %s\n", strerror(-ret));
+		    goto out;
+	    }
+    }
 
     /* -----------------------------------
      * Processing loop
