@@ -198,7 +198,9 @@ static int parse_args(int argc, char *argv[])
     args.startup_delay = 0;
     args.no_ctldir = 0;
 
-     while ((opt = getopt(argc, argv, "s:i:g:d:b:h")) != -1) {
+     while ((opt = getopt(argc, argv,
+                          "s:i:g:d:b:h"
+                          )) != -1) {
          switch(opt) {
          case 's': /* startup delay */
               ret = parse_args_setval_int(&ival, optarg);
@@ -589,10 +591,11 @@ int main(int argc, char *argv[])
     shell_register_cmd("suspend", shcmd_suspend);
     shell_register_cmd("lsvbd", shcmd_lsvbd);
     shell_register_cmd("ifconfig", shcmd_ifconfig);
-    register_shfs_tools();
 #if LWIP_STATS_DISPLAY
     shell_register_cmd("lwip-stats", shcmd_lwipstats);
 #endif
+
+    register_shfs_tools(cd); /* Note: cd might be NULL */
 
     /* -----------------------------------
      * control dir

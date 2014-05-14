@@ -4,9 +4,14 @@
 #include <mini-os/kernel.h>
 #include <mini-os/errno.h>
 #include <mini-os/sched.h>
+#include <stdio.h>
+#include <limits.h>
+#include "shell.h"
 
 #define CTLDIR_MAX_TRIGGERS 16
 #define CTLDIR_MAX_NAMELEN 32
+
+//typedef int (*shfunc_ptr_t)(FILE *cio, int argc, char *argv[]);
 
 typedef char *(*cdfunc_ptr_t)(void *cookie, char *arg);
 
@@ -28,7 +33,10 @@ struct ctldir {
 };
 
 struct ctldir *create_ctldir(const char *name);
+
 int ctldir_register_trigger(struct ctldir *cd, const char *name, cdfunc_ptr_t func, void *cookie);
+int ctldir_register_shcmd(struct ctldir *cd, const char *name, shfunc_ptr_t func);
+
 int ctldir_start_watcher(struct ctldir *cd);
 
 #endif /* _CTLDIR_H_ */

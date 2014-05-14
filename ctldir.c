@@ -3,8 +3,11 @@
 #include <mini-os/xmalloc.h>
 #include <mini-os/wait.h>
 #include <mini-os/sched.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "ctldir.h"
 
+#define SHWRAPPER_MAX_NB_ARGS 96
 #define DOM0 ((domid_t) 0)
 
 #define _xb_write(xbt, path, value) ({ \
@@ -193,6 +196,76 @@ int ctldir_register_trigger(struct ctldir *cd, const char *name, cdfunc_ptr_t fu
 	free(cd->trigger_name[i]);
  err_out:
 	return -ENOMEM;
+}
+
+static char *_shcmd_wrapper(void *cookie, char *argb)
+{
+	shfunc_ptr_t shcmd = (shfunc_ptr_t) cookie;
+	char *argv[SHWRAPPER_MAX_NB_ARGS];
+	int argc;
+	int ret;
+	char *reply;
+	int cfd;
+	FILE *cio;
+	int prev_was_whitespace;
+	size_t i;
+
+	/* open a console I/O for the command (here: standard console) */
+	cfd = open("/var/log/", O_RDWR); /* workaround to access stdin/stdout */
+	if (cfd < 0)
+		goto err_out; /* ignore call: couldn't open console device */
+	cio = fdopen(cfd, "r+");
+
+	/* allocate mem for reply string */
+	reply = malloc(8);
+	if (!reply)
+		goto err_close_cfd; /* ignore call: insufficient memory */
+
+	/* argument parsing */
+	argc = 1;
+	argv[0] = ""; /* no command name since we get called by a trigger */
+	prev_was_whitespace = 1;
+	for (i = 0; argc < SHWRAPPER_MAX_NB_ARGS; ++i) {
+		switch (argb[i]) {
+		case '\0': /* end of string */
+			goto exec;
+			break;
+		case ' ': /* white spaces */
+		case '\r':
+		case '\n':
+		case '\t':
+		case '\v':
+			argb[i] = '\0';
+			prev_was_whitespace = 1;
+            break;
+		case '\'': /* quotes */
+		case '"':
+			/* QUOTES NOT SUPPORTED YET (like µSh) */
+		default:
+			if (prev_was_whitespace) {
+				argv[argc++] = &argb[i];
+				prev_was_whitespace = 0;
+			}
+			break;
+		}
+	}
+
+ exec:
+	/* execute command */
+	ret = shcmd(cio, argc, argv);
+	snprintf(reply, 8, "%d", ret);
+	fclose(cio); /* closes also cfd */
+	return reply;
+
+ err_close_cfd:
+	close(cfd);
+ err_out:
+	return NULL;
+}
+
+int ctldir_register_shcmd(struct ctldir *cd, const char *name, shfunc_ptr_t func)
+{
+	return ctldir_register_trigger(cd, name, _shcmd_wrapper, (void *) func);
 }
 
 /*

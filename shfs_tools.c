@@ -15,6 +15,7 @@
 #include "shfs_stats.h"
 #endif
 #include "shell.h"
+#include "ctldir.h"
 
 static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 {
@@ -347,37 +348,25 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	return 0;
 }
 
-int register_shfs_tools(void)
+int register_shfs_tools(struct ctldir *cd)
 {
-	int ret;
+	/* ctldir entries (ignore errors) */
+	if (cd) {
+		ctldir_register_shcmd(cd, "mount", shcmd_shfs_mount);
+		ctldir_register_shcmd(cd, "umount", shcmd_shfs_umount);
+	}
 
-	/* shell commands */
-	ret = shell_register_cmd("mount", shcmd_shfs_mount);
-	if (ret < 0)
-		return ret;
-	ret = shell_register_cmd("umount", shcmd_shfs_umount);
-	if (ret < 0)
-		return ret;
-	ret = shell_register_cmd("ls", shcmd_shfs_ls);
-	if (ret < 0)
-		return ret;
-	ret = shell_register_cmd("file", shcmd_shfs_file);
-	if (ret < 0)
-		return ret;
-	ret = shell_register_cmd("df", shcmd_shfs_dumpfile);
-	if (ret < 0)
-		return ret;
-	ret = shell_register_cmd("cat", shcmd_shfs_cat);
-	if (ret < 0)
-		return ret;
+	/* shell commands (ignore errors) */
+	shell_register_cmd("mount", shcmd_shfs_mount);
+	shell_register_cmd("umount", shcmd_shfs_umount);
+	shell_register_cmd("ls", shcmd_shfs_ls);
+	shell_register_cmd("file", shcmd_shfs_file);
+	shell_register_cmd("df", shcmd_shfs_dumpfile);
+	shell_register_cmd("cat", shcmd_shfs_cat);
 #ifdef SHFS_STATS
-	ret = shell_register_cmd("stats", shcmd_shfs_stats);
-	if (ret < 0)
-		return ret;
+	shell_register_cmd("stats", shcmd_shfs_stats);
 #endif
-	ret = shell_register_cmd("shfs-info", shcmd_shfs_info);
-	if (ret < 0)
-		return ret;
+	shell_register_cmd("shfs-info", shcmd_shfs_info);
 
 	return 0;
 }
