@@ -116,7 +116,7 @@ following example as a basis:
     kernel        = './build/minicache_x86_64.gz'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '128'
+    memory        = '256'
 
     name          = 'minicache'
 
@@ -144,3 +144,8 @@ are passed as kernel parameters to the image:
     -g [IPv4]              Gateway IP address
     -d [IPv4]              Primary DNS server
     -e [IPv4]              Secondary DNS server
+    -b [VBD ID]            Automount filesystem from VBD ID
+                           (multiple tokens possible;
+                            disables vbd auto detection)
+    -h                     Disable XenStore control interfaces
+                           (see: cdaction)
