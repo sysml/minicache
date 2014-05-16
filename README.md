@@ -148,4 +148,4 @@ are passed as kernel parameters to the image:
                            (multiple tokens possible;
                             disables vbd auto detection)
     -h                     Disable XenStore control interfaces
-                           (see: cdaction)
+                           (see: ctltrigger)
