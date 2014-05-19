@@ -35,6 +35,9 @@
 #include "shfs.h"
 #include "shfs_tools.h"
 #include "ctldir.h"
+#ifdef SHFS_STATS
+#include "shfs_stats.h"
+#endif
 
 #include "debug.h"
 
@@ -120,6 +123,8 @@ static struct _args {
     unsigned int    nb_vbds;
     unsigned int    vbd_id[32];
     int             vbd_detect;
+    unsigned int    stats_vbd_id;
+    int             stats_vbd;
 
     int             no_ctldir;
 
@@ -193,6 +198,7 @@ static int parse_args(int argc, char *argv[])
     IP4_ADDR(&args.dns0,   0,   0,   0,   0);
     IP4_ADDR(&args.dns1,   0,   0,   0,   0);
     args.nb_vbds = 0;
+    args.stats_vbd = 0; /* disable stats vbd */
     args.vbd_detect = 1;
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
@@ -200,6 +206,9 @@ static int parse_args(int argc, char *argv[])
 
      while ((opt = getopt(argc, argv,
                           "s:i:g:d:b:h"
+#ifdef SHFS_STATS
+                          "x:"
+#endif
                           )) != -1) {
          switch(opt) {
          case 's': /* startup delay */
@@ -255,6 +264,21 @@ static int parse_args(int argc, char *argv[])
          case 'h': /* hide xenstore control entries */
 	      args.no_ctldir = 1;
               break;
+#ifdef SHFS_STATS
+         case 'x': /* virtual block device for exporting statistics */
+	      ret = parse_args_setval_int(&ival, optarg);
+	      if (ret < 0 || ival < 0) {
+	           printk("invalid block device id specified\n");
+	           return -1;
+              }
+	      if (args.stats_vbd) {
+		   printk("only one stats devices can be specified\n");
+	           return -1;
+	      }
+	      args.stats_vbd = 1; /* enable stats vbd */
+	      args.stats_vbd_id = (unsigned int) ival;
+              break;
+#endif
 
          default:
 	      return -1;
@@ -596,6 +620,21 @@ int main(int argc, char *argv[])
 #endif
 
     register_shfs_tools(cd); /* Note: cd might be NULL */
+#ifdef SHFS_STATS
+    /* -----------------------------------
+     * stats device
+     * ----------------------------------- */
+    printk("Initializing stats device...\n");
+    if(args.stats_vbd) {
+	ret = init_shfs_stats_export(args.stats_vbd_id);
+	if (ret < 0) {
+	    printk("Warning: Could not open stats device: %s\n", strerror(-ret));
+	    args.stats_vbd = 0;
+	}
+    }
+
+    register_shfs_stats_tools(cd);
+#endif
 
     /* -----------------------------------
      * control dir
@@ -671,6 +710,10 @@ int main(int argc, char *argv[])
 	    printk("System is going down to reboot now\n");
     else
 	    printk("System is going down to halt now\n");
+    if (args.stats_vbd) {
+	    printk("Closing stats device...\n");
+	    exit_shfs_stats_export();
+    }
     printk("Stopping HTTP server...\n");
     exit_http();
     printk("Stopping shell...\n");

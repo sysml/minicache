@@ -9,6 +9,7 @@
 #include "shfs_fio.h"
 #include "shfs.h"
 #include "likely.h"
+#include "ctldir.h"
 
 /*
  * Retrieve stats structure from SHFS btable entry
@@ -120,5 +121,12 @@ static inline int shfs_dump_stats(shfs_dump_el_stats_t dump_el, void *dump_el_ar
 		return ret;
 	return 0;
 }
+
+/*
+ * Tools to display/export stats via uSh/ctldir
+ */
+int init_shfs_stats_export(unsigned int vbd_id);
+int register_shfs_stats_tools(struct ctldir *cd);
+void exit_shfs_stats_export(void);
 
 #endif /* _SHFS_STATS_H_ */

@@ -149,3 +149,4 @@ are passed as kernel parameters to the image:
                             disables vbd auto detection)
     -h                     Disable XenStore control interfaces
                            (see: ctltrigger)
+    -x [VBD ID]            Device for stats export

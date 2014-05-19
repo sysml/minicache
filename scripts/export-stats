@@ -1,0 +1,2 @@
+#!/bin/sh
+exec ../ctltrigger/ctltrigger $1 "minicache" "export-stats" "$@"

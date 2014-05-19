@@ -11,9 +11,6 @@
 #include "shfs_btable.h"
 #include "shfs_tools.h"
 #include "shfs_fio.h"
-#ifdef SHFS_STATS
-#include "shfs_stats.h"
-#endif
 #include "shell.h"
 #include "ctldir.h"
 
@@ -60,70 +57,6 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	up(&shfs_mount_lock);
 	return 0;
 }
-
-#ifdef SHFS_STATS
-static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, struct shfs_el_stats *stats)
-{
-	FILE *cio = (FILE *) argp;
-	char str_hash[(shfs_vol.hlen * 2) + 1];
-	char str_date[20];
-#if defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
-	register unsigned int i;
-#endif
-
-	if (stats->laccess) {
-		hash_unparse(h, shfs_vol.hlen, str_hash);
-		strftimestamp_s(str_date, sizeof(str_date),
-		                "%b %e, %g %H:%M", stats->laccess);
-#ifdef SHFS_STATS_HTTP
-		fprintf(cio, "%c%s %c%c %6u [ %6u | ",
-		        SFHS_HASH_INDICATOR_PREFIX,
-		        str_hash,
-		        available ? 'I' : ' ',
-		        available ? 'N' : ' ',
-		        stats->h, /* hits */
-		        stats->c ); /* completed file request */
-#ifdef SHFS_STATS_HTTP_DPC
-		for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i)
-			fprintf(cio, "%6u ", stats->p[i] );
-#endif
-		fprintf(cio, "] %6u %-16s\n",
-			stats->m, /* missed */
-		        str_date);
-#else
-		fprintf(cio, "%c%s %c%c %8u %8u %-16s\n",
-		        SFHS_HASH_INDICATOR_PREFIX,
-		        str_hash,
-		        available ? 'I' : ' ',
-		        available ? 'N' : ' ',
-		        stats->h, /* hits */
-		        stats->m, /* missed */
-		        str_date);
-#endif
-	}
-
-	return 0;
-}
-
-static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
-{
-	down(&shfs_mount_lock);
-	if (!shfs_mounted) {
-		fprintf(cio, "No SHFS filesystem mounted\n");
-		goto out;
-	}
-
-	shfs_dump_stats(_shcmd_shfs_print_el_stats, cio);
-	if (shfs_vol.mstats.i)
-		fprintf(cio, "Invalid element requests: %8lu\n", shfs_vol.mstats.i);
-	if (shfs_vol.mstats.e)
-		fprintf(cio, "Errors on requests:       %8lu\n", shfs_vol.mstats.e);
-
- out:
-	up(&shfs_mount_lock);
-	return 0;
-}
-#endif
 
 static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 {
@@ -363,9 +296,6 @@ int register_shfs_tools(struct ctldir *cd)
 	shell_register_cmd("file", shcmd_shfs_file);
 	shell_register_cmd("df", shcmd_shfs_dumpfile);
 	shell_register_cmd("cat", shcmd_shfs_cat);
-#ifdef SHFS_STATS
-	shell_register_cmd("stats", shcmd_shfs_stats);
-#endif
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
 
 	return 0;
