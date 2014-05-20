@@ -575,6 +575,34 @@ static int reload_vol_htable(void) {
 					up(&bentry->updatelock);
 					bentry->update = 0;
 				}
+			} else if (chentry->chunk  != nhentry->chunk  ||
+			           chentry->offset != nhentry->offset ||
+			           chentry->len    != nhentry->len) {
+				/* in this case, just the file location has been moved
+				 *
+				 * Note: This is usually a bad thing but happens
+				 * if the tools were misused
+				 * Note: Since the hash digest did not change,
+				 * the stats keep the same */
+				/* lock entry */
+				bentry->update = 1; /* forbid further open() */
+				down(&bentry->updatelock); /* wait until files is closed */
+
+				memcpy(chentry, nhentry, sizeof(*chentry));
+
+				/* unlock entry */
+				up(&bentry->updatelock);
+				bentry->update = 0;
+			} else {
+				/* at least update name, mime type and creation timestamp
+				 * (just in case if these values have been changed)
+				 * These fields are completely independent to the file
+				 * contents and should be read at once without yielding
+				 * the CPU (e.g., snprintf, strncpy).
+				 * Because of this, no locking is required */
+				memcpy(chentry->name, nhentry->name, sizeof(chentry->name));
+				memcpy(chentry->mime, nhentry->mime, sizeof(chentry->mime));
+				chentry->ts_creation = nhentry->ts_creation;
 			}
 		}
 	}
