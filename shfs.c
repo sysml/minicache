@@ -341,6 +341,8 @@ static int load_vol_htable(void)
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
 		bentry->refcount = 0;
+		bentry->update = 0;
+		init_SEMAPHORE(&bentry->updatelock, 1);
 #ifdef SHFS_STATS
 		bentry->hstats.laccess = 0;
 		bentry->hstats.h = 0;
@@ -491,6 +493,93 @@ int umount_shfs(void) {
 	shfs_mounted = 0;
 	up(&shfs_mount_lock);
 	return 0;
+}
+
+/**
+ * This function re-reads the hash table from the device
+ * Since semaphores are used to sync with opened files,
+ *  this function has to be called from a context that
+ *  is different from the one of the main loop
+ */
+static int reload_vol_htable(void) {
+	struct shfs_hentry *chentry;
+	struct shfs_hentry *nhentry;
+	struct mempool_obj *nchk_buf_obj;
+	void *cchk_buf;
+	void *nchk_buf;
+	int chash_is_zero, nhash_is_zero;
+	register chk_t c;
+	register unsigned int e;
+	int ret;
+
+	nchk_buf_obj = mempool_pick(shfs_vol.chunkpool);
+	if (!nchk_buf_obj) {
+		ret = -errno;
+		goto out;
+	}
+	nchk_buf = nchk_buf_obj->data;
+
+	dprintf("Re-reading hash table...\n");
+	for (c = 0; c < shfs_vol.htable_len; ++c) {
+		/* read chunk from disk */
+		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf);
+		if (ret < 0) {
+			ret = -EIO;
+			goto out_free_nchk_buf;
+		}
+		cchk_buf = shfs_vol.htable_chunk_cache[c];
+
+		/* compare entries */
+		for (e = 0; e < shfs_vol.htable_nb_entries_per_chunk; ++e) {
+			chentry = (struct shfs_hentry *)((uint8_t *) cchk_buf
+			          + SHFS_HTABLE_ENTRY_OFFSET(e, shfs_vol.htable_nb_entries_per_chunk));
+			nhentry = (struct shfs_hentry *)((uint8_t *) nchk_buf
+			          + SHFS_HTABLE_ENTRY_OFFSET(e, shfs_vol.htable_nb_entries_per_chunk));
+			if (hash_compare(chentry->hash, nhentry->hash, shfs_vol.hlen)) {
+				chash_is_zero = hash_is_zero(chentry->hash, shfs_vol.hlen);
+				nhash_is_zero = hash_is_zero(nhentry->hash, shfs_vol.hlen);
+
+				if (chash_is_zero && !nhash_is_zero) {
+					/* entry added */
+					dprintf("Chunk %lu, entry %lu has been added\n", c ,e);
+				} else if (!chash_is_zero && nhash_is_zero) {
+					/* entry deleted */
+					dprintf("Chunk %lu, entry %lu has been deleted\n", c ,e);
+				} else if (!chash_is_zero && !nhash_is_zero) {
+					/* entry updated */
+					dprintf("Chunk %lu, entry %lu has been updated\n", c ,e);
+				}
+			}
+		}
+	}
+
+ out_free_nchk_buf:
+	mempool_put(nchk_buf_obj);
+ out:
+	return ret;
+}
+
+/**
+ * This function re-reads the hash table from the device
+ * Since semaphores are used to sync with opened files,
+ *  this function has to be called from a context that
+ *  is different from the one of the main loop
+ */
+int remount_shfs(void) {
+	int ret = 0;
+
+	down(&shfs_mount_lock);
+	if (!shfs_mounted) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	/* TODO: Re-read chunk0 and check if volume UUID still matches */
+
+	ret = reload_vol_htable();
+ out:
+	up(&shfs_mount_lock);
+	return ret;
 }
 
 /*

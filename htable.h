@@ -323,16 +323,13 @@ static inline struct htable_el *htable_lookup_add(struct htable *ht, hash512_t h
 
 /*
  * Removes an element of a given hash value
+ *
+ * Note: Ensure that el belongs to ht
+ * Note: el has to be non-NULL
  */
-static inline void htable_rm(struct htable *ht, hash512_t h)
+static inline void htable_rm(struct htable *ht, struct htable_el *el)
 {
-	struct htable_el *el;
-
-	el = htable_lookup(ht, h);
-	if (!el)
-		return; /* element was not found: already deleted */
-
-	/* found: update linked list of elements */
+	/* update linked list of elements */
 	if (el->prev)
 		el->prev->next = el->next;
 	else

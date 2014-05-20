@@ -261,6 +261,16 @@ static int shcmd_shfs_umount(FILE *cio, int argc, char *argv[])
     return ret;
 }
 
+static int shcmd_shfs_remount(FILE *cio, int argc, char *argv[])
+{
+    int ret;
+
+    ret = remount_shfs();
+    if (ret < 0)
+	    fprintf(cio, "Could not remount: %s\n", strerror(-ret));
+    return ret;
+}
+
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
 	unsigned int m;
@@ -317,11 +327,13 @@ int register_shfs_tools(struct ctldir *cd)
 	if (cd) {
 		ctldir_register_shcmd(cd, "mount", shcmd_shfs_mount);
 		ctldir_register_shcmd(cd, "umount", shcmd_shfs_umount);
+		ctldir_register_shcmd(cd, "remount", shcmd_shfs_remount);
 	}
 
 	/* shell commands (ignore errors) */
 	shell_register_cmd("mount", shcmd_shfs_mount);
 	shell_register_cmd("umount", shcmd_shfs_umount);
+	shell_register_cmd("remount", shcmd_shfs_remount);
 	shell_register_cmd("ls", shcmd_shfs_ls);
 	shell_register_cmd("lsof", shcmd_shfs_lsof);
 	shell_register_cmd("file", shcmd_shfs_file);

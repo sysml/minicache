@@ -80,6 +80,8 @@ struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
  * schedule() (e.g., printf()), we do not need to
  * down/up the shfs_mount_lock semaphore -> coop.
  * scheduler
+ *
+ * Note: This function should never be called from interrupt context
  */
 SHFS_FD shfs_fio_open(const char *path)
 {
@@ -115,7 +117,18 @@ SHFS_FD shfs_fio_open(const char *path)
 		return NULL;
 	}
 
+	if (bentry->update) {
+		/* entry update in progress */
+		errno = EBUSY;
+		return NULL;
+#ifdef SHFS_STATS
+		++shfs_vol.mstats.e;
+#endif
+	}
+
 	++shfs_nb_open;
+	if (bentry->refcount == 0) /* lock file for updates */
+		down(&bentry->updatelock);
 	++bentry->refcount;
 #ifdef SHFS_STATS
 	estats = shfs_stats_from_bentry(bentry);
@@ -125,11 +138,16 @@ SHFS_FD shfs_fio_open(const char *path)
 	return (SHFS_FD) bentry;
 }
 
+/*
+ * Note: This function should never be called from interrupt context
+ */
 void shfs_fio_close(SHFS_FD f)
 {
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 
 	--bentry->refcount;
+	if (bentry->refcount == 0) /* unlock file for updates */
+		up(&bentry->updatelock);
 	--shfs_nb_open;
 }
 

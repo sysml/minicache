@@ -64,6 +64,7 @@ extern volatile unsigned int shfs_nb_open;
 
 int init_shfs(void);
 int mount_shfs(unsigned int vbd_id[], unsigned int count);
+int remount_shfs(void);
 int umount_shfs(void);
 void exit_shfs(void);
 
