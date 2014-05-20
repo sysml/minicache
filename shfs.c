@@ -30,8 +30,8 @@
 #define CACHELINE_SIZE 64
 #endif
 
-volatile int shfs_mounted = 0;
-volatile unsigned int shfs_nb_open = 0;
+int shfs_mounted = 0;
+unsigned int shfs_nb_open = 0;
 struct semaphore shfs_mount_lock;
 struct vol_info shfs_vol;
 

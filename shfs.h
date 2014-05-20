@@ -59,8 +59,8 @@ struct vol_info {
 
 extern struct vol_info shfs_vol;
 extern struct semaphore shfs_mount_lock;
-extern volatile int shfs_mounted;
-extern volatile unsigned int shfs_nb_open;
+extern int shfs_mounted;
+extern unsigned int shfs_nb_open;
 
 int init_shfs(void);
 int mount_shfs(unsigned int vbd_id[], unsigned int count);
