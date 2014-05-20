@@ -24,11 +24,8 @@
  * -> bentry does exist
  */
 static inline struct shfs_el_stats *shfs_stats_from_fd(SHFS_FD f) {
-	struct shfs_hentry *hentry = (struct shfs_hentry *) f;
-	struct shfs_bentry *bentry;
+	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 
-	/* lookup bentry */
-	bentry = shfs_btable_lookup(shfs_vol.bt, hentry->hash);
 	return shfs_stats_from_bentry(bentry);
 }
 

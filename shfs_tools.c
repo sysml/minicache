@@ -58,6 +58,36 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	return 0;
 }
 
+static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
+{
+	struct htable_el *el;
+	struct shfs_bentry *bentry;
+	char str_hash[(shfs_vol.hlen * 2) + 1];
+
+	down(&shfs_mount_lock);
+	if (!shfs_mounted) {
+		fprintf(cio, "No SHFS filesystem mounted\n");
+		goto out;
+	}
+
+	str_hash[(shfs_vol.hlen * 2)] = '\0';
+
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
+		if (bentry->refcount > 0) {
+			hash_unparse(*el->h, shfs_vol.hlen, str_hash);
+			fprintf(cio, "%c%s %12lu\n",
+			        SFHS_HASH_INDICATOR_PREFIX,
+			        str_hash,
+			        bentry->refcount);
+		}
+	}
+
+ out:
+	up(&shfs_mount_lock);
+	return 0;
+}
+
 static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 {
 	char str_mime[128];
@@ -293,6 +323,7 @@ int register_shfs_tools(struct ctldir *cd)
 	shell_register_cmd("mount", shcmd_shfs_mount);
 	shell_register_cmd("umount", shcmd_shfs_umount);
 	shell_register_cmd("ls", shcmd_shfs_ls);
+	shell_register_cmd("lsof", shcmd_shfs_lsof);
 	shell_register_cmd("file", shcmd_shfs_file);
 	shell_register_cmd("df", shcmd_shfs_dumpfile);
 	shell_register_cmd("cat", shcmd_shfs_cat);

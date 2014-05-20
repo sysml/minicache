@@ -6,7 +6,7 @@
 
 #define SFHS_HASH_INDICATOR_PREFIX '?'
 
-typedef struct shfs_hentry *SHFS_FD;
+typedef struct shfs_bentry *SHFS_FD;
 
 /**
  * Opens a file/object via hash or name depending on
@@ -28,20 +28,20 @@ void shfs_fio_size(SHFS_FD f, uint64_t *out);
 
 /* volume chunk address of file chunk address */
 #define shfs_volchk_fchk(f, fchk) \
-	((f)->chunk + (fchk))
+	((f)->hentry->chunk + (fchk))
 
 /* volume chunk address of file byte offset */
 #define shfs_volchk_foff(f, foff) \
-	(((f)->offset + (foff)) / shfs_vol.chunksize + (f)->chunk)
+	(((f)->hentry->offset + (foff)) / shfs_vol.chunksize + (f)->hentry->chunk)
 /* byte offset in volume chunk of file byte offset */
 #define shfs_volchkoff_foff(f, foff) \
-	(((f)->offset + (foff)) % shfs_vol.chunksize)
+	(((f)->hentry->offset + (foff)) % shfs_vol.chunksize)
 
 /* Check macros to test if a address is within file bounds */
 #define shfs_is_fchk_in_bound(f, fchk) \
-	(DIV_ROUND_UP(((f)->offset + (f)->len), shfs_vol.chunksize) > (fchk))
+	(DIV_ROUND_UP(((f)->hentry->offset + (f)->hentry->len), shfs_vol.chunksize) > (fchk))
 #define shfs_is_foff_in_bound(f, foff) \
-	((f)->len > (foff))
+	((f)->hentry->len > (foff))
 
 
 /*

@@ -38,7 +38,9 @@
 struct shfs_bentry {
 	chk_t hentry_htchunk;       /* relative chunk:offfset addres to entry in SHFS htable */
 	off_t hentry_htoffset;
+	struct shfs_hentry *hentry; /* reference to buffered entry in cache */
 
+	unsigned int refcount;
 #ifdef SHFS_STATS
 	struct shfs_el_stats hstats;
 #endif /* SHFS_STATS */
