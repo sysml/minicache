@@ -128,7 +128,7 @@ SHFS_FD shfs_fio_open(const char *path)
 
 	++shfs_nb_open;
 	if (bentry->refcount == 0) /* lock file for updates */
-		down(&bentry->updatelock);
+		trydown(&bentry->updatelock);
 	++bentry->refcount;
 #ifdef SHFS_STATS
 	estats = shfs_stats_from_bentry(bentry);

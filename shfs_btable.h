@@ -82,9 +82,6 @@ static inline struct shfs_bentry *shfs_btable_addentry(struct htable *bt, hash51
 	return NULL;
 }
 
-#define shfs_btable_rmentry(bt, h) \
-	htable_rm((bt), (h))
-
 /**
  * This function is intended to be used during (re-)mount time.
  * It is intended to load a hash table from a device:

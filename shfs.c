@@ -18,6 +18,7 @@
 #include "shfs_tools.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
+#include "shfs_stats.h"
 #endif
 
 #ifdef SHFS_DEBUG
@@ -286,9 +287,6 @@ static int load_vol_htable(void)
 	void *chk_buf;
 	chk_t cur_chk, cur_htchk;
 	unsigned int i;
-#if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
-	unsigned int j;
-#endif
 	int ret;
 
 	/* allocate bucket table */
@@ -344,17 +342,8 @@ static int load_vol_htable(void)
 		bentry->update = 0;
 		init_SEMAPHORE(&bentry->updatelock, 1);
 #ifdef SHFS_STATS
-		bentry->hstats.laccess = 0;
-		bentry->hstats.h = 0;
-		bentry->hstats.m = 0;
-#ifdef SHFS_STATS_HTTP
-		bentry->hstats.c = 0;
-#ifdef SHFS_STATS_HTTP_DPC
-		for (j=0; j<SHFS_STATS_HTTP_DPCR; ++j)
-			bentry->hstats.p[j] = 0;
+		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
 #endif
-#endif
-#endif /* SHFS_STATS */
 	}
 
 	return 0;
@@ -502,6 +491,10 @@ int umount_shfs(void) {
  *  is different from the one of the main loop
  */
 static int reload_vol_htable(void) {
+#ifdef SHFS_STATS
+	struct shfs_el_stats *el_stats;
+#endif
+	struct shfs_bentry *bentry;
 	struct shfs_hentry *chentry;
 	struct shfs_hentry *nhentry;
 	struct mempool_obj *nchk_buf_obj;
@@ -539,15 +532,48 @@ static int reload_vol_htable(void) {
 				chash_is_zero = hash_is_zero(chentry->hash, shfs_vol.hlen);
 				nhash_is_zero = hash_is_zero(nhentry->hash, shfs_vol.hlen);
 
-				if (chash_is_zero && !nhash_is_zero) {
-					/* entry added */
-					dprintf("Chunk %lu, entry %lu has been added\n", c ,e);
-				} else if (!chash_is_zero && nhash_is_zero) {
-					/* entry deleted */
-					dprintf("Chunk %lu, entry %lu has been deleted\n", c ,e);
-				} else if (!chash_is_zero && !nhash_is_zero) {
-					/* entry updated */
+				if (!chash_is_zero || !nhash_is_zero) {
 					dprintf("Chunk %lu, entry %lu has been updated\n", c ,e);
+					/* Update hash of entry
+					 * Note: Any open file should not be affected, because
+					 *  there is no hash table lookup needed again
+					 *  The meta data is updated after all handles were closed
+					 * Note: Since we lock the file in the next step, 
+					 *  upcoming open of this entry will only be successful
+					 *  when the update has been finished */
+					bentry = shfs_btable_feed(shfs_vol.bt,
+					          (c * shfs_vol.htable_nb_entries_per_chunk) + e,
+					          nhentry->hash);
+					/* lock entry */
+					bentry->update = 1; /* forbid further open() */
+					down(&bentry->updatelock); /* wait until files is closed */
+
+#ifdef SHFS_STATS
+					if (!chash_is_zero) {
+						/* move current stats to miss table */
+						el_stats = shfs_stats_from_mstats(chentry->hash);
+						if (likely(el_stats != NULL))
+							memcpy(el_stats, &bentry->hstats, sizeof(*el_stats));
+
+						/* reset stats of element */
+						memset(&bentry->hstats, 0, sizeof(*el_stats));
+		       			} else {
+						/* load stats from miss table */
+						el_stats = shfs_stats_from_mstats(nhentry->hash);
+						if (likely(el_stats != NULL))
+							memcpy(&bentry->hstats, el_stats, sizeof(*el_stats));
+						else
+							memset(&bentry->hstats, 0, sizeof(*el_stats));
+
+						/* delete entry from miss stats */
+						shfs_stats_mstats_drop(nhentry->hash);
+					}
+#endif
+					memcpy(chentry, nhentry, sizeof(*chentry));
+
+					/* unlock entry */
+					up(&bentry->updatelock);
+					bentry->update = 0;
 				}
 			}
 		}

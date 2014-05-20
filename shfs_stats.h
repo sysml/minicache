@@ -38,28 +38,27 @@ static inline struct shfs_el_stats *shfs_stats_from_mstats(hash512_t h) {
 	int is_new;
 	struct htable_el *el;
 	struct shfs_el_stats *el_stats;
-#if defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
-	register unsigned int i;
-#endif
 
 	el = htable_lookup_add(shfs_vol.mstats.el_ht, h, &is_new);
 	if (unlikely(!el))
 		return NULL;
 
 	el_stats = (struct shfs_el_stats *) el->private;
-	if (is_new) {
-		el_stats->laccess = 0;
-		el_stats->h = 0;
-		el_stats->m = 0;
-#ifdef SHFS_STATS_HTTP
-		el_stats->c = 0;
-#ifdef SHFS_STATS_HTTP_DPC
-		for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i)
-			el_stats->p[i] = 0;
-#endif
-#endif
-	}
+	if (is_new)
+		memset(el_stats, 0, sizeof(*el_stats));
 	return el_stats;
+}
+
+/*
+ * Deletes an entry from mstat table
+ */
+static inline void shfs_stats_mstats_drop(hash512_t h) {
+	struct htable_el *el;
+
+	el = htable_lookup(shfs_vol.mstats.el_ht, h);
+	if (!el)
+		return;
+	htable_rm(shfs_vol.mstats.el_ht, el);
 }
 
 /*
@@ -74,22 +73,10 @@ static inline void shfs_reset_mstats(void) {
 static inline void shfs_reset_hstats(void) {
 	struct htable_el *el;
 	struct shfs_el_stats *el_stats;
-#if defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
-	register unsigned int i;
-#endif
 
 	foreach_htable_el(shfs_vol.bt, el) {
 		el_stats = shfs_stats_from_bentry((struct shfs_bentry *) el->private);
-		el_stats->laccess = 0;
-		el_stats->h = 0;
-		el_stats->m = 0;
-#ifdef SHFS_STATS_HTTP
-		el_stats->c = 0;
-#ifdef SHFS_STATS_HTTP_DPC
-		for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i)
-			el_stats->p[i] = 0;
-#endif
-#endif
+		memset(el_stats, 0, sizeof(*el_stats));
 	}
 }
 
