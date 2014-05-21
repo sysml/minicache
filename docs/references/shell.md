@@ -5,7 +5,7 @@ MiniCache: µShell command reference
 By using `telnet [IP/DNS of CACHE]`, a shell session is established.
 
 ```
-cat [FILE]
+cat [FILE]...
 ```
  Displays FILE contents.
 
@@ -40,7 +40,7 @@ export-stats
  Exports collected access statistics to the configured stats device.
 
 ```
-file [FILE]
+file [FILE]...
 ```
  Displays MIME-type and size of FILE.
 

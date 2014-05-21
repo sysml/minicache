@@ -25,10 +25,8 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	char str_date[20];
 
 	down(&shfs_mount_lock);
-	if (!shfs_mounted) {
-		fprintf(cio, "No SHFS filesystem mounted\n");
+	if (!shfs_mounted)
 		goto out;
-	}
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
@@ -65,10 +63,8 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 	char str_hash[(shfs_vol.hlen * 2) + 1];
 
 	down(&shfs_mount_lock);
-	if (!shfs_mounted) {
-		fprintf(cio, "No SHFS filesystem mounted\n");
+	if (!shfs_mounted)
 		goto out;
-	}
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 
@@ -97,20 +93,20 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 	int ret = 0;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [FILE]...\n", argv[0]);
+		fprintf(cio, "Usage: %s [file]...\n", argv[0]);
 		return -1;
 	}
 
 	for (i = 1; i < argc; ++i) {
 		f = shfs_fio_open(argv[i]);
 		if (!f) {
-			fprintf(cio, "%s: Could not open: %s\n", argv[1], strerror(errno));
+			fprintf(cio, "%s: Could not open: %s\n", argv[i], strerror(errno));
 			return -1;
 		}
 		shfs_fio_mime(f, str_mime, sizeof(str_mime));
 		shfs_fio_size(f, &fsize);
 
-		fprintf(cio, "%s: %s, ", argv[1], str_mime);
+		fprintf(cio, "%s: %s, ", argv[i], str_mime);
 		if (fsize < 1024)
 			fprintf(cio, "%lu B\n", fsize);
 		else
@@ -124,49 +120,54 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 
 static int shcmd_shfs_cat(FILE *cio, int argc, char *argv[])
 {
-	SHFS_FD f;
-	char buf[129];
+	char buf[1024];
 	uint64_t fsize, left, cur, dlen, plen;
+	unsigned int i;
+	SHFS_FD f;
 	int ret = 0;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [FILE]\n", argv[0]);
+		fprintf(cio, "Usage: %s [file]...\n", argv[0]);
 		return -1;
 	}
 
-	f = shfs_fio_open(argv[1]);
-	if (!f) {
-		fprintf(cio, "%s: Could not open: %s\n", argv[1], strerror(errno));
-		return -1;
-	}
-	shfs_fio_size(f, &fsize);
-
-	left = fsize;
-	cur = 0;
-	while (left) {
-		dlen = min(left, sizeof(buf) - 1);
-
-		ret = shfs_fio_read(f, cur, buf, dlen);
-		if (ret < 0) {
-			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
-			goto out;
+	for (i = 1; i < argc; ++i) {
+		f = shfs_fio_open(argv[i]);
+		if (!f) {
+			fprintf(cio, "%s: Could not open: %s\n", argv[i], strerror(errno));
+			return -1;
 		}
-		buf[dlen] = '\0'; /* set terminating character for fprintf */
-		plen = fprintf(cio, "%s", buf);
-		fflush(cio);
-		if (plen < dlen) {
-			/* terminating character found earlier than expected
-			 * -> end of string in file */
-			goto out;
-		}
-		left -= dlen;
-		cur += dlen;
-	}
+		shfs_fio_size(f, &fsize);
 
+		left = fsize;
+		cur = 0;
+		while (left) {
+			dlen = min(left, sizeof(buf) - 1);
+
+			ret = shfs_fio_read(f, cur, buf, dlen);
+			if (ret < 0) {
+				fprintf(cio, "%s: Read error: %s\n", argv[i], strerror(-ret));
+				shfs_fio_close(f);
+				goto out;
+			}
+			buf[dlen] = '\0'; /* set terminating character for fprintf */
+			plen = 0;
+			while (plen < dlen) {
+				plen += fprintf(cio, "%s", buf + plen);
+				if (plen < dlen) {
+					/* terminating character found earlier than expected
+					 * continue printing after this character */
+					++plen;
+				}
+			}
+			fflush(cio);
+			left -= dlen;
+			cur += dlen;
+		}
+		shfs_fio_close(f);
+	}
  out:
-	fflush(stdout);
 	fflush(cio);
-	shfs_fio_close(f);
 	return ret;
 }
 
@@ -179,7 +180,7 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 	int ret = 0;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [FILE]\n", argv[0]);
+		fprintf(cio, "Usage: %s [file]\n", argv[0]);
 		return -1;
 	}
 
@@ -276,10 +277,12 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	unsigned int m;
 	char str_uuid[17];
 	char str_date[20];
+	int ret = 0;
 
 	down(&shfs_mount_lock);
 	if (!shfs_mounted) {
-		fprintf(cio, "No SHFS filesystem mounted\n");
+		fprintf(cio, "No SHFS filesystem is mounted\n");
+		ret = -1;
 		goto out;
 	}
 
