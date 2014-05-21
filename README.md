@@ -1,13 +1,17 @@
-# MiniCache
+MiniCache
+=========
 
-## What is MiniCache?
+What is MiniCache?
+------------------
 
 MiniCache is a content cache server based on Mini-OS. It follows the
 minimalistic and single-purpose VM idea. MiniCache servers files via HTTP,
 provides a tiny telnet shell server (µShell) for management, and comes with
 SHFS support.
 
-## Building MiniCache
+
+Building MiniCache
+------------------
 
 ### Preparations
 It is recommended that you create a target directory first (e.g., ~/workspace).
@@ -122,7 +126,7 @@ following example as a basis:
 
     vif           = [ 'mac=00:16:3e:ba:be:12,bridge=expbr0' ]
 
-    # One FS image and 3 RAM-based drives
+    # Here, one FS image and 3 RAM-based drives
     disk          = [ 'file:/root/workspace/minicache/demofs.img,xvda,w',
                       'phy:/dev/ram13,xvdb,w',
                       'phy:/dev/ram14,xvdc,w',
@@ -134,6 +138,11 @@ are passed as kernel parameters to the image:
 
     chmod a+x minicache
     ./minicache -i 192.168.0.2/24 -g 192.168.0.1
+
+Otherwise, use the `extra` option in the Xen Domain configuration file to
+specify the kernel parameters:
+
+    extra         = '-i 192.168.0.2/24 -g 192.168.0.1'
 
 
 ### MiniCache Parameters
@@ -147,6 +156,6 @@ are passed as kernel parameters to the image:
     -b [VBD ID]            Automount filesystem from VBD ID
                            (multiple tokens possible;
                             disables vbd auto detection)
-    -h                     Disable XenStore control interfaces
+    -h                     Disable XenStore control trigger
                            (see: ctltrigger)
     -x [VBD ID]            Device for stats export
