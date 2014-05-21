@@ -5,18 +5,29 @@ import stat
 import fcntl
 import subprocess
 
-CMD_CTLTRIGGER="../ctltrigger/ctltrigger"
+CMDA_CTLTRIGGER="ctltrigger" # expected to be in $PATH
+CMDB_CTLTRIGGER="../ctltrigger/ctltrigger" # alternatively
 BLKFLSBUF = 0x00001261 # from <linux/fs.h>
 BYTESPERREAD = 512
 
 def ctltrigger(domid, action, args=[], scope="minicache"):
-    pargs = [CMD_CTLTRIGGER, domid, scope, action]
+    pargs = [CMDA_CTLTRIGGER, domid, scope, action]
     pargs.extend(args)
     try:
         p = subprocess.Popen(pargs, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     except OSError as e:
-        sys.stderr.write("Could not execute '%s': %s\n" % (CMD_CTLTRIGGER, e.strerror))
-        exit(1)
+        if e.errno == os.errno.ENOENT:
+            try:
+                # try again with CMDB
+                pargs = [CMDB_CTLTRIGGER, domid, scope, action]
+                pargs.extend(args)
+                p = subprocess.Popen(pargs, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            except OSError as e:
+                sys.stderr.write("Could not execute '%s': %s\n" % (CMDB_CTLTRIGGER, e.strerror))
+                exit(1)
+        else:
+            sys.stderr.write("Could not execute '%s': %s\n" % (CMDA_CTLTRIGGER, e.strerror))
+            exit(1)
     (pout, perr) = p.communicate("")
     prc = p.returncode
     if prc != 0:
@@ -52,7 +63,8 @@ if not sdev_isblk and not stat.S_ISREG(sdev_info.st_mode):
 # trigger stats export
 rc = ctltrigger(domid=sys.argv[1], action="export-stats")
 if rc != 0:
-    sys.stderr.write("Could not request %s\n" % rc)
+    sys.stderr.write("Could not trigger action 'export-stats' on Domain %s\n" % sys.argv[1])
+    exit(1)
 
 # discard OS's buffer caches for block devices
 if sdev_isblk:
