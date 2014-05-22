@@ -1,5 +1,8 @@
-#ifndef _TOOLS_COMMON_
-#define _TOOLS_COMMON_
+/*
+ *
+ */
+#ifndef _CTLTRIGGER_H_
+#define _CTLTRIGGER_H_
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -7,7 +10,15 @@
 #include <errno.h>
 #include <time.h>
 
-#include "shfs_defs.h"
+#define STR_VERSION "XenStore Control Action Trigger v0.01"
+
+struct args {
+	unsigned int domid;
+	char *scope;
+	char *trigger;
+	char *args; /* malloc'd */
+	int nowait;
+};
 
 /*
  * Print helpers
@@ -25,7 +36,6 @@ extern int force;
 #define D_L0		1
 #define D_L1		2
 #define D_MAX		D_L1
-
 
 /*
  * Argument parsing helper
@@ -50,42 +60,4 @@ static inline int parse_args_setval_int(int* out, const char* buf)
 	return 0;
 }
 
-/*
- * Disk I/O
- */
-struct disk {
-	int fd;
-	char *path;
-	uint64_t size;
-	uint32_t blksize;
-};
-
-struct disk *open_disk(const char *path, int mode);
-void close_disk(struct disk *d);
-
-/*
- * Misc
- */
-void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
-                            struct shfs_hdr_config *hdr_config);
-chk_t metadata_size(struct shfs_hdr_common *hdr_common,
-                    struct shfs_hdr_config *hdr_config);
-chk_t avail_space(struct shfs_hdr_common *hdr_common,
-                  struct shfs_hdr_config *hdr_config);
-static inline void hash_unparse(hash512_t h, uint8_t hlen, char *out)
-{
-	uint8_t i;
-
-	for (i = 0; i < hlen; i++)
-		snprintf(out + (2*i), 3, "%02x", h[i]);
-}
-
-static inline size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec)
-{
-	struct tm *tm;
-	time_t *tsec = (time_t *) &ts_sec;
-	tm = localtime(tsec);
-	return strftime(s, slen, fmt, tm);
-}
-
-#endif /* _TOOLS_COMMON_ */
+#endif /* _CTLTRIGGER_H_ */

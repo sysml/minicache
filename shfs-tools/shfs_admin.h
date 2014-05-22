@@ -52,7 +52,7 @@ struct vol_info {
 	uint32_t stripesize;
 
 	/* hash table */
-	struct shfs_btable *bt;
+	struct htable *bt;
 	void **htable_chunk_cache;
 	int *htable_chunk_cache_state;
 	chk_t htable_ref;

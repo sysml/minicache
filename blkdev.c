@@ -1,6 +1,7 @@
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
+#include <xenbus.h>
 #include <limits.h>
 #include <errno.h>
 
@@ -20,9 +21,65 @@
   (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif /* container_of */
 
+struct blkdev *_open_bd_list = NULL;
+
+unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb)
+{
+  register unsigned int i = 0;
+  register unsigned int found = 0;
+  char path[128];
+  int ival;
+  char *xb_errmsg;
+  char **vbd_entries;
+
+  snprintf(path, sizeof(path), "/local/domain/%u/device/vbd", xenbus_get_self_id());
+  xb_errmsg = xenbus_ls(XBT_NIL, path, &vbd_entries);
+  if (xb_errmsg || (!vbd_entries)) {
+    if (xb_errmsg)
+      free(xb_errmsg);
+    return 0;
+  }
+
+  /* interate through list */
+  while (vbd_entries[i] != NULL) {
+    if (found < max_nb) {
+      if (sscanf(vbd_entries[i], "%d", &ival) == 1) {
+        vbd_ids[found++] = (unsigned int) ival;
+      }
+    }
+    free(vbd_entries[i++]);
+  }
+
+  free(vbd_entries);
+  return found;
+}
+
 struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 {
   struct blkdev *bd;
+
+  /* search in blkdev list if device is already open */
+  for (bd = _open_bd_list; bd != NULL; bd = bd->_next) {
+	  if (bd->vbd_id == vbd_id) {
+		  /* found: device is already open,
+		   *  now we check if it was/shall be opened
+		   *  exclusively and requested permissions
+		   *  are available */
+		  if (mode & O_EXCL ||
+		      bd->exclusive) {
+			  errno = EBUSY;
+			  goto err;
+		  }
+		  if (((mode & O_WRONLY) && !(bd->info.mode & (O_WRONLY | O_RDWR))) ||
+		      ((mode & O_RDWR) && !(bd->info.mode & O_RDWR))) {
+			  errno = EACCES;
+			  goto err;
+		  }
+
+		  ++bd->refcount;
+		  return bd;
+	  }
+  }
 
   bd = xmalloc(struct blkdev);
   if (!bd) {
@@ -37,6 +94,8 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
   }
 
   bd->vbd_id = vbd_id;
+  bd->refcount = 1;
+  bd->exclusive = !!(mode & O_EXCL);
   snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", vbd_id);
 
   bd->dev = init_blkfront(bd->nname, &(bd->info));
@@ -45,12 +104,18 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 	goto err_free_reqpool;
   }
 
-  bd->mode = mode & bd->info.mode;
-  if (((mode & O_WRONLY) && !(bd->info.mode & O_WRONLY)) ||
-	  ((mode & O_RDONLY) && !(bd->info.mode & O_RDONLY))) {
+  if (((mode & O_WRONLY) && !(bd->info.mode & (O_WRONLY | O_RDWR))) ||
+      ((mode & O_RDWR) && !(bd->info.mode & O_RDWR))) {
 	errno = EACCES;
 	goto err_shutdown_blkfront;
   }
+
+  /* link new element to the head of _open_bd_list */
+  bd->_prev = NULL;
+  bd->_next = _open_bd_list;
+  _open_bd_list = bd;
+  if (bd->_next)
+    bd->_next->_prev = bd;
   return bd;
 
  err_shutdown_blkfront:
@@ -65,12 +130,20 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 
 void close_blkdev(struct blkdev *bd)
 {
-  if (!bd)
-	return;
+  --bd->refcount;
+  if (bd->refcount == 0) {
+    /* unlink element from _open_bd_list */
+    if (bd->_next)
+      bd->_next->_prev = bd->_prev;
+    if (bd->_prev)
+      bd->_prev->_next = bd->_next;
+    else
+      _open_bd_list = bd->_next;
 
-  shutdown_blkfront(bd->dev);
-  free_mempool(bd->reqpool);
-  xfree(bd);
+    shutdown_blkfront(bd->dev);
+    free_mempool(bd->reqpool);
+    xfree(bd);
+  }
 }
 
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret)

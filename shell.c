@@ -13,6 +13,7 @@
 #include <sched.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <time.h>
 
 #ifdef SHELL_DEBUG
 #define ENABLE_DEBUG
@@ -68,13 +69,13 @@
 
 struct shell {
     struct tcp_pcb *tpcb;
-    uint64_t ts_start;
+    struct timeval ts_start;
     const char *info;
     const char *welcome;
     const char *goodbye;
 
     /* commands register */
-    const char *cmd_str[MAX_NB_CMDS];
+    char *cmd_str[MAX_NB_CMDS];
     shfunc_ptr_t cmd_func[MAX_NB_CMDS];
 
     /* shell sessions */
@@ -106,7 +107,7 @@ struct shell_sess {
     enum shell_sess_type type;
     enum shell_sess_state state;
 
-    uint64_t ts_start;
+    struct timeval ts_start;
     char *prompt;
     int echo; /* echo input */
     int respawn; /* respawn a closed session? */
@@ -134,8 +135,11 @@ static struct shell *sh = NULL; /* will be initialized first */
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
+static int shcmd_clear(FILE *cio, int argc, char *argv[]);
 static int shcmd_time(FILE *cio, int argc, char *argv[]);
+static int shcmd_repeat(FILE *cio, int argc, char *argv[]);
 static int shcmd_uptime(FILE *cio, int argc, char *argv[]);
+static int shcmd_date(FILE *cio, int argc, char *argv[]);
 static int shcmd_who(FILE *cio, int argc, char *argv[]);
 static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
@@ -163,7 +167,8 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
         errno = ENOMEM;
         goto err_out;
     }
-    sh->ts_start = NOW(); /* timestamp of shell creation */
+
+    gettimeofday(&sh->ts_start, NULL); /* timestamp of shell creation */
     sh->welcome = SHELL_WELCOME;
     sh->goodbye = SHELL_GOODBYE;
     for (i = 0; i < MAX_NB_CMDS; i++) {
@@ -201,10 +206,13 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("help",   shcmd_help);
     shell_register_cmd("info",   shcmd_info);
     shell_register_cmd("exit",   shcmd_exit);
+    shell_register_cmd("clear",  shcmd_clear);
     shell_register_cmd("echo",   shcmd_echo);
     shell_register_cmd("who",    shcmd_who);
     shell_register_cmd("time",   shcmd_time);
+    shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
+    shell_register_cmd("date",   shcmd_date);
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
 #endif
@@ -251,6 +259,10 @@ void exit_shell(void)
     if (sh->tpcb)
         tcp_close(sh->tpcb);
 #endif
+    for (i = 0; i < MAX_NB_CMDS; i++) {
+        if(sh->cmd_str[i])
+            free(sh->cmd_str[i]);
+    }
     xfree(sh);
 }
 
@@ -307,8 +319,12 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
     }
 
     /* register cmd */
+    sh->cmd_str[i] = strdup(cmd);
+    if (!sh->cmd_str[i]) {
+	errno = ENOMEM;
+	return -1;
+    }
     sh->cmd_func[i] = func;
-    sh->cmd_str[i] = cmd;
     dprintf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
@@ -321,6 +337,7 @@ void shell_unregister_cmd(const char *cmd)
 
     i = shell_get_cmd_index(cmd);
     if (i >= 0) {
+        free(sh->cmd_str[i]);
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
         dprintf("shell: Command %i ('%s') unregistered\n", i, cmd);
@@ -500,7 +517,7 @@ static err_t shlsess_accept(void)
     sess->echo = 1; /* enable echo of input on console */
     sess->respawn = 1; /* enable session respawning */
 
-    sess->ts_start = NOW();
+    gettimeofday(&sess->ts_start, NULL);
     sess->prompt = strdup(SHELL_PROMPT);
     if (!sess->prompt) {
         err = ERR_MEM;
@@ -662,7 +679,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
         err = ERR_MEM;
         goto err_free_sess;
     }
-    sess->ts_start = NOW();
+    gettimeofday(&sess->ts_start, NULL);
     sess->id = shell_get_free_sess_id();
 
     sess->cio_rxbuf_ridx = 0;
@@ -821,12 +838,34 @@ static int shcmd_help(FILE *cio, int argc, char *argv[])
 static int shcmd_who(FILE *cio, int argc, char *argv[])
 {
     /* list opened sessions */
-    /* TODO: Copy session name before printing (session might close while printing) */
+    struct timeval now;
+    uint64_t days = 0;
+    uint64_t hours = 0;
+    uint64_t mins = 0;
+    uint64_t secs;
+    char str_name[32];
     int32_t i;
 
+    gettimeofday(&now, NULL);
     for (i = 0; i < MAX_NB_SESS; i++){
-        if (sh->sess[i])
-	        fprintf(cio, " %s\n", sh->sess[i]->name);
+        if (sh->sess[i]) {
+	    secs = (now.tv_sec - sh->sess[i]->ts_start.tv_sec);
+	    mins = secs / 60;
+	    secs = secs % 60;
+	    hours = mins / 60;
+	    mins = mins % 60;
+	    days = hours / 24;
+	    hours = hours % 24;
+	    strncpy(str_name, sh->sess[i]->name, sizeof(str_name));
+	    str_name[sizeof(str_name) - 1] = '\0';
+
+	    if (days)
+		fprintf(cio, " %s: up %lu days %lu:%02lu:%02lu\n",
+		        str_name, days, hours, mins, secs);
+	    else
+		fprintf(cio, " %s: up %lu:%02lu:%02lu\n",
+		        str_name, hours, mins, secs);
+	    }
     }
     return 0;
 }
@@ -834,12 +873,14 @@ static int shcmd_who(FILE *cio, int argc, char *argv[])
 static int shcmd_uptime(FILE *cio, int argc, char *argv[])
 {
     /* shows shell uptime */
+    struct timeval now;
     uint64_t days = 0;
     uint64_t hours = 0;
     uint64_t mins = 0;
     uint64_t secs;
 
-    secs = (NOW() - sh->ts_start) / 1000000000l;
+    gettimeofday(&now, NULL);
+    secs = (now.tv_sec - sh->ts_start.tv_sec);
     mins = secs / 60;
     secs = secs % 60;
     hours = mins / 60;
@@ -854,10 +895,35 @@ static int shcmd_uptime(FILE *cio, int argc, char *argv[])
     return 0;
 }
 
+static int shcmd_date(FILE *cio, int argc, char *argv[])
+{
+    /* shows shell uptime */
+    struct timeval now;
+    struct tm *tm;
+    time_t tsec;
+    char str_date[64];
+
+    gettimeofday(&now, NULL);
+    tsec = (time_t) now.tv_sec;
+    tm = localtime(&tsec);
+
+    strftime(str_date, sizeof(str_date), "%c", tm);
+    fprintf(cio, "%s\n", str_date);
+    return 0;
+}
+
 static int shcmd_exit(FILE *cio, int argc, char *argv[])
 {
     /* closes shell */
     return SH_CLOSE;
+}
+
+static int shcmd_clear(FILE *cio, int argc, char *argv[])
+{
+    /* echo args */
+    fprintf(cio, "\e[H\e[J");
+    fflush(cio);
+    return 0;
 }
 
 static int shcmd_echo(FILE *cio, int argc, char *argv[])
@@ -879,8 +945,8 @@ static int shcmd_time(FILE *cio, int argc, char *argv[])
     /* run a shell command while measuring its execution time */
     int ret = 0;
     int32_t cmdi;
-    uint64_t ts_start = 0;
-    uint64_t ts_end = 0;
+    struct timeval tm_start;
+    struct timeval tm_end;
     uint64_t mins = 0;
     uint64_t secs = 0;
     uint64_t usecs = 0;
@@ -895,12 +961,16 @@ static int shcmd_time(FILE *cio, int argc, char *argv[])
         goto out;
     }
 
-    ts_start = NOW();
+    gettimeofday(&tm_start, NULL);
     ret = sh->cmd_func[cmdi](cio, argc - 1, &argv[1]);
-    ts_end = NOW();
+    gettimeofday(&tm_end, NULL);
 
-    usecs = (ts_end - ts_start) / 1000l;
-    secs = usecs / 1000000l;
+    if (tm_end.tv_usec < tm_start.tv_usec) {
+	    tm_end.tv_usec += 1000000l;
+	    --tm_end.tv_sec;
+    }
+    usecs = (tm_end.tv_usec - tm_start.tv_usec);
+    secs = usecs / 1000000l + (tm_end.tv_sec - tm_start.tv_sec);
     usecs %= 1000000l;
     mins = secs / 60;
     secs %= 60;
@@ -908,6 +978,43 @@ static int shcmd_time(FILE *cio, int argc, char *argv[])
  out:
     fprintf(cio, "%s: command runtime %lum%lu.%06lus\n", argv[1], mins, secs, usecs);
     return ret;
+}
+
+
+static int shcmd_repeat(FILE *cio, int argc, char *argv[])
+{
+    /* run a shell command multiple times */
+    int ret = 0;
+    int32_t cmdi;
+    unsigned int arg_times, arg_delay;
+    int do_delay = 0;
+
+    if (argc <= 3)
+	goto usage;
+    if (sscanf(argv[1], "%u", &arg_times) != 1)
+        goto usage;
+    if (sscanf(argv[2], "%u", &arg_delay) != 1)
+	goto usage;
+    cmdi = shell_get_cmd_index(argv[3]);
+    if (cmdi < 0) {
+        fprintf(cio, "%s: command not found\n", argv[3]);
+        return 0;
+    }
+
+    while (arg_times != 0 && ret >= 0 && ret != SH_CLOSE) {
+	if (do_delay)
+	    msleep(arg_delay);
+	shcmd_clear(cio, 0, NULL);
+	ret = sh->cmd_func[cmdi](cio, argc - 3, &argv[3]);
+	fflush(cio);
+	do_delay = 1;
+	--arg_times;
+    }
+    return ret;
+
+ usage:
+    fprintf(cio, "Usage: %s [times] [delay-ms] [command] [[args]]...\n", argv[0]);
+    return -1;
 }
 
 

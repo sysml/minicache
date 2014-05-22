@@ -1,8 +1,11 @@
-# SHFS Tools
+SHFS Tools
+==========
 
 The SHFS tools can be used to create and manage SHFS object stores.
 
-## Requirements
+
+Requirements
+------------
 
 In order to build the SHFS tools, you will need to have the following
 shared libraries installed:
@@ -13,7 +16,9 @@ On Debian/Ubuntu you install them via:
 
     apt-get install libmhash2 libmhash-dev libuuid1 uuid-dev
 
-## Build Instructions
+
+Build Instructions
+------------------
 
 You build the SHFS tools with the following make command:
 
@@ -24,7 +29,9 @@ name (e.g., shfs_mkfs) to make:
 
     make shfs_mkfs
 
-## Examples: Using SHFS Tools
+
+Examples: Using SHFS Tools
+--------------------------
 
 ### Format a Physical Block Device with SHFS
 
@@ -38,3 +45,8 @@ name (e.g., shfs_mkfs) to make:
 ### Adding Files to an SHFS Volume
 
     shfs_admin --add-file /path/to/my_music.mp3 -m audio/mpeg shfs-demo.img
+
+### Note
+
+Please remember that you have to run remount on a MiniCache Domain after you
+did changes to the object store while it is mounted.

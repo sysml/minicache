@@ -95,6 +95,7 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	uint32_t htable_total_entries;
 	uint8_t  m;
 	char str_uuid[17];
+	char str_date[20];
 
 	chunksize            = SHFS_CHUNKSIZE(hdr_common);
 	hentry_size          = SHFS_HENTRY_SIZE;
@@ -110,6 +111,9 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	printf("Volume name:        %s\n", volname);
 	uuid_unparse(hdr_common->vol_uuid, str_uuid);
 	printf("Volume UUID:        %s\n", str_uuid);
+	strftimestamp_s(str_date, sizeof(str_date),
+	                "%b %e, %g %H:%M", hdr_common->vol_ts_creation);
+	printf("Creation date:      %s\n", str_date);
 	printf("Chunksize:          %lu KiB\n",
 	       chunksize / 1024);
 	printf("Volume size:        %lu KiB\n",

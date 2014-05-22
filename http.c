@@ -12,6 +12,9 @@
 #include <mempool.h>
 #include "shfs.h"
 #include "shfs_fio.h"
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+#include "shfs_stats.h"
+#endif
 
 #include "http_parser.h"
 #include "http_data.h"
@@ -154,6 +157,16 @@ struct http_sess {
 	SHFS_AIO_TOKEN *chk_buf_aiotoken[2];
 	int chk_buf_aioret[2];
 	unsigned int chk_buf_idx;
+
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+	struct {
+		struct shfs_el_stats *el_stats;
+#ifdef SHFS_STATS_HTTP_DPC
+		unsigned int dpc_i;
+		uint64_t dpc_threshold[SHFS_STATS_HTTP_DPCR];
+#endif
+	} stats;
+#endif
 };
 
 #if !(HTTP_MULTISERVER)
@@ -299,6 +312,9 @@ static inline void httpsess_reset(struct http_sess *hsess)
 	hsess->chk_buf_idx = UINT_MAX;
 	hsess->chk_buf_addr[0] = 0;
 	hsess->chk_buf_addr[1] = 0;
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
+	hsess->stats.dpc_i = 0;
+#endif
 	http_parser_init(&hsess->parser, HTTP_REQUEST);
 	httpsess_reset_keepalive(hsess);
 }
@@ -680,6 +696,9 @@ static int httprecv_req_complete(struct http_parser *parser)
 	register int ret;
 	register size_t nb_slines = 0;
 	register size_t nb_dlines = 0;
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
+	register unsigned int i;
+#endif
 
 	/* Reset default values */
 	hsess->keepalive = 0;
@@ -727,6 +746,13 @@ static int httprecv_req_complete(struct http_parser *parser)
 	shfs_fio_size(hsess->fd, &hsess->fsize);
 	shfs_fio_mime(hsess->fd, hsess->fmime, sizeof(hsess->fmime));
 	shfs_fio_name(hsess->fd, hsess->fname, sizeof(hsess->fname));
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+	hsess->stats.el_stats = shfs_stats_from_fd(hsess->fd);
+#if defined SHFS_STATS_HTTP_DPC
+	for (i = 0; i < SHFS_STATS_HTTP_DPCR; ++i)
+		hsess->stats.dpc_threshold[i] = SHFS_STATS_HTTP_DPC_THRESHOLD(hsess->fsize, i);
+#endif
+#endif
 
 	/* File range requested? */
 	hsess->rfirst = 0;
@@ -1205,8 +1231,16 @@ static err_t httpsess_respond(struct http_sess *hsess)
 		if (unlikely(err))
 			goto err_close;
 
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
+		while (unlikely(hsess->sent >= hsess->stats.dpc_threshold[hsess->stats.dpc_i]))
+			++hsess->stats.el_stats->p[hsess->stats.dpc_i++];
+#endif
+
 		if (unlikely(hsess->sent == hsess->rlen)) {
 			/* we are done */
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP
+			++hsess->stats.el_stats->c; /* successfully completed request */
+#endif
 			err = httpsess_eof(hsess);
 			if (err != ERR_OK)
 				return err;

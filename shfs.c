@@ -14,8 +14,12 @@
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
-#include "shfs_htable.h"
+#include "shfs_btable.h"
 #include "shfs_tools.h"
+#ifdef SHFS_STATS
+#include "shfs_stats_data.h"
+#include "shfs_stats.h"
+#endif
 
 #ifdef SHFS_DEBUG
 #define ENABLE_DEBUG
@@ -26,8 +30,8 @@
 #define CACHELINE_SIZE 64
 #endif
 
-volatile int shfs_mounted = 0;
-volatile unsigned int shfs_nb_open = 0;
+int shfs_mounted = 0;
+unsigned int shfs_nb_open = 0;
 struct semaphore shfs_mount_lock;
 struct vol_info shfs_vol;
 
@@ -144,6 +148,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	memcpy(shfs_vol.uuid, hdr_common->vol_uuid, 16);
 	memcpy(shfs_vol.volname, hdr_common->vol_name, 16);
 	shfs_vol.volname[17] = '\0'; /* ensure nullterminated volume name */
+	shfs_vol.ts_creation = hdr_common->vol_ts_creation;
 	shfs_vol.stripesize = hdr_common->member_stripesize;
 	shfs_vol.chunksize = SHFS_CHUNKSIZE(hdr_common);
 	shfs_vol.volsize = hdr_common->vol_size;
@@ -296,18 +301,12 @@ static int load_vol_htable(void)
 
 	/* allocate chunk cache reference table */
 	dprintf("Allocating chunk cache reference table...\n");
-	shfs_vol.htable_chunk_cache_state = _xmalloc(sizeof(int) * shfs_vol.htable_len, CACHELINE_SIZE);
-	if (!shfs_vol.htable_chunk_cache_state) {
-		ret = -ENOMEM;
-		goto err_free_btable;
-	}
-	memset(shfs_vol.htable_chunk_cache_state, 0, sizeof(int) * shfs_vol.htable_len);
-
 	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
 	if (!shfs_vol.htable_chunk_cache) {
 		ret = -ENOMEM;
-		goto err_free_chunkcachestate;
+		goto err_free_btable;
 	}
+	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
 
 	/* load hash table chunk-wise and fill-out btable metadata */
 	dprintf("Reading hash table...\n");
@@ -325,32 +324,36 @@ static int load_vol_htable(void)
 				goto err_free_chunkcache;
 			}
 			shfs_vol.htable_chunk_cache[cur_htchk]       = chk_buf;
-			shfs_vol.htable_chunk_cache_state[cur_htchk] = CCS_LOADED;
 
 			ret = shfs_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
-			if (ret < 0) {
+			if (ret < 0)
 				goto err_free_chunkcache;
-			}
 			cur_chk = cur_htchk;
 		}
 
-		bentry = shfs_btable_pick(shfs_vol.bt, i);
+		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf
+                         + SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk));
+
+		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
+		bentry->hentry = hentry;
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
-		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf + bentry->hentry_htoffset);
-		hash_copy(bentry->hash, hentry->hash, shfs_vol.hlen);
+		bentry->refcount = 0;
+		bentry->update = 0;
+		init_SEMAPHORE(&bentry->updatelock, 1);
+#ifdef SHFS_STATS
+		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
+#endif
 	}
 
 	return 0;
 
  err_free_chunkcache:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
-		if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
+		if (shfs_vol.htable_chunk_cache[i])
 			xfree(shfs_vol.htable_chunk_cache[i]);
 	}
 	xfree(shfs_vol.htable_chunk_cache);
- err_free_chunkcachestate:
-	xfree(shfs_vol.htable_chunk_cache_state);
  err_free_btable:
 	shfs_free_btable(shfs_vol.bt);
  err_out:
@@ -368,11 +371,15 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 
 	down(&shfs_mount_lock);
 
-	BUG_ON(shfs_mounted);
 	if (count == 0) {
 		ret = -EINVAL;
 		goto err_out;
 	}
+	if (shfs_mounted) {
+		ret = -EALREADY;
+		goto err_out;
+	}
+	shfs_mounted = 0;
 
 	/* load common volume information and open devices */
 	ret = load_vol_cconf(vbd_id, count);
@@ -408,25 +415,36 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 		goto err_free_htable;
 	}
 
+#ifdef SHFS_STATS
+	ret = shfs_init_mstats(shfs_vol.htable_nb_buckets,
+	                       shfs_vol.htable_nb_entries_per_bucket,
+	                       shfs_vol.hlen);
+	if (!ret < 0) {
+		shfs_mounted = 0;
+		goto  err_free_chunkpool;
+	}
+#endif
+
 	shfs_nb_open = 0;
 	up(&shfs_mount_lock);
 	return 0;
 
+ err_free_chunkpool:
+	free_mempool(shfs_vol.chunkpool);
  err_free_htable:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
-		if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
+		if (shfs_vol.htable_chunk_cache[i])
 			xfree(shfs_vol.htable_chunk_cache[i]);
 	}
 	xfree(shfs_vol.htable_chunk_cache);
-	xfree(shfs_vol.htable_chunk_cache_state);
 	shfs_free_btable(shfs_vol.bt);
  err_free_aiotoken_pool:
 	free_mempool(shfs_vol.aiotoken_pool);
  err_close_members:
 	for(i = 0; i < shfs_vol.nb_members; ++i)
 		close_blkdev(shfs_vol.member[i].bd);
- err_out:
 	shfs_mounted = 0;
+ err_out:
 	up(&shfs_mount_lock);
 	return ret;
 }
@@ -449,19 +467,173 @@ int umount_shfs(void) {
 
 		free_mempool(shfs_vol.chunkpool);
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
-			if (shfs_vol.htable_chunk_cache_state[i] & CCS_LOADED)
+			if (shfs_vol.htable_chunk_cache[i])
 				xfree(shfs_vol.htable_chunk_cache[i]);
 		}
 		xfree(shfs_vol.htable_chunk_cache);
-		xfree(shfs_vol.htable_chunk_cache_state);
 		shfs_free_btable(shfs_vol.bt);
 		free_mempool(shfs_vol.aiotoken_pool);
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			close_blkdev(shfs_vol.member[i].bd);
+#ifdef SHFS_STATS
+		shfs_free_mstats();
+#endif
 	}
 	shfs_mounted = 0;
 	up(&shfs_mount_lock);
 	return 0;
+}
+
+/**
+ * This function re-reads the hash table from the device
+ * Since semaphores are used to sync with opened files,
+ *  this function has to be called from a context that
+ *  is different from the one of the main loop
+ */
+static int reload_vol_htable(void) {
+#ifdef SHFS_STATS
+	struct shfs_el_stats *el_stats;
+#endif
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *chentry;
+	struct shfs_hentry *nhentry;
+	struct mempool_obj *nchk_buf_obj;
+	void *cchk_buf;
+	void *nchk_buf;
+	int chash_is_zero, nhash_is_zero;
+	register chk_t c;
+	register unsigned int e;
+	int ret;
+
+	nchk_buf_obj = mempool_pick(shfs_vol.chunkpool);
+	if (!nchk_buf_obj) {
+		ret = -errno;
+		goto out;
+	}
+	nchk_buf = nchk_buf_obj->data;
+
+	dprintf("Re-reading hash table...\n");
+	for (c = 0; c < shfs_vol.htable_len; ++c) {
+		/* read chunk from disk */
+		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf);
+		if (ret < 0) {
+			ret = -EIO;
+			goto out_free_nchk_buf;
+		}
+		cchk_buf = shfs_vol.htable_chunk_cache[c];
+
+		/* compare entries */
+		for (e = 0; e < shfs_vol.htable_nb_entries_per_chunk; ++e) {
+			chentry = (struct shfs_hentry *)((uint8_t *) cchk_buf
+			          + SHFS_HTABLE_ENTRY_OFFSET(e, shfs_vol.htable_nb_entries_per_chunk));
+			nhentry = (struct shfs_hentry *)((uint8_t *) nchk_buf
+			          + SHFS_HTABLE_ENTRY_OFFSET(e, shfs_vol.htable_nb_entries_per_chunk));
+			if (hash_compare(chentry->hash, nhentry->hash, shfs_vol.hlen)) {
+				chash_is_zero = hash_is_zero(chentry->hash, shfs_vol.hlen);
+				nhash_is_zero = hash_is_zero(nhentry->hash, shfs_vol.hlen);
+
+				if (!chash_is_zero || !nhash_is_zero) {
+					dprintf("Chunk %lu, entry %lu has been updated\n", c ,e);
+					/* Update hash of entry
+					 * Note: Any open file should not be affected, because
+					 *  there is no hash table lookup needed again
+					 *  The meta data is updated after all handles were closed
+					 * Note: Since we lock the file in the next step, 
+					 *  upcoming open of this entry will only be successful
+					 *  when the update has been finished */
+					bentry = shfs_btable_feed(shfs_vol.bt,
+					          (c * shfs_vol.htable_nb_entries_per_chunk) + e,
+					          nhentry->hash);
+					/* lock entry */
+					bentry->update = 1; /* forbid further open() */
+					down(&bentry->updatelock); /* wait until files is closed */
+
+#ifdef SHFS_STATS
+					if (!chash_is_zero) {
+						/* move current stats to miss table */
+						el_stats = shfs_stats_from_mstats(chentry->hash);
+						if (likely(el_stats != NULL))
+							memcpy(el_stats, &bentry->hstats, sizeof(*el_stats));
+
+						/* reset stats of element */
+						memset(&bentry->hstats, 0, sizeof(*el_stats));
+		       			} else {
+						/* load stats from miss table */
+						el_stats = shfs_stats_from_mstats(nhentry->hash);
+						if (likely(el_stats != NULL))
+							memcpy(&bentry->hstats, el_stats, sizeof(*el_stats));
+						else
+							memset(&bentry->hstats, 0, sizeof(*el_stats));
+
+						/* delete entry from miss stats */
+						shfs_stats_mstats_drop(nhentry->hash);
+					}
+#endif
+					memcpy(chentry, nhentry, sizeof(*chentry));
+
+					/* unlock entry */
+					up(&bentry->updatelock);
+					bentry->update = 0;
+				}
+			} else if (chentry->chunk  != nhentry->chunk  ||
+			           chentry->offset != nhentry->offset ||
+			           chentry->len    != nhentry->len) {
+				/* in this case, just the file location has been moved
+				 *
+				 * Note: This is usually a bad thing but happens
+				 * if the tools were misused
+				 * Note: Since the hash digest did not change,
+				 * the stats keep the same */
+				/* lock entry */
+				bentry->update = 1; /* forbid further open() */
+				down(&bentry->updatelock); /* wait until files is closed */
+
+				memcpy(chentry, nhentry, sizeof(*chentry));
+
+				/* unlock entry */
+				up(&bentry->updatelock);
+				bentry->update = 0;
+			} else {
+				/* at least update name, mime type and creation timestamp
+				 * (just in case if these values have been changed)
+				 * These fields are completely independent to the file
+				 * contents and should be read at once without yielding
+				 * the CPU (e.g., snprintf, strncpy).
+				 * Because of this, no locking is required */
+				memcpy(chentry->name, nhentry->name, sizeof(chentry->name));
+				memcpy(chentry->mime, nhentry->mime, sizeof(chentry->mime));
+				chentry->ts_creation = nhentry->ts_creation;
+			}
+		}
+	}
+
+ out_free_nchk_buf:
+	mempool_put(nchk_buf_obj);
+ out:
+	return ret;
+}
+
+/**
+ * This function re-reads the hash table from the device
+ * Since semaphores are used to sync with opened files,
+ *  this function has to be called from a context that
+ *  is different from the one of the main loop
+ */
+int remount_shfs(void) {
+	int ret = 0;
+
+	down(&shfs_mount_lock);
+	if (!shfs_mounted) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	/* TODO: Re-read chunk0 and check if volume UUID still matches */
+
+	ret = reload_vol_htable();
+ out:
+	up(&shfs_mount_lock);
+	return ret;
 }
 
 /*

@@ -11,12 +11,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
+#ifndef __MINIOS__
+#include <uuid/uuid.h>
+#include <mhash.h>
+#endif /* __MINIOS__ */
+#include "hash.h"
 
 typedef uint64_t chk_t;
-#ifndef _UUID_UUID_H
+#ifdef __MINIOS__
 typedef uint8_t uuid_t[16];
-#endif /* _UUID_UUID_H */
-typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
+#endif /* __MINIOS__ */
 
 #define SHFS_MAX_NB_MEMBERS 32
 
@@ -72,8 +77,8 @@ typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 #define SHFS_MAGIC1 'H'
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
-#define SHFSv1_VERSION0 0x1
-#define SHFSv1_VERSION1 0x0
+#define SHFSv1_VERSION1 0x01
+#define SHFSv1_VERSION0 0x02
 
 struct shfs_hdr_common {
 	uint8_t            magic[4];
@@ -83,7 +88,7 @@ struct shfs_hdr_common {
 	uint8_t            vol_byteorder;
 	uint8_t            vol_encoding;
 	chk_t              vol_size;
-	uint64_t           vol_creation_ts;
+	uint64_t           vol_ts_creation;
 	uint32_t           member_stripesize; /* at least 4 KiB (because of first chunk), blkfront can handle at most 32 KiB */
 	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
@@ -117,8 +122,6 @@ struct shfs_hentry {
 	uint64_t           len; /* length (bytes) */
 	char               mime[64]; /* internet media type */
 	uint64_t           ts_creation;
-	uint64_t           ts_laccess;
-	uint64_t           access_count;
 	char               name[64];
 } __attribute__((packed));
 
@@ -140,7 +143,7 @@ struct shfs_hentry {
 	(((hentry_no) % (hentries_per_chunk)) * SHFS_HENTRY_SIZE)
 
 
-#ifndef _UUID_UUID_H
+#ifdef __MINIOS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)
 {
 	return memcmp(uu1, uu2, sizeof(uuid_t));
@@ -164,151 +167,13 @@ static inline void uuid_copy(uuid_t dst, const uuid_t src)
 {
 	memcpy(dst, src, sizeof(uuid_t));
 }
-#endif /* _UUID_UUID_H */
+#endif /* __MINIOS__ */
 
-static inline void hash_copy(hash512_t dst, const hash512_t src, uint8_t hlen)
+static inline uint64_t gettimestamp_s(void)
 {
-#ifdef __x86_64
-	register uint8_t nbleft = hlen & 0x07; /* = mod by 8 */
-	register uint64_t mask64;
-	register uint64_t *p64_dst;
-	register uint64_t *p64_src;
-	register uint8_t i;
-
-	for (i = 0; i < hlen; i += 8) {
-		p64_dst = (uint64_t *) &dst[i];
-		p64_src = (uint64_t *) &src[i];
-		*p64_dst = *p64_src;
-	}
-	if (nbleft) {
-		mask64 = (1 << (nbleft << 3)) - 1;
-		p64_dst = (uint64_t *) &dst[i];
-		p64_src = (uint64_t *) &src[i];
-		*p64_dst = *p64_src & mask64;
-	}
-#else
-	memcpy(target, source, hlen);
-#endif
-}
-
-static inline int hash_compare(const hash512_t h0, const hash512_t h1, uint8_t hlen)
-{
-#ifdef __x86_64
-	register uint8_t nbleft = hlen & 0x07; /* = mod by 8 */
-	register uint64_t mask64;
-	register uint64_t *p64_0;
-	register uint64_t *p64_1;
-	register uint8_t i;
-
-	for (i = 0; i < hlen; i += 8) {
-		p64_0 = (uint64_t *) &h0[i];
-		p64_1 = (uint64_t *) &h1[i];
-		if (*p64_0 != *p64_1)
-			return 1;
-	}
-	if (nbleft) {
-		mask64 = (1 << (nbleft << 3)) - 1;
-		p64_0 = (uint64_t *) &h0[i];
-		p64_1 = (uint64_t *) &h1[i];
-		if ((*p64_0 & mask64) != (*p64_1 & mask64))
-			return 1;
-	}
-
-	return 0;
-#else
-	return (memcmp(h0, h1, hlen) != 0);
-#endif
-}
-
-static inline int hash_is_zero(const hash512_t h, uint8_t hlen)
-{
-#ifdef __x86_64
-	register uint8_t nbleft = hlen & 0x07; /* = mod by 8 */
-	register uint64_t mask64;
-	register uint64_t *p64;
-	register uint8_t i;
-
-	for (i = 0; i < hlen; i += 8) {
-		p64 = (uint64_t *) &h[i];
-		if (*p64 != 0)
-			return 0;
-	}
-	if (nbleft) {
-		mask64 = (1 << (nbleft << 3)) - 1;
-		p64 = (uint64_t *) &h[i];
-		if ((*p64 & mask64) != 0)
-			return 0;
-	}
-
-	return 1;
-#else
-	uint8_t i;
-
-	for (i = 0; i < hlen; ++i)
-		if (h[i] != 0)
-			return 0;
-	return 1;
-#endif
-}
-
-static inline void hash_clear(const hash512_t h, uint8_t hlen)
-{
-#ifdef __x86_64
-	register uint64_t *p64;
-	register uint8_t i;
-
-	for (i = 0; i < hlen; i += 8) {
-		p64 = (uint64_t *) &h[i];
-		*p64 = 0;
-	}
-#else
-	memset(h, 0x00, hlen);
-#endif
-}
-
-static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
-{
-	uint8_t strlen = hlen * 2;
-	uint8_t i, nu, nl;
-
-	for (i = 0; i < strlen; ++i) {
-		/* get upper nibble (4 bits) */
-		switch (in[i]) {
-		case '0' ... '9':
-			nu = in[i] - '0';
-			break;
-		case 'a' ... 'f':
-			nu = in[i] - 'a' + 10;
-			break;
-		case 'A' ... 'F':
-			nu = in[i] - 'A' + 10;
-			break;
-		case '\0':
-		default:
-			return -1; /* unknown character or string ended unexpectedly */
-		}
-
-		/* get lower nibble (4 bits) */
-		++i;
-		switch (in[i]) {
-		case '0' ... '9':
-			nl = in[i] - '0';
-			break;
-		case 'a' ... 'f':
-			nl = in[i] - 'a' + 10;
-			break;
-		case 'A' ... 'F':
-			nl = in[i] - 'A' + 10;
-			break;
-		case '\0':
-		default:
-			return -1;
-		}
-
-		h[i >> 1] = (nu << 4) | nl;
-	}
-
-	return 0;
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	return (uint64_t) now.tv_sec;
 }
 
 #endif /* _SHFS_DEFS_H_ */

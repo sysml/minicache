@@ -43,6 +43,27 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ## SHFS options
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
+CFLAGS				+= -DSHFS_STATS
+
+# Advanced statistics from HTTP
+#  This enables counting the number of successful downloads
+#  (including range requests) and download progress
+#  counters (see: DPCR)
+CFLAGS				+= -DSHFS_STATS_HTTP
+
+CFLAGS				+= -DSHFS_STATS_HTTP_DPC
+# Download progress counters resolution (DPCR)
+#  e.g., DPDR=6 means 6 counter values:
+#  VAL1: HTTP request counts that downloaded >=   0% of file
+#  VAL2: HTTP request counts that downloaded >=  20% of file
+#  VAL3: HTTP request counts that downloaded >=  40% of file
+#  VAL4: HTTP request counts that downloaded >=  60% of file
+#  VAL5: HTTP request counts that downloaded >=  80% of file
+#  VAL6: HTTP request counts that downloaded  = 100% of file
+#
+#  Note: DPCR has to be at least 2 for a 0% and 100% counter
+#        otherwise this feature is disabled
+CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 
 ######################################
 ## HTTPd options
@@ -59,7 +80,7 @@ CFLAGS				+= -DCONFIG_AUTOMOUNT
 ######################################
 CONFIG_DEBUG			= y
 CONFIG_DEBUG_LWIP		= n
-CFLAGS				+= -DCONFIG_MINDER_PRINT
+//CFLAGS			+= -DCONFIG_MINDER_PRINT
 //CFLAGS			+= -DHTTP_DEBUG
 //CFLAGS			+= -DSHFS_DEBUG
 //CFLAGS			+= -DSHELL_DEBUG
@@ -75,8 +96,8 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o debug.o shell.o http_parser.o http.o blkdev.o \
-		  shfs.o shfs_check.o shfs_htable.o shfs_fio.o shfs_tools.o
+STUB_APP_OBJS0  = main.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
+		  ctldir.o shfs.o shfs_check.o shfs_fio.o shfs_tools.o shfs_stats.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk

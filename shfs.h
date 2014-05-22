@@ -14,6 +14,9 @@
 #include "blkdev.h"
 
 #include "shfs_defs.h"
+#ifdef SHFS_STATS
+#include "shfs_stats_data.h"
+#endif
 
 #define MAX_NB_TRY_BLKDEVS 64
 #define CHUNKPOOL_NB_BUFFERS 128
@@ -27,6 +30,7 @@ struct vol_member {
 struct vol_info {
 	uuid_t uuid;
 	char volname[17];
+	uint64_t ts_creation;
 	uint32_t chunksize;
 	chk_t volsize;
 
@@ -34,9 +38,8 @@ struct vol_info {
 	struct vol_member member[SHFS_MAX_NB_MEMBERS];
 	uint32_t stripesize;
 
-	struct shfs_btable *bt;
+	struct htable *bt; /* SHFS bucket entry table */
 	void **htable_chunk_cache;
-	int *htable_chunk_cache_state;
 	chk_t htable_ref;
 	chk_t htable_bak_ref;
 	chk_t htable_len;
@@ -48,19 +51,20 @@ struct vol_info {
 
 	struct mempool *aiotoken_pool; /* async io tokens */
 	struct mempool *chunkpool; /* buffers for chunk I/O */
-};
 
-/* htable_chunk_cache_state */
-#define CCS_LOADED   0x01
-#define CCS_MODIFIED 0x02
+#ifdef SHFS_STATS
+	struct shfs_mstats mstats;
+#endif
+};
 
 extern struct vol_info shfs_vol;
 extern struct semaphore shfs_mount_lock;
-extern volatile int shfs_mounted;
-extern volatile unsigned int shfs_nb_open;
+extern int shfs_mounted;
+extern unsigned int shfs_nb_open;
 
 int init_shfs(void);
 int mount_shfs(unsigned int vbd_id[], unsigned int count);
+int remount_shfs(void);
 int umount_shfs(void);
 void exit_shfs(void);
 

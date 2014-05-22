@@ -8,11 +8,12 @@
 #define _SHFS_TOOLS_H_
 
 #include "shfs_defs.h"
+#include "ctldir.h"
 
 /**
- * Registers shfs tools to micro shell
+ * Registers shfs tools to micro shell + ctldir (if *cd is not NULL)
  */
-int register_shfs_tools(void);
+int register_shfs_tools(struct ctldir *cd);
 
 /**
  * Prints an uuid/hash number to a buffer
@@ -21,5 +22,7 @@ int register_shfs_tools(void);
  */
 void uuid_unparse(const uuid_t uu, char *out);
 void hash_unparse(const hash512_t h, uint8_t hlen, char *out);
+
+size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec);
 
 #endif /* _SHFS_TOOLS_H_ */
