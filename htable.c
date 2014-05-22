@@ -48,20 +48,18 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 	el_hdr_size  = align_up(sizeof(struct htable_el), align);
 	el_size      = el_hdr_size + align_up(el_private_len, align);
 	bkt_hdr_size = align_up(sizeof(struct htable_bkt)
-	               + (sizeof(hash512_t) * nb_bkts), align); /* hash list */
+	               + (sizeof(hash512_t) * el_per_bkt), align); /* hash list */
 	bkt_size     = bkt_hdr_size
-		       + (el_size * nb_bkts) /* element list */;
+		       + (el_size * el_per_bkt) /* element list */;
 	ht_size      = sizeof(struct htable)
 		       + sizeof(struct htable_bkt *) * nb_bkts;
 
 #ifdef HTABLE_DEBUG
-	printf("el_size = %lu\n", el_size);
-	printf("bkt_size = %lu\n", bkt_size);
-	printf("ht_size = %lu\n", ht_size);
-
-	/* allocate main htable struct */
-	printf("htable (%lu B)\n", ht_size);
+	printf("el_size  = %lu B\n", el_size);
+	printf("bkt_size = %lu B\n", bkt_size);
+	printf("ht_size  = %lu B\n", ht_size);
 #endif
+	/* allocate main htable struct */
 #ifdef __MINIOS__
 	ht = _xmalloc(ht_size, align);
 #else
@@ -73,6 +71,9 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 	}
 	memset(ht, 0, ht_size);
 
+#ifdef HTABLE_DEBUG
+	printf("htable (%lu B) @ %p\n", ht_size);
+#endif
 	ht->nb_bkts = nb_bkts;
 	ht->el_per_bkt = el_per_bkt;
 	ht->hlen = hlen;
@@ -81,9 +82,6 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 
 	/* allocate buckets */
 	for (i = 0; i < nb_bkts; ++i) {
-#ifdef HTABLE_DEBUG
-		printf("bucket %lu (%lu B)\n", i, bkt_size);
-#endif
 #ifdef __MINIOS__
 		bkt = _xmalloc(bkt_size, align);
 #else
@@ -95,6 +93,9 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 		}
 		memset(bkt, 0, bkt_size);
 
+#ifdef HTABLE_DEBUG
+		printf(" bucket %lu (%lu B) @ %p\n", i, bkt_size, bkt);
+#endif
 		ht->b[i] = bkt;
 		bkt->el = (void *) (((uint8_t *) ht->b[i]) + bkt_hdr_size);
 		bkt->el_size = el_size;
@@ -106,8 +107,8 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 			el->private = (void *) (((uint8_t *) el) + el_hdr_size);
 
 #ifdef HTABLE_DEBUG
-			printf("  entry %3lu:%02lu (%p): h = @%p; private = @%p\n",
-			        i, j, el, el->h, el->private);
+			//printf("  entry %3lu:%02lu (%p): h = @%p; private = @%p\n",
+			//        i, j, el, el->h, el->private);
 #endif
 		}
 	}
