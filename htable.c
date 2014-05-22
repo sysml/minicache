@@ -54,7 +54,14 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 	ht_size      = sizeof(struct htable)
 		       + sizeof(struct htable_bkt *) * nb_bkts;
 
+#ifdef HTABLE_DEBUG
+	printf("el_size = %lu\n", el_size);
+	printf("bkt_size = %lu\n", bkt_size);
+	printf("ht_size = %lu\n", ht_size);
+
 	/* allocate main htable struct */
+	printf("htable (%lu B)\n", ht_size);
+#endif
 #ifdef __MINIOS__
 	ht = _xmalloc(ht_size, align);
 #else
@@ -64,8 +71,8 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 		errno = ENOMEM;
 		goto err_out;
 	}
-
 	memset(ht, 0, ht_size);
+
 	ht->nb_bkts = nb_bkts;
 	ht->el_per_bkt = el_per_bkt;
 	ht->hlen = hlen;
@@ -74,6 +81,9 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 
 	/* allocate buckets */
 	for (i = 0; i < nb_bkts; ++i) {
+#ifdef HTABLE_DEBUG
+		printf("bucket %lu (%lu B)\n", i, bkt_size);
+#endif
 #ifdef __MINIOS__
 		bkt = _xmalloc(bkt_size, align);
 #else
@@ -83,9 +93,9 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 			errno = ENOMEM;
 			goto err_free_bkts;
 		}
+		memset(bkt, 0, bkt_size);
 
 		ht->b[i] = bkt;
-		memset(bkt, 0, bkt_size);
 		bkt->el = (void *) (((uint8_t *) ht->b[i]) + bkt_hdr_size);
 		bkt->el_size = el_size;
 		bkt->el_private_len = el_private_len;
@@ -95,8 +105,10 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 			el->h = &bkt->h[j];
 			el->private = (void *) (((uint8_t *) el) + el_hdr_size);
 
-			//dprintf("entry %3lu:%02lu (%p): h = @%p; private = @%p\n",
-			//        i, j, el, el->h, el->private);
+#ifdef HTABLE_DEBUG
+			printf("  entry %3lu:%02lu (%p): h = @%p; private = @%p\n",
+			        i, j, el, el->h, el->private);
+#endif
 		}
 	}
 
