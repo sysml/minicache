@@ -145,6 +145,9 @@ static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
 static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #endif
+#ifdef __MINIOS__
+static int shcmd_free(FILE *cio, int argc, char *argv[]);
+#endif
 
 static err_t shlsess_accept(void);
 static void  shlsess_close (struct shell_sess *sess);
@@ -213,6 +216,9 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
     shell_register_cmd("date",   shcmd_date);
+#ifdef __MINIOS__
+    shell_register_cmd("free",   shcmd_free);
+#endif
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
 #endif
@@ -1028,6 +1034,29 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
     for (i = 0; i < argc; i++) {
         fprintf(cio, "argv(%d): %s\n", i, argv[i]);
     }
+    return 0;
+}
+#endif
+
+#ifdef __MINIOS__
+#include <mini-os/mm.h>
+
+static int shcmd_free(FILE *cio, int argc, char *argv[])
+{
+    /* list heap size and alloced pages */
+    fprintf(cio, "       %12s %12s %12s\n",
+            "total",
+            "free",
+            "heap");
+    fprintf(cio, "Pages: %12lu %12lu %12lu\n",
+            0,
+            0,
+            (heap_mapped - heap) / PAGE_SIZE);
+
+    fprintf(cio, "\n");
+    fprintf(cio, "Page size: %u KiB\n", PAGE_SIZE / 1024);
+    fprintf(cio, "Heap size: %u KiB\n", (heap_mapped - heap) / 1024);
+
     return 0;
 }
 #endif
