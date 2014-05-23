@@ -37,6 +37,7 @@ struct vol_info {
 	uint8_t nb_members;
 	struct vol_member member[SHFS_MAX_NB_MEMBERS];
 	uint32_t stripesize;
+	uint32_t ioalign;
 
 	struct htable *bt; /* SHFS bucket entry table */
 	void **htable_chunk_cache;

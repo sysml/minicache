@@ -181,7 +181,9 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 		goto err_close_bds;
 	}
 
-	/* chunk and stripe size -> retrieve a device sector factor for each device */
+	/* chunk and stripe size -> retrieve a device sector factor for each device and
+	 * also the alignment requirements for io buffers */
+	shfs_vol.ioalign = 0;
 	if (shfs_vol.stripesize > 32768 || shfs_vol.stripesize < 4096 ||
 	    !POWER_OF_2(shfs_vol.stripesize)) {
 		dprintf("Stripe size invalid on volume '%s'\n",
@@ -190,6 +192,8 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 		goto err_close_bds;
 	}
 	for (i = 0; i < shfs_vol.nb_members; ++i) {
+		if (blkdev_ssize(shfs_vol.member[i].bd) > shfs_vol.ioalign)
+			shfs_vol.ioalign = blkdev_ssize(shfs_vol.member[i].bd);
 		shfs_vol.member[i].sfactor = shfs_vol.stripesize / blkdev_ssize(shfs_vol.member[i].bd);
 		if (shfs_vol.member[i].sfactor == 0) {
 			dprintf("Stripe size invalid on volume '%s'\n",
@@ -300,7 +304,8 @@ static int load_vol_htable(void)
 	}
 
 	/* allocate chunk cache reference table */
-	dprintf("Allocating chunk cache reference table...\n");
+	dprintf("Allocating chunk cache reference table (size: %lu B)...\n",
+	        sizeof(void *) * shfs_vol.htable_len);
 	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
 	if (!shfs_vol.htable_chunk_cache) {
 		ret = -ENOMEM;
@@ -316,10 +321,11 @@ static int load_vol_htable(void)
 		cur_htchk = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
 		if (cur_chk != cur_htchk || !chk_buf) {
 			/* allocate buffer and register it to htable chunk cache */
-			chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.stripesize);
+			dprintf("Allocate buffer for chunk %u of htable (size: %lu B, align: %lu)\n",
+			        cur_htchk, shfs_vol.chunksize, shfs_vol.ioalign);
+			chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
 			if (!chk_buf) {
-				dprintf("Could not alloc chunk %u for htable (size: %lu, align: %lu)\n",
-				        cur_htchk, shfs_vol.chunksize, shfs_vol.stripesize);
+				dprintf("Could not alloc chunk %u\n", cur_htchk);
 				ret = -ENOMEM;
 				goto err_free_chunkcache;
 			}
@@ -408,7 +414,7 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	 * doing I/O */
 	shfs_vol.chunkpool = alloc_mempool(CHUNKPOOL_NB_BUFFERS,
 	                                   shfs_vol.chunksize,
-	                                   shfs_vol.stripesize,
+	                                   shfs_vol.ioalign,
 	                                   0, 0, NULL, NULL, 0);
 	if (!shfs_vol.chunkpool) {
 		shfs_mounted = 0;
