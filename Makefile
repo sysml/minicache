@@ -84,6 +84,9 @@ CONFIG_DEBUG_LWIP		= n
 //CFLAGS			+= -DHTTP_DEBUG
 //CFLAGS			+= -DSHFS_DEBUG
 //CFLAGS			+= -DSHELL_DEBUG
+//CFLAGS			+= -DHTABLE_DEBUG
+//CFLAGS			+= -DMEMPOOL_DEBUG
+CFLAGS				+= -DTRACE_BOOTTIME
 
 ######################################
 ## MiniOS path

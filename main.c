@@ -457,7 +457,13 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
     uint64_t ts_minder = 0;
 #endif /* CONFIG_MINDER_PRINT */
+#ifdef TRACE_BOOTTIME
+    uint64_t tt_vbddetect;
+    uint64_t tt_boot;
+    uint64_t tt_mount;
 
+    tt_boot = NOW();
+#endif
     init_debug();
 
     /* -----------------------------------
@@ -513,8 +519,14 @@ int main(int argc, char *argv[])
      * detect available block devices
      * ----------------------------------- */
     if (args.vbd_detect) {
+#ifdef TRACE_BOOTTIME
+	    tt_vbddetect = NOW();
+#endif
 	    printk("Detecting block devices...\n");
 	    args.nb_vbds = detect_blkdevs(args.vbd_id, sizeof(args.vbd_id));
+#ifdef TRACE_BOOTTIME
+	    tt_vbddetect = NOW() - tt_vbddetect;
+#endif
     }
 
     /* -----------------------------------
@@ -594,11 +606,19 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     printk("Loading SHFS...\n");
     init_shfs();
+    if (args.nb_vbds) {
 #ifdef CONFIG_AUTOMOUNT
-    printk("Automount cache filesystem...\n");
-    ret = mount_shfs(args.vbd_id, args.nb_vbds);
-    if (ret < 0)
-	    printk("Warning: Could not find or mount a cache filesystem\n");
+	    printk("Automount cache filesystem...\n");
+#ifdef TRACE_BOOTTIME
+	    tt_mount = NOW();
+#endif
+	    ret = mount_shfs(args.vbd_id, args.nb_vbds);
+#ifdef TRACE_BOOTTIME
+	    tt_mount = NOW() - tt_mount;
+#endif
+	    if (ret < 0)
+		    printk("Warning: Could not find or mount a cache filesystem\n");
+    }
 #endif
 
     /* -----------------------------------
@@ -652,6 +672,19 @@ int main(int argc, char *argv[])
      * Processing loop
      * ----------------------------------- */
     printk("*** MiniCache is up and running ***\n");
+#ifdef TRACE_BOOTTIME
+    tt_boot = NOW() - tt_boot;
+    printk(" boot time since invoking main:  %lu.%06lus\n",
+	   tt_boot / 1000000000l, (tt_boot / 1000l) % 1000000l);
+    if (args.vbd_detect) {
+	    printk(" virtual block device detection: %lu.%06lus\n",
+		    tt_vbddetect / 1000000000l, (tt_vbddetect / 1000l) % 1000000l);
+    }
+    if (args.nb_vbds) {
+	    printk(" file system mount time:         %lu.%06lus\n",
+		    tt_mount / 1000000000l, (tt_mount / 1000l) % 1000000l);
+    }
+#endif
 #ifdef CONFIG_MINDER_PRINT
     printk("\n");
 #endif
