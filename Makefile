@@ -12,22 +12,37 @@ stubdom		 = y
 
 CFLAGS          += -Wunused -Winline -Wtype-limits -Wcast-align --param large-stack-frame=256 --param large-stack-frame-growth=16
 
-CONFIG_START_NETWORK		= n
-# use 'vale' for xenbus driver instead of 'vif'
-CONFIG_NETMAP_XENBUS		= n
-# POSIX netmap implementation
-CONFIG_NETMAP			= n
-CONFIG_NETMAP_API		= 4
 CONFIG_MEMPOOL			= y
-CONFIG_LWIP			= y
-CONFIG_LWIP_MINIMAL		= y
-CONFIG_LWIP_SINGLETHREADED 	= y
 
-# enable NM_WRAP API/lwip-netif only
+######################################
+## Networking options
+######################################
+
+## vif
+CONFIG_NETMAP			= n
+
+ifeq ($(CONFIG_NETMAP),y)
+# use 'vale' for xenbus driver instead of 'vif'
+CONFIG_NETMAP_XENBUS		= y
+# POSIX netmap implementation
+CONFIG_NETMAP_API		= 4
+CONFIG_NETFRONT			= n
+CONFIG_NETFRONT_NETMAP2		= n
+CONFIG_NMWRAP			= y
+CONFIG_NMWRAP_SYNCRX		= n
+CFLAGS				+= -DNETMAP_DEBUG=0
+else
+CONFIG_NETMAP_XENBUS		= n
 CONFIG_NETFRONT			= y
 CONFIG_NETFRONT_NETMAP2		= n
 CONFIG_NMWRAP			= n
-CONFIG_NMWRAP_SYNCRX		= n
+endif
+CONFIG_START_NETWORK		= n
+
+## lwip
+CONFIG_LWIP			= y
+CONFIG_LWIP_MINIMAL		= y
+CONFIG_LWIP_SINGLETHREADED 	= y
 
 ######################################
 ## Shell options
@@ -80,6 +95,7 @@ CFLAGS				+= -DCONFIG_AUTOMOUNT
 ######################################
 CONFIG_DEBUG			= y
 CONFIG_DEBUG_LWIP		= n
+CONFIG_DEBUG_LWIP_MALLOC	= n
 //CFLAGS			+= -DCONFIG_MINDER_PRINT
 //CFLAGS			+= -DHTTP_DEBUG
 //CFLAGS			+= -DSHFS_DEBUG
