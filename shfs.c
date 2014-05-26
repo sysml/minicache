@@ -284,14 +284,79 @@ static int load_vol_hconf(void)
  * This function loads the hash table from the block device into memory
  * Note: load_vol_hconf() and local_vol_cconf() has to called before
  */
+struct _load_vol_htable_aiot {
+	struct semaphore done;
+	chk_t left;
+	int ret;
+};
+
+static void _load_vol_htable_cb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
+{
+	struct _load_vol_htable_aiot *aiot = (struct _load_vol_htable_aiot *) cookie;
+	register int ioret;
+
+	dprintf("*** AIO CB (ret = %d) ***\n", aiot->ret);
+	ioret = shfs_aio_finalize(t);
+	if (unlikely(ioret < 0))
+		aiot->ret = ioret;
+	--aiot->left;
+	if (unlikely(aiot->left == 0))
+		up(&aiot->done);
+}
+
 static int load_vol_htable(void)
 {
+	struct _load_vol_htable_aiot aiot;
+	SHFS_AIO_TOKEN *aioret;
 	struct shfs_hentry *hentry;
 	struct shfs_bentry *bentry;
 	void *chk_buf;
-	chk_t cur_chk, cur_htchk;
 	unsigned int i;
+	chk_t c;
 	int ret;
+
+	/* (we will do the hash table allocation afterwards while we wait for I/O completion */
+
+	dprintf("Allocating chunk cache reference table (size: %lu B)...\n",
+	        sizeof(void *) * shfs_vol.htable_len);
+	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
+	if (!shfs_vol.htable_chunk_cache) {
+		ret = -ENOMEM;
+		goto err_out;
+	}
+	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
+
+	/* read hash table from device */
+	init_SEMAPHORE(&aiot.done, 0);
+	aiot.left = shfs_vol.htable_len;
+	aiot.ret = 0;
+	for (c = 0; c < shfs_vol.htable_len; ++c) {
+		/* allocate buffer and register it to htable chunk cache */
+		dprintf("Allocate buffer for chunk %u of htable (size: %lu B, align: %lu)\n",
+		        c, shfs_vol.chunksize, shfs_vol.ioalign);
+		chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+		if (!chk_buf) {
+			dprintf("Could not alloc chunk %u\n", c);
+			ret = -ENOMEM;
+			goto err_free_chunkcache;
+		}
+		shfs_vol.htable_chunk_cache[c] = chk_buf;
+
+	repeat_aio:
+		dprintf("Setup async read for chunk %u\n", c);
+		aioret = shfs_aread_chunk(shfs_vol.htable_ref + c, 1, chk_buf,
+		                          _load_vol_htable_cb, &aiot, NULL);
+		if (!aioret && errno == EBUSY) {
+			dprintf("Device is busy: Retrying...\n");
+			shfs_poll_blkdevs();
+			goto repeat_aio;
+		}
+		if (!aioret < 0) {
+			dprintf("Could not setup async read: %s\n", strerror(errno));
+			aiot.left -= (shfs_vol.htable_len - c);
+			goto err_cancel_aio;
+		}
+	}
 
 	/* allocate bucket table */
 	dprintf("Allocating btable...\n");
@@ -300,49 +365,30 @@ static int load_vol_htable(void)
 	                                shfs_vol.hlen);
 	if (!shfs_vol.bt) {
 		ret = -ENOMEM;
-		goto err_out;
+		goto err_free_chunkcache;
 	}
 
-	/* allocate chunk cache reference table */
-	dprintf("Allocating chunk cache reference table (size: %lu B)...\n",
-	        sizeof(void *) * shfs_vol.htable_len);
-	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
-	if (!shfs_vol.htable_chunk_cache) {
-		ret = -ENOMEM;
+	/* wait for I/O completion */
+	dprintf("Waiting for I/O completion...\n");
+	while (!trydown(&aiot.done))
+		shfs_poll_blkdevs();
+	if (aiot.ret < 0) {
+		dprintf("There was an I/O error: Aborting...\n");
+		ret = -EIO;
 		goto err_free_btable;
 	}
-	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
 
-	/* load hash table chunk-wise and fill-out btable metadata */
-	dprintf("Reading hash table...\n");
-	chk_buf = NULL;
-	cur_chk = 0;
+	/* feed bucket table */
+	dprintf("Feeding hash table...\n");
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
-		cur_htchk = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
-		if (cur_chk != cur_htchk || !chk_buf) {
-			/* allocate buffer and register it to htable chunk cache */
-			dprintf("Allocate buffer for chunk %u of htable (size: %lu B, align: %lu)\n",
-			        cur_htchk, shfs_vol.chunksize, shfs_vol.ioalign);
-			chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
-			if (!chk_buf) {
-				dprintf("Could not alloc chunk %u\n", cur_htchk);
-				ret = -ENOMEM;
-				goto err_free_chunkcache;
-			}
-			shfs_vol.htable_chunk_cache[cur_htchk]       = chk_buf;
-
-			ret = shfs_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
-			if (ret < 0)
-				goto err_free_chunkcache;
-			cur_chk = cur_htchk;
-		}
+		c = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
+		chk_buf = shfs_vol.htable_chunk_cache[c];
 
 		hentry = (struct shfs_hentry *)((uint8_t *) chk_buf
                          + SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk));
-
 		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
 		bentry->hentry = hentry;
-		bentry->hentry_htchunk  = cur_htchk;
+		bentry->hentry_htchunk = c;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
 		bentry->refcount = 0;
 		bentry->update = 0;
@@ -354,14 +400,22 @@ static int load_vol_htable(void)
 
 	return 0;
 
+ err_cancel_aio:
+	if (aiot.left) {
+		while (!trydown(&aiot.done))
+			shfs_poll_blkdevs();
+	}
+	ret = -EIO;
+	goto err_free_chunkcache;
+
+ err_free_btable:
+	shfs_free_btable(shfs_vol.bt);
  err_free_chunkcache:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
 		if (shfs_vol.htable_chunk_cache[i])
 			xfree(shfs_vol.htable_chunk_cache[i]);
 	}
 	xfree(shfs_vol.htable_chunk_cache);
- err_free_btable:
-	shfs_free_btable(shfs_vol.bt);
  err_out:
 	return ret;
 }
