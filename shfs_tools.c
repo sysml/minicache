@@ -222,8 +222,26 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 	    return -1;
     }
     if ((argc) == 1) {
-	    fprintf(cio, "Usage: %s [vbd_id]...\n", argv[0]);
-	    return -1;
+	    /* no arguments were passed */
+	    down(&shfs_mount_lock);
+	    if (shfs_mounted) {
+		    /* list mounted filesystem and exit */
+		    for (i = 0; i < shfs_vol.nb_members; ++i) {
+			    if (i == 0)
+				    fprintf(cio, "%u", shfs_vol.member[i].bd->vbd_id);
+			    else
+				    fprintf(cio, ",%u", shfs_vol.member[i].bd->vbd_id);
+		    }
+		    up(&shfs_mount_lock);
+		    fprintf(cio, " on / type shfs (ro)\n");
+	    } else {
+		    /* show usage and exit */
+		    up(&shfs_mount_lock);
+		    fprintf(cio, "No filesystem mounted\n");
+		    fprintf(cio, "\nUsage: %s [vbd_id]...\n", argv[0]);
+
+	    }
+	    return 0;
     }
     for (i = 1; i < argc; ++i) {
 	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
