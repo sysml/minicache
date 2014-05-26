@@ -346,12 +346,12 @@ static int load_vol_htable(void)
 		dprintf("Setup async read for chunk %u\n", c);
 		aioret = shfs_aread_chunk(shfs_vol.htable_ref + c, 1, chk_buf,
 		                          _load_vol_htable_cb, &aiot, NULL);
-		if (!aioret && errno == EBUSY) {
+		if (!aioret && errno == EAGAIN) {
 			dprintf("Device is busy: Retrying...\n");
 			shfs_poll_blkdevs();
 			goto repeat_aio;
 		}
-		if (!aioret < 0) {
+		if (!aioret) {
 			dprintf("Could not setup async read: %s\n", strerror(errno));
 			aiot.left -= (shfs_vol.htable_len - c);
 			goto err_cancel_aio;
@@ -734,7 +734,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	/* check if each member has enough request objects available for this operation */
 	for (m = 0; m < shfs_vol.nb_members; ++m) {
 		if (blkdev_avail_req(shfs_vol.member[m].bd) < len) {
-			errno = ENOMEM;
+			errno = EAGAIN;
 			goto err_out;
 		}
 	}
@@ -742,7 +742,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	/* pick token */
 	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
 	if (!t_obj) {
-		errno = ENOMEM;
+		errno = EAGAIN;
 		goto err_out;
 	}
 	t = t_obj->data;
