@@ -1,6 +1,7 @@
 #!/bin/bash
 NL=$'\n'
 IFS_ORIG=$IFS
+HASH_INDICATOR_PREFIX='?'
 
 function err()
 {
@@ -44,7 +45,7 @@ do
     if [ $? -eq 0 ]; then
 	# CONTROL LINE
 	# copy
-	printf "%s" "$L"
+	printf "%s%s" "$L" "$NL"
     else
 	# FILE
 	if [ ! -f "${INDIR}/${L}" ]; then
@@ -54,9 +55,8 @@ do
 	H=$( gethash_file "${INDIR}/${L}" )
 
 	# replace entry with hash digest
-	printf "%s" "$H"
+	printf "%s%s%s" "$HASH_INDICATOR_PREFIX" "$H" "$NL"
     fi
-    printf "\n"
 
     IFS=$NL
 done
