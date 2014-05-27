@@ -82,6 +82,7 @@ static inline struct shfs_bentry *shfs_btable_addentry(struct htable *bt, hash51
 	return NULL;
 }
 
+#ifndef __MINIOS__
 /**
  * Deletes an entry from table
  */
@@ -92,6 +93,7 @@ static void shfs_btable_rmentry(struct htable *bt, hash512_t h) {
 	if (el)
 		htable_rm(bt, el);
 }
+#endif
 
 /**
  * This function is intended to be used during (re-)mount time.
