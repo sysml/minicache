@@ -438,7 +438,8 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 	mempool_put(hsess->pobj);
 	--hs->nb_sess;
 
-	dprintf("HTTP session %s (caller: 0x%x)\n", (kill ? "killed" : "closed"), get_caller());
+	dprintf("HTTP session %s (caller: 0x%x)\n", (type == HSC_ABORT ? "aborted" :
+	                                             (type == HSC_CLOSE ? "closed" : "killed")), get_caller());
 	return err;
 }
 
