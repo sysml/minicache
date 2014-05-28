@@ -548,6 +548,22 @@ int main(int argc, char *argv[])
     }
 
     /* -----------------------------------
+     * filesystem initialization & automount
+     * ----------------------------------- */
+    printk("Loading SHFS...\n");
+    init_shfs();
+#ifdef CONFIG_AUTOMOUNT
+    if (args.nb_vbds) {
+	    printk("Automount cache filesystem...\n");
+	    TT_START(tt_automount);
+	    ret = mount_shfs(args.vbd_id, args.nb_vbds);
+	    TT_END(tt_automount);
+	    if (ret < 0)
+		    printk("Warning: Could not find or mount a cache filesystem\n");
+    }
+#endif
+
+    /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
     printk("Starting networking...\n");
@@ -623,22 +639,6 @@ int main(int argc, char *argv[])
 	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
     }
-
-    /* -----------------------------------
-     * filesystem automount
-     * ----------------------------------- */
-    printk("Loading SHFS...\n");
-    init_shfs();
-#ifdef CONFIG_AUTOMOUNT
-    if (args.nb_vbds) {
-	    printk("Automount cache filesystem...\n");
-	    TT_START(tt_automount);
-	    ret = mount_shfs(args.vbd_id, args.nb_vbds);
-	    TT_END(tt_automount);
-	    if (ret < 0)
-		    printk("Warning: Could not find or mount a cache filesystem\n");
-    }
-#endif
 
     /* -----------------------------------
      * service initialization
