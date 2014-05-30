@@ -254,6 +254,8 @@ int init_http(int nb_sess)
 	hs->parser_settings.on_body = NULL;
 	hs->parser_settings.on_message_complete = httprecv_req_complete;
 
+	dprintf("HTTP server %p initialized\n", hs);
+
 	return ret;
 
  err_free_tcp:
@@ -327,12 +329,9 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	struct http_srv *hs = argp;
 #endif
 
+	dprintf("About to establish new HTTP session on server %p\n", hs);
 	if (err != ERR_OK)
 		goto err_out;
-	if (hs->nb_sess == hs->max_nb_sess) {
-		err = ERR_MEM;
-		goto err_out;
-	}
 	hsobj = mempool_pick(hs->sess_pool);
 	if (!hsobj) {
 		err = ERR_MEM;
@@ -341,16 +340,6 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess = hsobj->data;
 	hsess->pobj = hsobj;
 	hsess->hsrv = hs;
-	hsess->chk_buf[0] = mempool_pick(shfs_vol.chunkpool);
-	if (!hsess->chk_buf[0]) {
-		err = ERR_MEM;
-		goto err_free_hsobj;
-	}
-	hsess->chk_buf[1] = mempool_pick(shfs_vol.chunkpool);
-	if (!hsess->chk_buf[1]) {
-		err = ERR_MEM;
-		goto err_free_chk_buf0;
-	}
 	hsess->sent_infly = 0;
 	hsess->fd = NULL;
 	hs->nb_sess++;
@@ -375,6 +364,8 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->parser_settings = &hs->parser_settings;
 
 	/* reset session */
+	hsess->chk_buf[0] = NULL;
+	hsess->chk_buf[1] = NULL;
 	hsess->chk_buf_aiotoken[0] = NULL;
 	hsess->chk_buf_aiotoken[1] = NULL;
 	httpsess_reset(hsess);
@@ -382,10 +373,6 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	dprintf("New HTTP session accepted\n");
 	return 0;
 
- err_free_chk_buf0:
-	mempool_put(hsess->chk_buf[0]);
- err_free_hsobj:
-	mempool_put(hsobj);
  err_out:
 	return err;
 }
@@ -433,8 +420,10 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 	}
 
 	/* release memory */
-	mempool_put(hsess->chk_buf[1]);
-	mempool_put(hsess->chk_buf[0]);
+	if (hsess->chk_buf[1])
+		mempool_put(hsess->chk_buf[1]);
+	if (hsess->chk_buf[0])
+		mempool_put(hsess->chk_buf[0]);
 	mempool_put(hsess->pobj);
 	--hs->nb_sess;
 
@@ -724,23 +713,26 @@ static int httprecv_req_complete(struct http_parser *parser)
 		++url_offset;
 	hsess->fd = shfs_fio_open(&hsess->request_hdr.url[url_offset]);
 	if (!hsess->fd) {
-		if (errno == ENOENT) {
-			/* 404 File not found */
-			hsess->response_hdr.code = 404;
-			ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_404(parser->http_major, parser->http_minor));
-			ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_HTML);
-			ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_NOCACHE);
-			ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_CLOSE);
-			goto finalize_hdr;
-		}
+		dprintf("Could not open requested file '%s': %s\n", &hsess->request_hdr.url[url_offset], strerror(errno));
+		if (errno == ENOENT || errno == ENODEV)
+			goto err404_hdr; /* 404 File not found */
+		goto err500_hdr; /* 500 Internal server error */
+	}
 
-		/* 500 Internal server error */
-		hsess->response_hdr.code = 500;
-		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_500(parser->http_major, parser->http_minor));
-		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_HTML);
-		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_NOCACHE);
-		ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_CLOSE);
-		goto finalize_hdr;
+	/* pick chunk buffers for I/O (if we haven't already -> http keepalive) */
+	if (!hsess->chk_buf[0]) {
+		hsess->chk_buf[0] = mempool_pick(shfs_vol.chunkpool);
+		if (!hsess->chk_buf[0]) {
+			dprintf("Could not get a chunk buffer from SHFS\n");
+			goto err500_hdr; /* 500 Internal server error (we ran out of memory) */
+		}
+	}
+	if (!hsess->chk_buf[1]) {
+		hsess->chk_buf[1] = mempool_pick(shfs_vol.chunkpool);
+		if (!hsess->chk_buf[1]) {
+			dprintf("Could not get a chunk buffer from SHFS\n");
+			goto err500_hdr; /* 500 Internal server error (we ran out of memory) */
+		}
 	}
 
 	hsess->response_hdr.code = 200;	/* 200 OK */
@@ -861,6 +853,27 @@ static int httprecv_req_complete(struct http_parser *parser)
 	hsess->sent  = 0;
 
 	return 0;
+
+	/**
+	 * ERROR HEADERS
+	 */
+ err404_hdr:
+	/* 404 File not found */
+	hsess->response_hdr.code = 404;
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_404(parser->http_major, parser->http_minor));
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_HTML);
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_NOCACHE);
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_CLOSE);
+	goto finalize_hdr;
+
+ err500_hdr:
+	/* 500 Internal server error */
+	hsess->response_hdr.code = 500;
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_500(parser->http_major, parser->http_minor));
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_HTML);
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_NOCACHE);
+	ADD_RESHDR_SLINE(hsess, nb_slines, HTTP_SHDR_CONN_CLOSE);
+	goto finalize_hdr;
 }
 
 /* might be called multiple times until hdr was sent out */
