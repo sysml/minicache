@@ -700,12 +700,14 @@ static int httprecv_req_complete(struct http_parser *parser)
 	}
 	hsess->request_hdr.url[hsess->request_hdr.url_len++] = '\0';
 
+#ifdef HTTP_DEBUG
 	dprintf("GET %s HTTP/%u.%u\n", hsess->request_hdr.url, parser->http_major, parser->http_minor);
 	for (l = 0; l < hsess->request_hdr.nb_lines; ++l) {
 		dprintf("   %s: %s\n",
 		       hsess->request_hdr.line[l].field.b,
 		       hsess->request_hdr.line[l].value.b);
 	}
+#endif
 
 	/* try to open requested file and construct header */
 	/* eliminate leading '/'s */
@@ -852,6 +854,17 @@ static int httprecv_req_complete(struct http_parser *parser)
 	hsess->state = HSS_RESPONDING_HDR;
 	hsess->sent  = 0;
 
+#ifdef HTTP_DEBUG
+	dprintf("Response:\n");
+	for (l = 0; l < hsess->response_hdr.nb_slines; ++l) {
+		dprintf("   %s",
+		       hsess->response_hdr.sline[l].b);
+	}
+	for (l = 0; l < hsess->response_hdr.nb_dlines; ++l) {
+		dprintf("   %s",
+		       hsess->response_hdr.dline[l].b);
+	}
+#endif
 	return 0;
 
 	/**
