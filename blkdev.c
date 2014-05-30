@@ -150,11 +150,9 @@ void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret)
 {
 	struct mempool_obj *robj;
 	struct _blkdev_req *req;
-	struct blkdev *bd;
 
 	req = container_of(aiocb, struct _blkdev_req, aiocb);
 	robj = req->p_obj;
-	bd = req->bd;
 
 	if (req->cb)
 		req->cb(ret, req->cb_argp); /* user callback */

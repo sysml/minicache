@@ -58,10 +58,30 @@ struct disk {
 	char *path;
 	uint64_t size;
 	uint32_t blksize;
+	int discard;
 };
 
 struct disk *open_disk(const char *path, int mode);
 void close_disk(struct disk *d);
+
+struct vol_member {
+	struct disk *d;
+	uuid_t uuid;
+};
+
+struct storage {
+	struct vol_member member[SHFS_MAX_NB_MEMBERS];
+	uint8_t nb_members;
+	uint32_t stripesize;
+};
+
+int sync_io_chunk(struct storage *s, chk_t start, chk_t len, int owrite, void *buffer);
+#define sync_read_chunk(s, start, len, buffer)	  \
+	sync_io_chunk((s), (start), (len), 0, (buffer))
+#define sync_write_chunk(s, start, len, buffer)	  \
+	sync_io_chunk((s), (start), (len), 1, (buffer))
+int sync_erase_chunk(struct storage *s, chk_t start, chk_t len);
+
 
 /*
  * Misc
