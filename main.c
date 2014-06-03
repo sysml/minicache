@@ -646,7 +646,8 @@ int main(int argc, char *argv[])
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
     printk("Starting HTTP server...\n");
-    init_http(60); /* allow 60 simultaneous connections */
+    init_http(20, 60); /* allow 20 simultaneous connections
+                        * and 60 simultaneous requests */
 
     /* add custom commands to the shell */
     shell_register_cmd("halt", shcmd_halt);

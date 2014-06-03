@@ -17,10 +17,10 @@ struct http_srv;
 #endif
 
 #if HTTP_MULTISERVER
-struct http_srv *init_http(int nb_sess, uint16_t port);
+struct http_srv *init_http(uint16_t nb_sess, uint32_t nb_reqs, uint16_t port);
 void exit_http(struct http_srv *hs);
 #else
-int init_http(int nb_sess);
+int init_http(uint16_t nb_sess, uint32_t nb_reqs);
 void exit_http(void);
 #endif
 
