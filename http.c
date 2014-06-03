@@ -557,14 +557,12 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 		ret = httpsess_respond(hsess);
 		if (ret == ERR_MEM) {
 			dprintf("Replying failed: Out of memory\n");
-			return ERR_MEM; /* still did not work, retry it again later */
+			goto out; /* still did not work, retry it again later */
 		}
 		if (ret == ERR_ABRT)
-			return ret; /* connection got aborted */
+			goto out; /* connection got aborted */
 		hsess->retry_replychain = 0;
-		tcp_recved(tpcb, p->tot_len);
-		pbuf_free(p);
-		return ERR_OK;
+		goto out;
 	}
 
 	cpreq = hsess->cpreq;
@@ -581,9 +579,7 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 		 * TODO: Is ignoring a clean way to handle these cases because
 		 *       we will send ack on the wire? */
 		dprintf("Ignoring unrelated data (p=%p, len=%d)\n", p, p->tot_len);
-		tcp_recved(tpcb, p->tot_len);
-		pbuf_free(p);
-		return ERR_OK;
+		goto out;
 	}
 
 	switch (cpreq->state) {
@@ -622,10 +618,8 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 				 * pbuf back in the stack */
 				dprintf("Replying failed: Out of memory\n");
 				hsess->retry_replychain = 1;
-				return ERR_MEM;
+				goto out;
 			}
-			if (ret == ERR_ABRT)
-				return ret; /* connection got aborted */
 			goto out;
 		}
 		break;
@@ -636,7 +630,7 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 	}
 
  out:
-	if (likely(ret == ERR_OK)) {
+	if (likely(ret != ERR_MEM)) {
 		tcp_recved(tpcb, p->tot_len);
 		pbuf_free(p);
 	}
