@@ -98,10 +98,17 @@ struct _hdr_line {
 	struct _hdr_dbuffer value;
 };
 
+enum http_sess_state {
+	HSS_UNDEF = 0,
+	HSS_ESTABLISHED,
+	HSS_CLOSING
+};
+
 struct http_sess {
 	struct mempool_obj *pobj;
 	struct http_srv *hsrv;
 	struct tcp_pcb *tpcb;
+	enum http_sess_state state;
 	size_t sent_infly;
 	size_t sent;
 
@@ -128,8 +135,7 @@ enum http_req_state {
 	HRS_RESPONDING_HDR,
 	HRS_RESPONDING_MSG,
 	HRS_RESPONDING_EMSG,
-	HRS_RESPONDING_EOM,
-	HRS_CLOSING
+	HRS_RESPONDING_EOM
 };
 
 struct http_req {
@@ -454,6 +460,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->parser_settings = &hs->parser_settings;
 	httpsess_reset_parser(hsess);
 
+	hsess->state = HSS_ESTABLISHED;
 	++hs->nb_sess;
 	dprintf("New HTTP session accepted on server %p "
 		"(currently, there are %u/%u open sessions)\n",
@@ -561,13 +568,18 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 	}
 
 	cpreq = hsess->cpreq;
-	if (unlikely(!cpreq)) {
-		/* We don't have an object allocated for parsing the requests.
+	if (unlikely(!cpreq || hsess->state != HSS_ESTABLISHED)) {
+		/* We don't have an object allocated for parsing the requests or
+		 * we are about to close the connection, thus ignoring all further
+		 * incoming data
 		 *  This can only happen after the first request was processed
 		 *  and there are two reasons for this:
 		 *  1) We couldn't allocate such an object previously
 		 *  2) User requested connection close
-		 *  However, we will ignore all further incoming data */
+		 *  However, we will ignore all further incoming data
+		 *
+		 * TODO: Is ignoring a clean way to handle these cases because
+		 *       we will send ack on the wire? */
 		dprintf("Ignoring unrelated data (p=%p, len=%d)\n", p, p->tot_len);
 		tcp_recved(tpcb, p->tot_len);
 		pbuf_free(p);
@@ -643,8 +655,15 @@ static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 {
 	struct http_sess *hsess = argp;
 
-	if (unlikely(hsess->keepalive_timer == 0))
-		return httpsess_close(hsess, HSC_CLOSE); /* keepalive timeout: close connection */
+	if (unlikely(hsess->keepalive_timer == 0)) {
+		/* keepalive timeout: close connection */
+		if (hsess->sent_infly == 0) {
+			return httpsess_close(hsess, HSC_CLOSE);
+		} else {
+			/* we need to wait for the client until it ack'ed */
+			hsess->state = HSS_CLOSING;
+		}
+	}
 	if (hsess->keepalive_timer > 0)
 		--hsess->keepalive_timer;
 	return ERR_OK;
@@ -692,24 +711,40 @@ static err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *
 
 static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 	struct http_sess *hsess = argp;
-	struct http_req *hreq = hsess->rqueue_head;
+	struct http_req *hreq;
 
 	hsess->sent_infly -= len;
-	if (likely(hreq != NULL)) {
-		switch (hreq->state) {
-		case HRS_RESPONDING_HDR:
-		case HRS_RESPONDING_MSG:
-		case HRS_RESPONDING_EMSG:
-			/* continue replying */
-			if (len) {
-				dprintf("Client acknowledged %u bytes, continue...\n", len);
-				return httpsess_respond(hsess);
+	switch (hsess->state) {
+	case HSS_ESTABLISHED:
+		hreq = hsess->rqueue_head;
+		if (likely(hreq != NULL)) {
+			switch (hreq->state) {
+			case HRS_RESPONDING_HDR:
+			case HRS_RESPONDING_MSG:
+			case HRS_RESPONDING_EMSG:
+				/* continue replying */
+				if (len) {
+					dprintf("Client acknowledged %u bytes, continue...\n", len);
+					return httpsess_respond(hsess);
+				}
+				break;
+			default:
+				break;
 			}
-			break;
-		default:
-			break;
 		}
+		break;
+
+	case HSS_CLOSING:
+		/* connection is about to be closed:
+		 * check if all bytes were transmitted
+		 * and close it if so */
+		if (hsess->sent_infly == 0)
+			return httpsess_close(hsess, HSC_CLOSE);
+
+	default:
+		break;
 	}
+
 
 	return ERR_OK;
 }
@@ -1402,7 +1437,7 @@ static inline err_t httpsess_eor(struct http_sess *hsess)
 			return ERR_OK;
 		} else {
 			/* close connection */
-			return httpsess_close(hsess, HSC_CLOSE);
+			hsess->state = HSS_CLOSING;
 		}
 	}
 
@@ -1413,10 +1448,15 @@ static inline err_t httpsess_eor(struct http_sess *hsess)
  * Note: Will be called multiple times while a request is handled */
 static err_t httpsess_respond(struct http_sess *hsess)
 {
-	struct http_req *hreq = hsess->rqueue_head;
+	struct http_req *hreq;
 	size_t len;
 	err_t err = ERR_OK;
 
+	BUG_ON(hsess->state != HSS_ESTABLISHED);
+	//if (unlikely(hsess->state != HSS_ESTABLISHED))
+	//	return ERR_OK;
+
+	hreq = hsess->rqueue_head;
 	switch (hreq->state) {
 	case HRS_MAKING_RESP:
 		httpreq_make_response(hreq);
