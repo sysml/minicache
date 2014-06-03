@@ -1357,20 +1357,20 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		goto out;
 	}
 	chk_off = shfs_volchkoff_foff(hreq->fd, foff);
-	left = min(shfs_vol.chunksize - chk_off, hreq->rlen - roff);
-	slen = min3(UINT16_MAX, avail, left);
+	left = (uint16_t) min3(UINT16_MAX, shfs_vol.chunksize - chk_off, hreq->rlen - roff);
+	slen = (uint16_t) min3(UINT16_MAX, avail, left);
 	err = httpsess_write(hreq->hsess, ((uint8_t *) (hreq->chk_buf[idx]->data)) + chk_off,
 	                     &slen, TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
 	                    /* TODO: We need to copy because the buffers might be 
 	                     *  obsolete already but client has not yet acknowledged the
 	                     *  data yet */
-	*sent += slen;
+	*sent += (size_t) slen;
 	if (unlikely(err != ERR_OK)) {
 		dprintf("[idx=%u] sending failed, aborting this round\n", idx);
 		goto out;
 	}
 	dprintf("[idx=%u] sent %u bytes (%lu-%lu, chunksize: %lu, left on this chunk: %lu)\n",
-	        idx, slen, chk_off, chk_off + slen, shfs_vol.chunksize, left - slen);
+	        idx, slen, chk_off, chk_off + slen, shfs_vol.chunksize, left - (size_t) slen);
 
 	/* are we done with this chunkbuffer?
 	 *  -> switch to next buffer for next data */
