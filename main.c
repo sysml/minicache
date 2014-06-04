@@ -41,7 +41,6 @@
 
 #include "debug.h"
 
-#define MAX_NB_VBD 64
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
 #endif /* CONFIG_LWIP_MINIMAL */
@@ -121,7 +120,7 @@ static struct _args {
     struct ip_addr  dns1;
 
     unsigned int    nb_vbds;
-    unsigned int    vbd_id[32];
+    unsigned int    vbd_id[MAX_NB_TRY_BLKDEVS];
     int             vbd_detect;
     unsigned int    stats_vbd_id;
     int             stats_vbd;
