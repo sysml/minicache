@@ -125,6 +125,7 @@ static struct _args {
     int             vbd_detect;
     unsigned int    stats_vbd_id;
     int             stats_vbd;
+    unsigned int    nb_http_sess;
 
     int             no_ctldir;
 
@@ -203,9 +204,13 @@ static int parse_args(int argc, char *argv[])
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
     args.no_ctldir = 0;
+    args.nb_http_sess = 500;
+#if ((100 + 4) > MEMP_NUM_TCP_PCB)
+    #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
+#endif
 
      while ((opt = getopt(argc, argv,
-                          "s:i:g:d:b:h"
+                          "s:i:g:d:b:hc:"
 #ifdef SHFS_STATS
                           "x:"
 #endif
@@ -221,7 +226,7 @@ static int parse_args(int argc, char *argv[])
               break;
          case 'i': /* IP address/mask */
 	      ret = parse_args_setval_ipv4cidr(&args.ip, &args.mask, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid host IP in CIDR notation specified (e.g., 192.168.0.2/24)\n");
 	           return -1;
               }
@@ -229,21 +234,21 @@ static int parse_args(int argc, char *argv[])
               break;
          case 'g': /* gateway */
 	      ret = parse_args_setval_ipv4(&args.gw, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid gateway IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
               break;
          case 'd': /* dns0 */
 	      ret = parse_args_setval_ipv4(&args.dns0, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid primary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
               break;
          case 'e': /* dns1 */
 	      ret = parse_args_setval_ipv4(&args.dns1, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
@@ -279,6 +284,15 @@ static int parse_args(int argc, char *argv[])
 	      args.stats_vbd_id = (unsigned int) ival;
               break;
 #endif
+         case 'c': /* number of http connections */
+	      ret = parse_args_setval_int(&ival, optarg);
+	      if (ret < 0 || ival < 1 || ival > MEMP_NUM_TCP_PCB - 4) {
+		      printk("at most %u http connections supported\n",
+		             MEMP_NUM_TCP_PCB - 4);
+	           return -1;
+	      }
+	      args.nb_http_sess = ival;
+              break;
 
          default:
 	      return -1;
@@ -645,9 +659,10 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
-    printk("Starting HTTP server...\n");
-    init_http(20, 60); /* allow 20 simultaneous connections
-                        * and 60 simultaneous requests */
+    printk("Starting HTTP server (max number of connections: %u)...\n",
+           args.nb_http_sess);
+    init_http(args.nb_http_sess,
+              args.nb_http_sess + args.nb_http_sess / 2);
 
     /* add custom commands to the shell */
     shell_register_cmd("halt", shcmd_halt);
