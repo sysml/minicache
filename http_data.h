@@ -33,7 +33,7 @@ static const char __http_shdr28[] = "Content-type: application/octet-stream\r\n"
 static const char __http_shdr29[] = "Connection: close\r\n";
 static const char __http_shdr30[] = "Connection: keep-alive\r\n";
 static const char __http_shdr31[] = "Expires: Thu, 1 Jan 1970 00:00:00 GMT\r\nPragma: no-chache\r\n";
-static const char __http_shdr32[] = "Server: "HTTPD_SERVER_AGENT"\r\n";
+static const char __http_shdr32[] = "Server: "HTTP_SERVER_AGENT"\r\n";
 static const char __http_shdr33[] = "Accept-ranges: bytes\r\n";
 static const char __http_shdr34[] = "Transfer-encoding: chunked\r\n";
 
@@ -70,7 +70,7 @@ static const size_t _http_shdr_len[] = {
 /* Indexes into _http_shdr */
 #define HTTP_EOH                  0 /* end of header */
 #define HTTP_EOM                  1 /* end of message */
-#define HTTP09_SHDR_OK            2 /* 200 OK (HTTP/0.9) */
+#define HTTP09_SHDR_200           2 /* 200 OK (HTTP/0.9) */
 #define HTTP09_SHDR_206           3 /* 206 Partial content (HTTP/0.9) */
 #define HTTP09_SHDR_400           4 /* 400 Bad request (HTTP/0.9) */
 #define HTTP09_SHDR_404           5 /* 404 File not found (HTTP/0.9) */
@@ -78,7 +78,7 @@ static const size_t _http_shdr_len[] = {
 #define HTTP09_SHDR_500           7 /* 500 Internal server error (HTTP/0.9) */
 #define HTTP09_SHDR_501           8 /* 501 Not implemented (HTTP/0.9) */
 #define HTTP09_SHDR_503           9 /* 503 Service unavailable (HTTP/0.9) */
-#define HTTP10_SHDR_OK           10 /* 200 OK (HTTP/1.0) */
+#define HTTP10_SHDR_200          10 /* 200 OK (HTTP/1.0) */
 #define HTTP10_SHDR_206          11 /* 206 Partial content (HTTP/1.0) */
 #define HTTP10_SHDR_400          12 /* 400 Bad request (HTTP/1.0) */
 #define HTTP10_SHDR_404          13 /* 404 Element not found (HTTP/1.0) */
@@ -86,7 +86,7 @@ static const size_t _http_shdr_len[] = {
 #define HTTP10_SHDR_500          15 /* 500 Internal server error (HTTP/1.0) */
 #define HTTP10_SHDR_501          16 /* 501 Not implemented (HTTP/1.0) */
 #define HTTP10_SHDR_503          17 /* 503 Service unavailable (HTTP/1.0) */
-#define HTTP11_SHDR_OK           18 /* 200 OK (HTTP/1.1) */
+#define HTTP11_SHDR_200          18 /* 200 OK (HTTP/1.1) */
 #define HTTP11_SHDR_206          19 /* 206 Partial content (HTTP/1.1) */
 #define HTTP11_SHDR_400          20 /* 400 Bad request (HTTP/1.1) */
 #define HTTP11_SHDR_404          21 /* 404 Element not found (HTTP/1.1) */
@@ -106,8 +106,9 @@ static const size_t _http_shdr_len[] = {
 
 #define HTTP_SHDR_DEFAULT_TYPE   HTTP_SHDR_PLAIN
 
-#define HTTP_SHDR_OK(major, minor) \
-	(((major) < 1) ?  HTTP09_SHDR_OK : (((minor) < 1) ?  HTTP10_SHDR_OK :  HTTP11_SHDR_OK))
+#define HTTP_SHDR_OK(major, minor) HTTP_SHDR_200((major), (minor))
+#define HTTP_SHDR_200(major, minor) \
+	(((major) < 1) ? HTTP09_SHDR_200 : (((minor) < 1) ? HTTP10_SHDR_200 : HTTP11_SHDR_200))
 #define HTTP_SHDR_206(major, minor) \
 	(((major) < 1) ? HTTP09_SHDR_206 : (((minor) < 1) ? HTTP10_SHDR_206 : HTTP11_SHDR_206))
 #define HTTP_SHDR_400(major, minor) \
@@ -176,5 +177,38 @@ static const char _http_err503p[] = \
 	"<p>The service is temporarily unavailable.<br>Please try it again.</p>\r\n"
 	"</body></html>\r\n";
 static const size_t _http_err503p_len = sizeof(_http_err503p) - 1;
+
+#ifdef HTTP_TESTFILE
+static const char _http_testfile[] = \
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*   52 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  104 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  208 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  416 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  832 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /* 1456 bytes */
+static const size_t _http_testfile_len = sizeof(_http_testfile) - 1;
+#endif
 
 #endif /* _HTTP_DATA_H_ */

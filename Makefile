@@ -89,9 +89,10 @@ CFLAGS				+= -DSHFS_STATS_HTTP_DPC
 CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 
 ######################################
-## HTTPd options
+## HTTP options
 ######################################
-CFLAGS				+= -DHTTPD_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
+CFLAGS				+= -DHTTP_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
+//CFLAGS			+= -DHTTP_TESTFILE
 
 ######################################
 ## General MiniCache options

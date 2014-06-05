@@ -134,7 +134,7 @@ enum http_req_state {
 	HRS_MAKING_RESP,
 	HRS_RESPONDING_HDR,
 	HRS_RESPONDING_MSG,
-	HRS_RESPONDING_EMSG,
+	HRS_RESPONDING_SMSG,
 	HRS_RESPONDING_EOM
 };
 
@@ -715,7 +715,7 @@ static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 			switch (hreq->state) {
 			case HRS_RESPONDING_HDR:
 			case HRS_RESPONDING_MSG:
-			case HRS_RESPONDING_EMSG:
+			case HRS_RESPONDING_SMSG:
 				/* continue replying */
 				if (len) {
 					dprintf("Client acknowledged %u bytes, continue...\n", len);
@@ -921,6 +921,9 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	register size_t nb_slines = 0;
 	register size_t nb_dlines = 0;
 	register uint32_t l;
+#ifdef HTTP_TESTFILE
+	hash512_t h;
+#endif
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	register unsigned int i;
 #endif
@@ -951,6 +954,12 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	/* eliminate leading '/'s */
 	while (hreq->request_hdr.url[url_offset] == '/')
 		++url_offset;
+#ifdef HTTP_TESTFILE
+	if ((hreq->request_hdr.url[url_offset] == SFHS_HASH_INDICATOR_PREFIX) &&
+	    (hash_parse(&hreq->request_hdr.url[url_offset + 1], h, shfs_vol.hlen) == 0) &&
+	    hash_is_zero(h, shfs_vol.hlen))
+		goto testfile_hdr;
+#endif
 	hreq->fd = shfs_fio_open(&hreq->request_hdr.url[url_offset]);
 	if (!hreq->fd) {
 		dprintf("Could not open requested file '%s': %s\n", &hreq->request_hdr.url[url_offset], strerror(errno));
@@ -1031,9 +1040,8 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	/* HTTP OK [first line] (code can be 216 or 200) */
 	if (hreq->response_hdr.code == 206)
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_206(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-
 	else
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_OK(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
 
 	/* MIME (by element or default) */
 	shfs_fio_mime(hreq->fd, fmime, sizeof(fmime));
@@ -1145,6 +1153,15 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_RETRY], 2);
 	goto finalize_hdr;
 
+#ifdef HTTP_TESTFILE
+ testfile_hdr:
+	hreq->response_hdr.code = 299; /* special code for testfile */
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
+	/* Content length */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
+	goto finalize_hdr;
+#endif
 }
 
 
@@ -1466,33 +1483,43 @@ static err_t httpsess_respond(struct http_sess *hsess)
 
 		if (hsess->sent == hreq->response_hdr.total_len) {
 			/* we are done */
-			if (hreq->response_hdr.code >= 200 &&
-			    hreq->response_hdr.code < 300) {
+			hsess->sent = 0;
+
+			switch (hreq->response_hdr.code) {
+			case 299:
+#ifdef HTTP_TESTFILE
+				/* response testbody */
+				hreq->state = HRS_RESPONDING_SMSG;
+				goto case_HRS_RESPONDING_SMSG;
+#endif
+			case 200 ... 298:
 				/* response body (file) */
 				hreq->state = HRS_RESPONDING_MSG;
-				hsess->sent = 0;
 				goto case_HRS_RESPONDING_MSG;
-			} else if (hreq->response_hdr.code == 404 ||
-			           hreq->response_hdr.code == 500 ||
-			           hreq->response_hdr.code == 501 ||
-			           hreq->response_hdr.code == 503) {
+			case 404:
+			case 500:
+			case 501:
+			case 503:
 				/* error body */
-				hreq->state = HRS_RESPONDING_EMSG;
-				hsess->sent = 0;
-				goto case_HRS_RESPONDING_EMSG;
-			} else {
+				hreq->state = HRS_RESPONDING_SMSG;
+				goto case_HRS_RESPONDING_SMSG;
+			default:
 				/* no body */
 				hreq->state = HRS_RESPONDING_EOM;
-				hsess->sent = 0;
 				goto case_HRS_RESPONDING_EOM;
 			}
 		}
 		break;
 
-	case_HRS_RESPONDING_EMSG:
-	case HRS_RESPONDING_EMSG:
+	case_HRS_RESPONDING_SMSG:
+	case HRS_RESPONDING_SMSG:
 		/* send out error message */
 		switch (hreq->response_hdr.code) {
+#ifdef HTTP_TESTFILE
+		case 299:
+			len = _http_testfile_len;
+			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_testfile, len);
+#endif
 		case 404:
 			/* Element not found */
 			len = _http_err404p_len;
