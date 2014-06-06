@@ -1043,20 +1043,61 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 
 static int shcmd_free(FILE *cio, int argc, char *argv[])
 {
-    /* list heap size and alloced pages */
-    fprintf(cio, "       %12s %12s %12s\n",
-            "total",
-            "free",
-            "heap");
-    fprintf(cio, "Pages: %12lu %12lu %12lu\n",
-            0,
-            0,
-            (heap_mapped - heap) / PAGE_SIZE);
+    size_t base;
+    size_t total_s;
+    size_t text_s;
+    size_t data_s;
+    size_t bss_s;
+    size_t heap_s;
+    size_t other_s;
 
-    fprintf(cio, "\n");
-    fprintf(cio, "Page size: %u KiB\n", PAGE_SIZE / 1024);
-    fprintf(cio, "Heap size: %u KiB\n", (heap_mapped - heap) / 1024);
+    /* quick argument parsing */
+    base = 1;
+    if (argc == 2) {
+	    if (strcmp(argv[1], "-k") == 0)
+		    base = 1024;
+	    else if (strcmp(argv[1], "-m") == 0)
+		    base = 1024 * 1024;
+	    else if (strcmp(argv[1], "-g") == 0)
+		    base = 1024 * 1024 * 1024;
+	    else
+		    goto usage;
+    } else if (argc > 2) {
+	    goto usage;
+    }
+
+    /* output */
+    total_s = start_info.nr_pages * PAGE_SIZE;
+    text_s  = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
+    data_s  = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
+    bss_s   = ((size_t) &_end - (size_t) &_edata); /* bss section */
+    heap_s  = heap_mapped - heap;
+    other_s = total_s - text_s - data_s - bss_s - heap_s;
+
+    fprintf(cio, "       %14s %14s %14s %14s %14s %14s\n",
+            "total",
+            "text",
+            "data",
+            "bss",
+            "heap",
+            "other");
+    fprintf(cio, "Mem:   %14lu %14lu %14lu %14lu %14lu %14lu\n",
+            total_s / base,
+            text_s / base,
+            data_s / base,
+            bss_s / base,
+            heap_s / base,
+            other_s / base);
+    fprintf(cio, "Page:  %14lu\n",
+            PAGE_SIZE / base);
+    fprintf(cio, "Stack: %14lu\n",
+            STACK_SIZE / base);
+    fprintf(cio, "\nNote: Further unused or mapped pages are counted to other.\n");
 
     return 0;
+
+ usage:
+    fprintf(cio, "%s [[-k|-m|-g]]\n", argv[0]);
+    return -1;
 }
 #endif
