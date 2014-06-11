@@ -1044,14 +1044,9 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 static int shcmd_free(FILE *cio, int argc, char *argv[])
 {
     size_t base;
-    size_t total_s;
-    size_t text_s;
-    size_t data_s;
-    size_t bss_s;
-    size_t heap_s;
-    size_t other_s;
+    char mode = 'm';
 
-    /* quick argument parsing */
+    /* parsing */
     base = 1;
     if (argc == 2) {
 	    if (strcmp(argv[1], "-k") == 0)
@@ -1060,6 +1055,10 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 		    base = 1024 * 1024;
 	    else if (strcmp(argv[1], "-g") == 0)
 		    base = 1024 * 1024 * 1024;
+	    else if (strcmp(argv[1], "-p") == 0)
+		    mode = 'p';
+	    else if (strcmp(argv[1], "-u") == 0)
+		    mode = 'u';
 	    else
 		    goto usage;
     } else if (argc > 2) {
@@ -1067,37 +1066,83 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
     }
 
     /* output */
-    total_s = start_info.nr_pages * PAGE_SIZE;
-    text_s  = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
-    data_s  = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
-    bss_s   = ((size_t) &_end - (size_t) &_edata); /* bss section */
-    heap_s  = heap_mapped - heap;
-    other_s = total_s - text_s - data_s - bss_s - heap_s;
+    switch (mode) {
+    case 'u': /* base units */
+        fprintf(cio, "Page size: %5lu KiB\nStack size: %4lu KiB\n",
+                PAGE_SIZE / 1024,
+                STACK_SIZE / 1024);
+        break;
 
-    fprintf(cio, "       %14s %14s %14s %14s %14s %14s\n",
-            "total",
-            "text",
-            "data",
-            "bss",
-            "heap",
-            "other");
-    fprintf(cio, "Mem:   %14lu %14lu %14lu %14lu %14lu %14lu\n",
-            total_s / base,
-            text_s / base,
-            data_s / base,
-            bss_s / base,
-            heap_s / base,
-            other_s / base);
-    fprintf(cio, "Page:  %14lu\n",
-            PAGE_SIZE / base);
-    fprintf(cio, "Stack: %14lu\n",
-            STACK_SIZE / base);
-    fprintf(cio, "\nNote: Further unused or mapped pages are counted to other.\n");
+    case 'p': /* pages */
+        do {
+	    size_t total_p;
+	    size_t reserved_p;
+	    size_t heap_p;
+	    size_t other_p;
+	    size_t free_p;
 
+	    total_p    = num_total_pages();
+	    reserved_p = num_reserved_pages();
+	    heap_p     = (heap_mapped - heap) / PAGE_SIZE;
+	    free_p     = num_free_pages();
+	    other_p    = total_p - free_p - reserved_p - heap_p;
+
+	    fprintf(cio, "       %12s %12s %12s %12s %12s\n",
+	            "total",
+	            "reserved",
+	            "heap",
+	            "other",
+	            "free");
+	    fprintf(cio, "Pages: %12lu %12lu %12lu %12lu %12lu\n",
+	            total_p,
+	            reserved_p,
+	            heap_p,
+	            other_p,
+	            free_p);
+        } while(0);
+        break;
+    default: /* mem */
+        do {
+	    size_t total_s;
+	    size_t text_s;
+	    size_t data_s;
+	    size_t bss_s;
+	    size_t heap_s;
+	    size_t other_s;
+	    size_t free_s;
+
+	    //total_s = start_info.nr_pages * PAGE_SIZE;
+	    total_s = num_total_pages() * PAGE_SIZE;
+	    text_s  = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
+	    data_s  = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
+	    bss_s   = ((size_t) &_end - (size_t) &_edata); /* bss section */
+	    heap_s  = heap_mapped - heap;
+	    free_s  = num_free_pages() * PAGE_SIZE;
+	    other_s = total_s - free_s - text_s - data_s - bss_s - heap_s;
+
+	    fprintf(cio, "       %12s %12s %12s %12s %12s %12s %12s\n",
+	            "total",
+	            "text",
+	            "data",
+	            "bss",
+	            "heap",
+	            "other",
+	            "free");
+	    fprintf(cio, "Mem:   %12lu %12lu %12lu %12lu %12lu %12lu %12lu\n",
+	            total_s / base,
+	            text_s / base,
+	            data_s / base,
+	            bss_s / base,
+	            heap_s / base,
+	            other_s / base,
+	            free_s / base);
+        } while(0);
+        break;
+    }
     return 0;
 
  usage:
-    fprintf(cio, "%s [[-k|-m|-g]]\n", argv[0]);
+    fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
     return -1;
 }
 #endif
