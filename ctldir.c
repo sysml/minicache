@@ -28,6 +28,7 @@
 		free(__xb_errmsg); \
 	} \
 	__xb_errmsg ? -1: 0; })
+#ifndef CTLDIR_NOCHMOD
 #define _xb_chmod(path, domid, domperm) ({ \
 	char *__xb_errmsg; \
 	__xb_errmsg = xenbus_set_perms(XBT_NIL, (path), (domid), (domperm)); \
@@ -37,6 +38,7 @@
 		free(__xb_errmsg); \
 	} \
 	__xb_errmsg ? -1: 0; })
+#endif /* CTLDIR_NOCHMOD */
 #define _xb_rm(path) ({ \
 	char *__xb_errmsg; \
 	__xb_errmsg = xenbus_rm(XBT_NIL, (path)); \
@@ -320,6 +322,7 @@ int ctldir_start_watcher(struct ctldir *cd)
 		break; /* done */
 	}
 
+#ifndef CTLDIR_NOCHMOD
 	/* set permissions (ignore errors) */
 	/* base/lock */
 	snprintf(path, sizeof(path), "%s/%s", cd->basename, cd->lock_name);
@@ -336,6 +339,7 @@ int ctldir_start_watcher(struct ctldir *cd)
 		_xb_chmod(path, DOM0, 'r');
 		_xb_chmod(path, self, 'n');
 	}
+#endif /* CTLDIR_NOCHMOD */
 
 	/* setup watches */
 	for (i = 0; i < cd->nb_trigger; ++i) {
@@ -366,7 +370,6 @@ int ctldir_start_watcher(struct ctldir *cd)
 		_xb_unwatch_token(cd->trigger_ipath[i], token);
 	}
 
- /* err_rmentries:*/
 	snprintf(path, sizeof(path), "%s/%s", cd->basename, cd->lock_name);
 	_xb_rm(path);
 	for (i = 0; i < cd->nb_trigger; ++i) {

@@ -95,6 +95,11 @@ CFLAGS				+= -DHTTP_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
 //CFLAGS			+= -DHTTP_TESTFILE
 
 ######################################
+## ctldir options
+######################################
+CFLAGS				+= -DCTLDIR_NOCHMOD
+
+######################################
 ## General MiniCache options
 ######################################
 CFLAGS				+= -DCONFIG_AUTOMOUNT
