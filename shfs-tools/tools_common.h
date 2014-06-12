@@ -73,6 +73,7 @@ struct storage {
 	struct vol_member member[SHFS_MAX_NB_MEMBERS];
 	uint8_t nb_members;
 	uint32_t stripesize;
+	uint8_t stripemode;
 };
 
 int sync_io_chunk(struct storage *s, chk_t start, chk_t len, int owrite, void *buffer);

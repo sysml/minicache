@@ -328,6 +328,8 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 
 	fprintf(cio, "\n");
 	fprintf(cio, "Member stripe size: %u KiB\n", shfs_vol.stripesize / 1024);
+	fprintf(cio, "Member stripe mode: %s\n", (shfs_vol.stripemode == SHFS_SM_COMBINED ?
+	                                          "Combined" : "Interleaved" ));
 	fprintf(cio, "Volume members:     %u device(s)\n", shfs_vol.nb_members);
 	for (m = 0; m < shfs_vol.nb_members; m++) {
 		uuid_unparse(shfs_vol.member[m].uuid, str_uuid);

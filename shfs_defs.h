@@ -19,6 +19,7 @@
 #include "hash.h"
 
 typedef uint64_t chk_t;
+typedef uint64_t strp_t;
 #ifdef __MINIOS__
 typedef uint8_t uuid_t[16];
 #endif /* __MINIOS__ */
@@ -78,7 +79,7 @@ typedef uint8_t uuid_t[16];
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
 #define SHFSv1_VERSION1 0x01
-#define SHFSv1_VERSION0 0x02
+#define SHFSv1_VERSION0 0x03
 
 struct shfs_hdr_common {
 	uint8_t            magic[4];
@@ -89,13 +90,17 @@ struct shfs_hdr_common {
 	uint8_t            vol_encoding;
 	chk_t              vol_size;
 	uint64_t           vol_ts_creation;
+	uint8_t            member_stripemode;
 	uint32_t           member_stripesize; /* at least 4 KiB (because of first chunk), blkfront can handle at most 32 KiB */
 	uint8_t            member_uuid[16]; /* this disk */
 	uint8_t            member_count;
-	struct {           /* uuid's of all disk members */
+	struct {           /* uuid's of all members */
 		uuid_t    uuid;
 	}                  member[16];
 } __attribute__((packed));
+
+#define SHFS_SM_INTERLEAVED 0x0
+#define SHFS_SM_COMBINED    0x1
 
 /**
  * SHFS configuration header
@@ -127,7 +132,9 @@ struct shfs_hentry {
 
 #define CHUNKS_TO_BYTES(chunks, chunksize) ((uint64_t) (chunks) * (uint64_t) (chunksize))
 
-#define SHFS_CHUNKSIZE(hdr_common) ((hdr_common)->member_stripesize * (uint32_t) ((hdr_common)->member_count))
+#define SHFS_CHUNKSIZE(hdr_common) (hdr_common->member_stripemode == SHFS_SM_COMBINED ? \
+		((hdr_common)->member_stripesize * (uint32_t) ((hdr_common)->member_count)) : \
+		(hdr_common)->member_stripesize)
 #define SHFS_HENTRY_ALIGN 64 /* has to be a power of 2 */
 #define SHFS_HENTRY_SIZE ALIGN_UP(sizeof(struct shfs_hentry), SHFS_HENTRY_ALIGN)
 #define SHFS_HENTRIES_PER_CHUNK(chunksize) ((chunksize) / SHFS_HENTRY_SIZE)

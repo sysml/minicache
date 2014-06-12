@@ -91,40 +91,50 @@ void close_disk(struct disk *d) {
 /* Performs I/O on the member disks of a volume */
 int sync_io_chunk(struct storage *s, chk_t start, chk_t len, int owrite, void *buffer)
 {
-	chk_t end, c;
 	off_t startb;
 	unsigned int m;
 	uint8_t *wptr = buffer;
+	strp_t start_s;
+	strp_t end_s;
+	strp_t strp;
 
-	end = start + len;
-	for (c = start; c < end; c++) {
-		for (m = 0; m < s->nb_members; ++m) {
-			startb = c * s->stripesize;
-			dprintf(D_MAX, " %s member %u at stripe %lu (%lu KiB, chunk %lu), "
-			        "length %u (%u KiB)\n",
-			        owrite ? "Writing to" : "Reading from",
-			        m,
-			        c, startb / 1024, c,
-			        1, s->stripesize / 1024);
+	assert(start != 0);
 
-			if (lseek(s->member[m].d->fd, startb, SEEK_SET) < 0) {
-				eprintf("Could not seek on %s: %s\n", s->member[m].d->path, strerror(errno));
+	if (s->stripemode == SHFS_SM_COMBINED) {
+		start_s = (strp_t) start * (strp_t) s->nb_members;
+		end_s = (strp_t) (start + len) * (strp_t) s->nb_members;
+	} else { /* SHFS_SM_INTERLEAVED (chunksize == stripesize) */
+		start_s = (strp_t) start + (strp_t) (s->nb_members - 1);
+		end_s = (strp_t) (start_s + len);
+	}
+
+	for (strp = start_s; strp < end_s; ++strp) {
+		m = strp % s->nb_members;
+		startb = (strp / s->nb_members) * s->stripesize;
+		dprintf(D_MAX, " %s chunk %lu on member %u (at %lu KiB, length: %u KiB)\n",
+		        owrite ? "Writing to" : "Reading from",
+		        s->stripemode == SHFS_SM_COMBINED ? strp / s->nb_members: strp - (s->nb_members - 1),
+		        m,
+		        startb / 1024,
+		        s->stripesize / 1024);
+
+		if (lseek(s->member[m].d->fd, startb, SEEK_SET) < 0) {
+			eprintf("Could not seek on %s: %s\n", s->member[m].d->path, strerror(errno));
+			return -1;
+		}
+		if (owrite) {
+			if (write(s->member[m].d->fd, wptr, s->stripesize) < 0) {
+				eprintf("Could not write to %s: %s\n", s->member[m].d->path, strerror(errno));
 				return -1;
 			}
-			if (owrite) {
-				if (write(s->member[m].d->fd, wptr, s->stripesize) < 0) {
-					eprintf("Could not write to %s: %s\n", s->member[m].d->path, strerror(errno));
-					return -1;
-				}
-			} else {
-				if (read(s->member[m].d->fd, wptr, s->stripesize) < 0) {
-					eprintf("Could not read from %s: %s\n", s->member[m].d->path, strerror(errno));
-					return -1;
-				}
+		} else {
+			if (read(s->member[m].d->fd, wptr, s->stripesize) < 0) {
+				eprintf("Could not read from %s: %s\n", s->member[m].d->path, strerror(errno));
+				return -1;
 			}
-
-			wptr += s->stripesize;
 		}
+
+		wptr += s->stripesize;
 	}
 
 	return 0;
@@ -133,49 +143,61 @@ int sync_io_chunk(struct storage *s, chk_t start, chk_t len, int owrite, void *b
 /* Performs a 'discard' on member disks of a volume
  * If a member does not support 'discard', the area is overwritten with zero's */
 int sync_erase_chunk(struct storage *s, chk_t start, chk_t len) {
-	chk_t end, c;
 	off_t startb;
 	unsigned int m;
+	strp_t start_s;
+	strp_t end_s;
+	strp_t strp;
 	void *strp0 = calloc(1, s->stripesize);
 	uint64_t p = 0; /* progress in promille */
 
 	if (!strp0)
 		goto err_out;
-	end = start + len;
-	for (m = 0; m < s->nb_members; ++m) {
+	if (start == 0) {
+		errno = EINVAL;
+		goto err_free_strp0;
+	}
+
+	if (s->stripemode == SHFS_SM_COMBINED) {
+		start_s = (strp_t) start * (strp_t) s->nb_members;
+		end_s = (strp_t) (start + len) * (strp_t) s->nb_members;
+	} else { /* SHFS_SM_INTERLEAVED (chunksize == stripesize) */
+		start_s = (strp_t) start + (strp_t) (s->nb_members - 1);
+		end_s = (strp_t) (start_s + len);
+	}
+
+	for (strp = start_s; strp < end_s; ++strp) {
+		m = strp % s->nb_members;
+		startb = (strp / s->nb_members) * s->stripesize;
+
+		if (verbosity >= D_L0) {
+			p = (strp - start_s + 1) * 1000 / (end_s - start_s);
+			dprintf(D_L0, "\r Erasing chunk %lu on member %u (%lu.%01lu %%)...       ",
+			        s->stripemode == SHFS_SM_COMBINED ?
+			        strp / s->nb_members : strp - (s->nb_members - 1),
+			        m, p / 10, p % 10);
+		}
+
 		if (s->member[m].d->discard) {
 			/* device supports discard */
-			/* NOT IMPLEMENTED YET */
-			dprintf(D_L0, "\r Discarding stripe area %lu-%lu on member %u...       ",
-			        start, end);
-			errno = EINVAL;
+			/* TODO: DISCARD NOT IMPLEMENTED YET */
+			errno = ENOTSUP;
 			goto err_free_strp0;
 		} else {
 			/* device does not support discard:
 			 * overwrite area with zero's */
-			for (c = start; c < end; c++) {
-				if (verbosity >= D_L0) {
-					p = ((c - start + 1) * 1000 / s->nb_members / len)
-						+ ((m * 1000) / s->nb_members);
-					dprintf(D_L0, "\r Erasing stripe %lu on member %u (%lu.%01lu %%)...       ",
-					        c, m, p / 10, p % 10);
-				}
-
-				startb = c * s->stripesize;
-				if (lseek(s->member[m].d->fd, startb, SEEK_SET) < 0) {
-					eprintf("Could not seek on %s: %s\n", s->member[m].d->path, strerror(errno));
-					goto err_free_strp0;
-				}
-				if (write(s->member[m].d->fd, strp0, s->stripesize) < 0) {
-					eprintf("Could not write to %s: %s\n", s->member[m].d->path, strerror(errno));
-					goto err_free_strp0;
-				}
+			if (lseek(s->member[m].d->fd, startb, SEEK_SET) < 0) {
+				eprintf("Could not seek on %s: %s\n", s->member[m].d->path, strerror(errno));
+				goto err_free_strp0;
+			}
+			if (write(s->member[m].d->fd, strp0, s->stripesize) < 0) {
+				eprintf("Could not write to %s: %s\n", s->member[m].d->path, strerror(errno));
+				goto err_free_strp0;
 			}
 		}
 	}
-	if (len > 0)
-		dprintf(D_L0, "\n");
 
+	dprintf(D_L0, "\n");
 	free(strp0);
 	return 0;
 
@@ -235,6 +257,8 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 
 	printf("\n");
 	printf("Member stripe size: %u KiB\n", hdr_common->member_stripesize / 1024);
+	printf("Member stripe mode: %s\n", (hdr_common->member_stripemode == SHFS_SM_COMBINED ?
+	                                    "Combined" : "Interleaved" ));
 	printf("Volume members:     %u device(s)\n", hdr_common->member_count);
 	for (m = 0; m < hdr_common->member_count; m++) {
 		uuid_unparse(hdr_common->member[m].uuid, str_uuid);

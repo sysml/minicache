@@ -151,6 +151,13 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	shfs_vol.volname[17] = '\0'; /* ensure nullterminated volume name */
 	shfs_vol.ts_creation = hdr_common->vol_ts_creation;
 	shfs_vol.stripesize = hdr_common->member_stripesize;
+	shfs_vol.stripemode = hdr_common->member_stripemode;
+	if (shfs_vol.stripemode != SHFS_SM_COMBINED &&
+	    shfs_vol.stripemode != SHFS_SM_INTERLEAVED) {
+		dprintf("Stripe mode 0x%x is not supported\n", shfs_vol.stripemode);
+		ret = -ENOTSUP;
+		goto err_close_bds;
+	}
 	shfs_vol.chunksize = SHFS_CHUNKSIZE(hdr_common);
 	shfs_vol.volsize = hdr_common->vol_size;
 
@@ -202,7 +209,10 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	}
 
 	/* calculate and check volume size */
-	min_member_size = (shfs_vol.volsize / shfs_vol.nb_members) * (uint64_t) shfs_vol.chunksize;
+	if (shfs_vol.stripemode == SHFS_SM_COMBINED)
+		min_member_size = (shfs_vol.volsize + 1) * (uint64_t) shfs_vol.stripesize;
+	else /* SHFS_SM_INTERLEAVED */
+		min_member_size = ((shfs_vol.volsize + 1) / shfs_vol.nb_members) * (uint64_t) shfs_vol.stripesize;
 	for (i = 0; i < shfs_vol.nb_members; ++i) {
 		if (blkdev_size(shfs_vol.member[i].bd) < min_member_size) {
 			dprintf("Member %u of volume '%s' is too small\n",
@@ -735,20 +745,38 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
                                shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp)
 {
 	int ret;
-	chk_t end, c;
-	sector_t start_sec, len_sec;
+	uint64_t num_req_per_member;
+	sector_t start_sec;
 	unsigned int m;
 	uint8_t *ptr = buffer;
 	struct mempool_obj *t_obj;
 	SHFS_AIO_TOKEN *t;
+	strp_t start_s;
+	strp_t end_s;
+	strp_t strp;
+
 
 	if (!shfs_mounted) {
 		errno = ENODEV;
 		goto err_out;
 	}
+
+	switch (shfs_vol.stripemode) {
+	case SHFS_SM_COMBINED:
+		start_s = (strp_t) start * (strp_t) shfs_vol.nb_members;
+		end_s = (strp_t) (start + len) * (strp_t) shfs_vol.nb_members;
+		break;
+	case SHFS_SM_INTERLEAVED:
+	default:
+		start_s = (strp_t) start + (strp_t) (shfs_vol.nb_members - 1);
+		end_s = (strp_t) (start_s + len);
+		break;
+	}
+	num_req_per_member = (end_s - start_s) / shfs_vol.nb_members;
+
 	/* check if each member has enough request objects available for this operation */
 	for (m = 0; m < shfs_vol.nb_members; ++m) {
-		if (blkdev_avail_req(shfs_vol.member[m].bd) < len) {
+		if (blkdev_avail_req(shfs_vol.member[m].bd) < num_req_per_member) {
 			errno = EAGAIN;
 			goto err_out;
 		}
@@ -769,27 +797,26 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	t->cb_argp = cb_argp;
 
 	/* setup requests */
-	end = start + len;
-	for (c = start; c < end; c++) {
-		for (m = 0; m < shfs_vol.nb_members; ++m) {
-			/* TODO: Try using shift instead of multiply */
-			start_sec = c * shfs_vol.member[m].sfactor;
-			len_sec = shfs_vol.member[m].sfactor;
-			dprintf("shfs_aio_chunk: member=%u, start=%lu (%lus), len=1 (%lus), ptr=@%p\n",
-			        m, c, start_sec, len_sec, ptr);
-			ret = blkdev_async_io(shfs_vol.member[m].bd, start_sec, len_sec, write, ptr,
-			                      _shfs_aio_cb, t);
-			if (unlikely(ret < 0)) {
-				t->cb = NULL; /* erase callback */
-				dprintf("Error while setting up async I/O request for member %u: %d. ", m, ret);
-				dprintf("Cancelling request...\n");
-				shfs_aio_wait(t);
-				errno = -ret;
-				goto err_free_token;
-			}
-			++t->infly;
-			ptr += shfs_vol.stripesize;
+	for (strp = start_s; strp < end_s; ++strp) {
+		/* TODO: Try using shifts and masks
+		 * instead of multiplies, mods and divs */
+		m = strp % shfs_vol.nb_members;
+		start_sec = (strp / shfs_vol.nb_members) * shfs_vol.member[m].sfactor;
+
+		dprintf("shfs_aio_chunk: member=%u, start=%lus, len=%lus, ptr=@%p\n",
+		        m, start_sec, shfs_vol.member[m].sfactor, ptr);
+		ret = blkdev_async_io(shfs_vol.member[m].bd, start_sec, shfs_vol.member[m].sfactor,
+		                      write, ptr, _shfs_aio_cb, t);
+		if (unlikely(ret < 0)) {
+			t->cb = NULL; /* erase callback */
+			dprintf("Error while setting up async I/O request for member %u: %d. ", m, ret);
+			dprintf("Cancelling request...\n");
+			shfs_aio_wait(t);
+			errno = -ret;
+			goto err_free_token;
 		}
+		++t->infly;
+		ptr += shfs_vol.stripesize;
 	}
 	return t;
 

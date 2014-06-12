@@ -325,6 +325,10 @@ static void load_vol_cconf(char *path[], unsigned int count)
 	memcpy(shfs_vol.volname, hdr_common->vol_name, 16);
 	shfs_vol.volname[17] = '\0'; /* ensure nullterminated volume name */
 	shfs_vol.s.stripesize = hdr_common->member_stripesize;
+	shfs_vol.s.stripemode = hdr_common->member_stripemode;
+	if (shfs_vol.s.stripemode != SHFS_SM_COMBINED &&
+	    shfs_vol.s.stripemode != SHFS_SM_INTERLEAVED)
+		dief("Stripe mode 0x%x is not supported\n", shfs_vol.s.stripemode);
 	shfs_vol.chunksize = SHFS_CHUNKSIZE(hdr_common);
 	shfs_vol.volsize = hdr_common->vol_size;
 
@@ -358,7 +362,10 @@ static void load_vol_cconf(char *path[], unsigned int count)
 		dief("Stripe size invalid on volume '%s'\n", shfs_vol.volname);
 
 	/* calculate and check volume size */
-	min_member_size = (shfs_vol.volsize / shfs_vol.s.nb_members) * (uint64_t) shfs_vol.chunksize;
+	if (shfs_vol.s.stripemode == SHFS_SM_COMBINED)
+		min_member_size = (shfs_vol.volsize + 1) * (uint64_t) shfs_vol.s.stripesize;
+	else /* SHFS_SM_INTERLEAVED */
+		min_member_size = ((shfs_vol.volsize + 1) / shfs_vol.s.nb_members) * (uint64_t) shfs_vol.s.stripesize;
 	for (i = 0; i < shfs_vol.s.nb_members; ++i) {
 		if (shfs_vol.s.member[i].d->size < min_member_size)
 			dief("Member %u of volume '%s' is too small\n", i, shfs_vol.volname);

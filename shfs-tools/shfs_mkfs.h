@@ -17,6 +17,7 @@ struct args {
 	uint32_t stripesize;
 
 	int fullerase;
+	int combined_striping;
 
 	uint8_t  allocator;
 	uint8_t  hashfunc;

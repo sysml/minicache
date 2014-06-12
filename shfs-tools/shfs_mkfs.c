@@ -17,7 +17,7 @@ int force = 0;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfn:s:b:e:x";
+const char *short_opts = "h?vVfn:s:cb:e:x";
 
 static struct option long_opts[] = {
 	{"help",		no_argument,		NULL,	'h'},
@@ -26,6 +26,7 @@ static struct option long_opts[] = {
 	{"force",		no_argument,		NULL,	'f'},
 	{"name",		required_argument,	NULL,	'n'},
 	{"stripesize",		required_argument,	NULL,	's'},
+	{"combined-striping",	no_argument,		NULL,	'c'},
 	{"bucket-count",	required_argument,	NULL,	'b'},
 	{"entries-per-bucket",	required_argument,	NULL,	'e'},
 	{"erase",		no_argument,		NULL,	'x'},
@@ -54,6 +55,7 @@ static void print_usage(char *argv0)
 	printf(" Volume settings:\n");
 	printf("  -n, --name [NAME]                sets volume name to NAME\n");
 	printf("  -s, --stripesize [BYTES]         sets the stripesize for each volume member\n");
+	printf("  -c, --combined-striping          enables combined striping for the volume\n");
 	printf("\n");
 	printf(" Hash table related configuration:\n");
 	printf("  -b, --bucket-count [COUNT]       sets the total number of buckets\n");
@@ -100,6 +102,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->bucket_count = 4096;
 	args->entries_per_bucket = 16;
 	args->fullerase = 0;
+	args->combined_striping = 0;
 
 	args->hashfunc = SHFUNC_SHA;
 	args->hashlen = 32; /* 256 bits */
@@ -160,6 +163,9 @@ static int parse_args(int argc, char **argv, struct args *args)
 			break;
 		case 'x': /* erase whole volume (full format) */
 			args->fullerase = 1;
+			break;
+		case 'c': /* combined striping */
+			args->combined_striping = 1;
 			break;
 		default:
 			/* unknown option */
@@ -241,6 +247,7 @@ static void mkfs(struct storage *s, struct args *args)
 
 	/* setup striping */
 	hdr_common->member_count = s->nb_members;
+	hdr_common->member_stripemode = s->stripemode;
 	hdr_common->member_stripesize = s->stripesize;
 	for (m = 0; m < s->nb_members; ++m)
 		uuid_generate(hdr_common->member[m].uuid);
@@ -256,7 +263,11 @@ static void mkfs(struct storage *s, struct args *args)
 		if (s->member[m].d->size < member_dsize)
 			member_dsize = s->member[m].d->size;
 	}
-	hdr_common->vol_size = (chk_t) ((member_dsize - chunksize + s->stripesize) / s->stripesize);
+	if (hdr_common->member_stripemode == SHFS_SM_COMBINED) {
+		hdr_common->vol_size = (chk_t) ((member_dsize - chunksize + s->stripesize) / s->stripesize);
+	} else { /* SHFS_SM_INTERLEAVED */
+		hdr_common->vol_size = (chk_t) (((member_dsize - chunksize) / chunksize) * s->nb_members);
+	}
 
 	/* chunk1: config header */
 	chk1 = calloc(1, chunksize);
@@ -423,6 +434,8 @@ int main(int argc, char **argv)
 	}
 	s.nb_members = args.nb_devs;
 	s.stripesize = args.stripesize;
+	s.stripemode = (args.combined_striping && (args.nb_devs > 1)) ?
+		SHFS_SM_COMBINED : SHFS_SM_INTERLEAVED;
 	for (m = 0; m < s.nb_members; ++m) {
 		s.member[m].d = open_disk(args.devpath[m], O_RDWR);
 		if (!s.member[m].d)
