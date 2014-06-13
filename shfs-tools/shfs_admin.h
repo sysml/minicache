@@ -7,7 +7,7 @@
 #include "tools_common.h"
 #include "shfs_defs.h"
 
-#define STR_VERSION "Simon's HashFS Tools: Admin v0.01"
+#define STR_VERSION "Simon's HashFS Tools: Admin v1.02"
 
 #define MAX_NB_TRY_BLKDEVS SHFS_MAX_NB_MEMBERS
 
@@ -35,21 +35,13 @@ struct args {
 	struct job *jobs; /* list of jobs */
 };
 
-struct vol_member {
-	struct disk *d;
-	uuid_t uuid;
-};
-
-/* Copy from ../shfs.h */
 struct vol_info {
 	uuid_t uuid;
 	char volname[17];
 	uint32_t chunksize;
 	chk_t volsize;
 
-	uint8_t nb_members;
-	struct vol_member member[SHFS_MAX_NB_MEMBERS];
-	uint32_t stripesize;
+	struct storage s;
 
 	/* hash table */
 	struct htable *bt;

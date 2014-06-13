@@ -40,6 +40,11 @@ export-stats
  Exports collected access statistics to the configured stats device.
 
 ```
+free [[-k|-m|-g|-p|-u]]
+```
+ Displays current memory usage.
+
+```
 file [FILE]...
 ```
  Displays MIME-type and size of FILE.

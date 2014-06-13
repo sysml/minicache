@@ -56,8 +56,8 @@ static void print_usage(char *argv0)
 	printf("  -f, --force                suppresses warnings and user questions\n");
 	printf("  -a, --add-file [FILE]      add a file to the volume\n");
 	printf("  For each add-file token:\n");
-	printf("    -m, --mime [MIME]        sets the MIME type of a file\n");
-	printf("    -n, --name [NAME]        sets an additionally name to a file\n");
+	printf("    -m, --mime [MIME]        sets the MIME type for the file\n");
+	printf("    -n, --name [NAME]        sets an additional name for the file\n");
 	printf("  -r, --rm-file [HASH]       removes a file from the volume\n");
 	printf("  -l, --ls                   lists the volume contents\n");
 	printf("  -i, --info                 shows volume information\n");
@@ -239,65 +239,6 @@ void sigint_handler(int signum) {
 
 
 /******************************************************************************
- * DISK I/O                                                                   *
- ******************************************************************************/
-/**
- * Performs I/O on the member disks of a volume
- *
- * This function can only be called, after load_vol_cconf
- * established successfully the low-level setup of a volume
- */
-static int shfs_sync_io_chunk(chk_t start, chk_t len, int owrite, void *buffer)
-{
-	chk_t end, c;
-	off_t startb;
-	size_t lenb;
-	unsigned int m;
-	uint8_t *wptr = buffer;
-
-	end = start + len;
-	for (c = start; c < end; c++) {
-		for (m = 0; m < shfs_vol.nb_members; ++m) {
-			startb = c * shfs_vol.stripesize;
-			lenb = shfs_vol.stripesize;
-			dprintf(D_L1, "blkdev_sync_io member=%u, "
-			        "start=%lu (%lu KiB), "
-			        "len=%lu (%lu KiB), "
-			        "wptr=%p\n",
-			        m,
-			        start, startb / 1024,
-			        len, lenb / 1024,
-			        wptr);
-
-			if (lseek(shfs_vol.member[m].d->fd, startb, SEEK_SET) < 0) {
-				eprintf("Could not seek on %s: %s\n", shfs_vol.member[m].d->path, strerror(errno));
-				return -1;
-			}
-			if (owrite) {
-				if (write(shfs_vol.member[m].d->fd, wptr, shfs_vol.stripesize) < 0) {
-					eprintf("Could not write to %s: %s\n", shfs_vol.member[m].d->path, strerror(errno));
-					return -1;
-				}
-			} else {
-				if (read(shfs_vol.member[m].d->fd, wptr, shfs_vol.stripesize) < 0) {
-					eprintf("Could not read from %s: %s\n", shfs_vol.member[m].d->path, strerror(errno));
-					return -1;
-				}
-			}
-
-			wptr += shfs_vol.stripesize;
-		}
-	}
-
-	return 0;
-}
-#define shfs_sync_read_chunk(start, len, buffer) \
-	shfs_sync_io_chunk((start), (len), 0, (buffer))
-#define shfs_sync_write_chunk(start, len, buffer) \
-	shfs_sync_io_chunk((start), (len), 1, (buffer))
-
-
-/******************************************************************************
  * MOUNT / UMOUNT                                                             *
  ******************************************************************************/
 /**
@@ -383,43 +324,50 @@ static void load_vol_cconf(char *path[], unsigned int count)
 	memcpy(shfs_vol.uuid, hdr_common->vol_uuid, 16);
 	memcpy(shfs_vol.volname, hdr_common->vol_name, 16);
 	shfs_vol.volname[17] = '\0'; /* ensure nullterminated volume name */
-	shfs_vol.stripesize = hdr_common->member_stripesize;
+	shfs_vol.s.stripesize = hdr_common->member_stripesize;
+	shfs_vol.s.stripemode = hdr_common->member_stripemode;
+	if (shfs_vol.s.stripemode != SHFS_SM_COMBINED &&
+	    shfs_vol.s.stripemode != SHFS_SM_INTERLEAVED)
+		dief("Stripe mode 0x%x is not supported\n", shfs_vol.s.stripemode);
 	shfs_vol.chunksize = SHFS_CHUNKSIZE(hdr_common);
 	shfs_vol.volsize = hdr_common->vol_size;
 
 	/* Find and add members to the volume */
-	shfs_vol.nb_members = 0;
+	shfs_vol.s.nb_members = 0;
 	for (i = 0; i < hdr_common->member_count; i++) {
 		for (m = 0; m < nb_detected_members; ++m) {
 			if (uuid_compare(hdr_common->member[i].uuid, detected_member[m].uuid) == 0) {
 				/* found device but was this member already added (malformed label)? */
-				for (j = 0; j < shfs_vol.nb_members; ++j) {
-					if (uuid_compare(shfs_vol.member[j].uuid,
+				for (j = 0; j < shfs_vol.s.nb_members; ++j) {
+					if (uuid_compare(shfs_vol.s.member[j].uuid,
 					                 hdr_common->member[i].uuid) == 0)
 						dief("A member is specified for multiple times for volume '%s'\n",
 						     shfs_vol.volname);
 				}
-				shfs_vol.member[shfs_vol.nb_members].d = detected_member[m].d;
-				uuid_copy(shfs_vol.member[shfs_vol.nb_members].uuid, detected_member[m].uuid);
-				shfs_vol.nb_members++;
+				shfs_vol.s.member[shfs_vol.s.nb_members].d = detected_member[m].d;
+				uuid_copy(shfs_vol.s.member[shfs_vol.s.nb_members].uuid, detected_member[m].uuid);
+				shfs_vol.s.nb_members++;
 				continue;
 			}
 		}
 
 	}
-	if (shfs_vol.nb_members != count)
+	if (shfs_vol.s.nb_members != count)
 		dief("More members specified than actually required for volume '%s'\n", shfs_vol.volname);
-	if (shfs_vol.nb_members != hdr_common->member_count)
+	if (shfs_vol.s.nb_members != hdr_common->member_count)
 		dief("Could not establish member mapping for volume '%s'\n", shfs_vol.volname);
 
 	/* chunk and stripe size -> retrieve a device sector factor for each device */
-	if (shfs_vol.stripesize < 4096 || !POWER_OF_2(shfs_vol.stripesize))
+	if (shfs_vol.s.stripesize < 4096 || !POWER_OF_2(shfs_vol.s.stripesize))
 		dief("Stripe size invalid on volume '%s'\n", shfs_vol.volname);
 
 	/* calculate and check volume size */
-	min_member_size = (shfs_vol.volsize / shfs_vol.nb_members) * (uint64_t) shfs_vol.chunksize;
-	for (i = 0; i < shfs_vol.nb_members; ++i) {
-		if (shfs_vol.member[i].d->size < min_member_size)
+	if (shfs_vol.s.stripemode == SHFS_SM_COMBINED)
+		min_member_size = (shfs_vol.volsize + 1) * (uint64_t) shfs_vol.s.stripesize;
+	else /* SHFS_SM_INTERLEAVED */
+		min_member_size = ((shfs_vol.volsize + 1) / shfs_vol.s.nb_members) * (uint64_t) shfs_vol.s.stripesize;
+	for (i = 0; i < shfs_vol.s.nb_members; ++i) {
+		if (shfs_vol.s.member[i].d->size < min_member_size)
 			dief("Member %u of volume '%s' is too small\n", i, shfs_vol.volname);
 	}
 
@@ -444,7 +392,7 @@ static void load_vol_hconf(void)
 		die();
 
 	dprintf(D_L0, "Load SHFS configuration chunk\n");
-	ret = shfs_sync_read_chunk(1, 1, chk1);
+	ret = sync_read_chunk(&shfs_vol.s, 1, 1, chk1);
 	if (ret < 0)
 		die();
 
@@ -458,6 +406,10 @@ static void load_vol_hconf(void)
 	shfs_vol.htable_len                   = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, shfs_vol.chunksize);
 	shfs_vol.hlen                         = hdr_config->hlen;
 	shfs_vol.allocator                    = hdr_config->allocator;
+
+	/* brief configuration check */
+	if (shfs_vol.htable_len == 0)
+		dief("Malformed SHFS configuration\n");
 
 	free(chk1);
 }
@@ -500,7 +452,7 @@ static void load_vol_htable(void)
 			chk_buf = malloc(shfs_vol.chunksize);
 			if (!chk_buf)
 				die();
-			ret = shfs_sync_read_chunk(cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
+			ret = sync_read_chunk(&shfs_vol.s, cur_htchk + shfs_vol.htable_ref, 1, chk_buf);
 			if (ret < 0)
 				dief("An error occured while reading the hash table from the volume\n");
 			cur_chk = cur_htchk;
@@ -595,16 +547,16 @@ void umount_shfs(void) {
   for(i = 0; i < shfs_vol.htable_len; ++i) {
     if (shfs_vol.htable_chunk_cache_state[i] & CCS_MODIFIED) {
       /* write buffer back to disk since it has been modified */
-      ret = shfs_sync_write_chunk(shfs_vol.htable_ref + i,
-                                  1,
-                                  shfs_vol.htable_chunk_cache[i]);
+      ret = sync_write_chunk(&shfs_vol.s, shfs_vol.htable_ref + i,
+                             1,
+                             shfs_vol.htable_chunk_cache[i]);
       if (ret < 0)
 	dief("An error occured while writing back the hash table to the volume!\n"
 	     "The filesystem might be in a corrupted state right now\n");
       if (shfs_vol.htable_bak_ref) {
-	ret = shfs_sync_write_chunk(shfs_vol.htable_bak_ref + i,
-	                            1,
-	                            shfs_vol.htable_chunk_cache[i]);
+	ret = sync_write_chunk(&shfs_vol.s, shfs_vol.htable_bak_ref + i,
+	                       1,
+	                       shfs_vol.htable_chunk_cache[i]);
 	if (ret < 0)
 	  dief("An error occured while writing back the hash table to the volume!\n"
 	       "The filesystem might be in a corrupted state right now\n");
@@ -616,8 +568,8 @@ void umount_shfs(void) {
   free(shfs_vol.htable_chunk_cache);
   free(shfs_vol.htable_chunk_cache_state);
   shfs_free_btable(shfs_vol.bt);
-  for(i = 0; i < shfs_vol.nb_members; ++i)
-    close_disk(shfs_vol.member[i].d);
+  for(i = 0; i < shfs_vol.s.nb_members; ++i)
+    close_disk(shfs_vol.s.member[i].d);
 }
 
 
@@ -778,7 +730,7 @@ static int actn_addfile(struct job *j)
 			goto err_free_tmp_chk;
 		}
 
-		ret = shfs_sync_write_chunk(cchk + c, 1, tmp_chk);
+		ret = sync_write_chunk(&shfs_vol.s, cchk + c, 1, tmp_chk);
 		if (ret < 0) {
 			eprintf("Could not write to volume '%s': %s\n", shfs_vol.volname, strerror(errno));
 			ret = -1;
@@ -938,20 +890,20 @@ static int actn_info(struct job *job)
 	}
 
 	/* read first chunk from first member (considered as 4K) */
-	if (lseek(shfs_vol.member[0].d->fd, 0, SEEK_SET) < 0) {
-		eprintf("Could not seek on %s: %s\n", shfs_vol.member[0].d->path, strerror(errno));
+	if (lseek(shfs_vol.s.member[0].d->fd, 0, SEEK_SET) < 0) {
+		eprintf("Could not seek on %s: %s\n", shfs_vol.s.member[0].d->path, strerror(errno));
 		ret = -1;
 		goto out_free_chk1;
 	}
-	if (read(shfs_vol.member[0].d->fd, chk0, 4096) < 0) {
-		eprintf("Could not read from %s: %s\n", shfs_vol.member[0].d->path, strerror(errno));
+	if (read(shfs_vol.s.member[0].d->fd, chk0, 4096) < 0) {
+		eprintf("Could not read from %s: %s\n", shfs_vol.s.member[0].d->path, strerror(errno));
 		ret = -1;
 		goto out_free_chk1;
 	}
 
 	/* read second chunk */
 	dprintf(D_L0, "Load SHFS configuration chunk\n");
-	ret = shfs_sync_read_chunk(1, 1, chk1);
+	ret = sync_read_chunk(&shfs_vol.s, 1, 1, chk1);
 	if (ret < 0) {
 		fatal();
 		ret = -1;

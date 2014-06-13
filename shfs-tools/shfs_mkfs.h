@@ -6,17 +6,18 @@
 
 #include "tools_common.h"
 
-#define STR_VERSION "Simon's HashFS Tools: MakeFS v0.01"
-
-#define MAX_NB_BLKDEVS SHFS_MAX_NB_MEMBERS
+#define STR_VERSION "Simon's HashFS Tools: MakeFS v1.02"
 
 struct args {
 	char **devpath;
-	unsigned int nb_devs;
+	uint8_t nb_devs;
 
 	uint8_t  encoding;
 	char     volname[17]; /* null-terminated */
 	uint32_t stripesize;
+
+	int fullerase;
+	int combined_striping;
 
 	uint8_t  allocator;
 	uint8_t  hashfunc;

@@ -17,7 +17,7 @@ int force = 0;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfn:s:b:e:";
+const char *short_opts = "h?vVfn:s:cb:e:x";
 
 static struct option long_opts[] = {
 	{"help",		no_argument,		NULL,	'h'},
@@ -26,8 +26,10 @@ static struct option long_opts[] = {
 	{"force",		no_argument,		NULL,	'f'},
 	{"name",		required_argument,	NULL,	'n'},
 	{"stripesize",		required_argument,	NULL,	's'},
+	{"combined-striping",	no_argument,		NULL,	'c'},
 	{"bucket-count",	required_argument,	NULL,	'b'},
 	{"entries-per-bucket",	required_argument,	NULL,	'e'},
+	{"erase",		no_argument,		NULL,	'x'},
 	{NULL, 0, NULL, 0} /* end of list */
 };
 
@@ -48,10 +50,12 @@ static void print_usage(char *argv0)
 	printf("  -V, --version                    displays program version and exit\n");
 	printf("  -v, --verbose                    increases verbosity level (max. %d times)\n", D_MAX);
 	printf("  -f, --force                      suppresses user questions\n");
+	printf("  -x, --erase                      erase/discard(trim) volume area (full format)\n");
 	printf("\n");
 	printf(" Volume settings:\n");
 	printf("  -n, --name [NAME]                sets volume name to NAME\n");
 	printf("  -s, --stripesize [BYTES]         sets the stripesize for each volume member\n");
+	printf("  -c, --combined-striping          enables combined striping for the volume\n");
 	printf("\n");
 	printf(" Hash table related configuration:\n");
 	printf("  -b, --bucket-count [COUNT]       sets the total number of buckets\n");
@@ -93,10 +97,12 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->volname[6]  = 'd';
 	args->volname[7]  = '\0';
 	args->volname[17] = '\0';
-	args->stripesize = 4096;
+	args->stripesize = 16384;
 	args->allocator = SALLOC_FIRSTFIT;
-	args->bucket_count = 4096;
-	args->entries_per_bucket = 16;
+	args->bucket_count = 2048;
+	args->entries_per_bucket = 8;
+	args->fullerase = 0;
+	args->combined_striping = 0;
 
 	args->hashfunc = SHFUNC_SHA;
 	args->hashlen = 32; /* 256 bits */
@@ -155,6 +161,12 @@ static int parse_args(int argc, char **argv, struct args *args)
 			}
 			args->entries_per_bucket = (uint32_t) tmp;
 			break;
+		case 'x': /* erase whole volume (full format) */
+			args->fullerase = 1;
+			break;
+		case 'c': /* combined striping */
+			args->combined_striping = 1;
+			break;
 		default:
 			/* unknown option */
 			return -EINVAL;
@@ -192,36 +204,28 @@ void sigint_handler(int signum) {
 /******************************************************************************
  * MAIN                                                                       *
  ******************************************************************************/
-static void mkfs(struct disk *d, struct args *args)
+static void mkfs(struct storage *s, struct args *args)
 {
 	int ret;
 	void *chk0;
 	void *chk0_zero;
 	void *chk1;
-	off_t htable_base;
-	off_t htable_bak_base;
-	off_t hentry_offset;
 	struct shfs_hdr_common *hdr_common;
 	struct shfs_hdr_config *hdr_config;
-	struct shfs_hentry     *hentry;
-	uint32_t nb_hentries_per_chk;
-	uint32_t nb_hentries;
-	uint32_t i;
-	uint32_t status_i;
+	chk_t htable_size;
 	uint64_t mdata_size;
 	uint64_t chunksize;
+	uint64_t member_dsize;
+	uint8_t m;
 
 	/*
 	 * Fillout headers / init entries
 	 */
+	/* chunk0: common header */
 	chk0      = calloc(1, 4096);
 	chk0_zero = calloc(1, 4096);
-	chk1      = calloc(1, (size_t) args->stripesize);
-	hentry    = calloc(1, sizeof(*hentry));
-	if (!chk0 || !chk0_zero || !chk1 || !hentry)
+	if (!chk0 || !chk0_zero)
 		die();
-
-	/* chunk0: common header */
 	hdr_common = chk0 + BOOT_AREA_LENGTH;
 	hdr_common->magic[0] = SHFS_MAGIC0;
 	hdr_common->magic[1] = SHFS_MAGIC1;
@@ -241,17 +245,34 @@ static void mkfs(struct disk *d, struct args *args)
 	hdr_common->vol_encoding = SENC_UNSPECIFIED;
 	hdr_common->vol_ts_creation = gettimestamp_s();
 
-	/* setup striping as single disk, only */
-	uuid_generate(hdr_common->member_uuid);
-	hdr_common->member_count = 1;
-	hdr_common->member_stripesize = args->stripesize;
-	uuid_copy(hdr_common->member[0].uuid, hdr_common->member_uuid);
+	/* setup striping */
+	hdr_common->member_count = s->nb_members;
+	hdr_common->member_stripemode = s->stripemode;
+	hdr_common->member_stripesize = s->stripesize;
+	for (m = 0; m < s->nb_members; ++m)
+		uuid_generate(hdr_common->member[m].uuid);
 
-	/* calculate volume and chunk size */
+	/* calculate volume size
+	 * Note: The smallest member limits the volume size
+	 * Note: First chunk is not striped across members (required for volume
+	 *       detection). Because of this, it's size is just the stripesize
+	 *       (not chunksize). Note, minimum stripesize is 4 KiB. */
 	chunksize = SHFS_CHUNKSIZE(hdr_common);
-	hdr_common->vol_size = (chk_t) (d->size / chunksize);
+	member_dsize = s->member[0].d->size;
+	for (m = 1; m < s->nb_members; ++m) {
+		if (s->member[m].d->size < member_dsize)
+			member_dsize = s->member[m].d->size;
+	}
+	if (hdr_common->member_stripemode == SHFS_SM_COMBINED) {
+		hdr_common->vol_size = (chk_t) ((member_dsize - chunksize + s->stripesize) / s->stripesize);
+	} else { /* SHFS_SM_INTERLEAVED */
+		hdr_common->vol_size = (chk_t) (((member_dsize - chunksize) / chunksize) * s->nb_members);
+	}
 
 	/* chunk1: config header */
+	chk1 = calloc(1, chunksize);
+	if (!chk1)
+		die();
 	hdr_config = chk1;
 	hdr_config->htable_ref = 2;
 	hdr_config->htable_bak_ref = 0; /* disable htable backup */
@@ -261,16 +282,12 @@ static void mkfs(struct disk *d, struct args *args)
 	hdr_config->htable_entries_per_bucket = args->entries_per_bucket;
 	hdr_config->allocator = args->allocator;
 
-	/* hentry defaults */
-	/* NONE: everything zero'ed */
-
 	/*
-	 * Check
+	 * Check device size
 	 */
-	mdata_size = CHUNKS_TO_BYTES(metadata_size(hdr_common, hdr_config), chunksize);
-	if (mdata_size > d->size)
-		dief("%s is to small: Disk label requires %ld Bytes but only %ld Bytes are available\n",
-		     d->path, mdata_size, d->size);
+	mdata_size = metadata_size(hdr_common, hdr_config);
+	if (mdata_size > hdr_common->vol_size)
+		dief("Disk label requires more space than available on members\n");
 
 	/*
 	 * Summary
@@ -304,75 +321,44 @@ static void mkfs(struct disk *d, struct args *args)
 	printf("\n");
 
 	/*
-	 *
+	 * Erase common header area (quick erase) in order to disable device
+	 *  detection. THis is done for the case that the user cancels the operation
 	 */
-	printf("Erasing common header area...\n");
-	ret = lseek(d->fd, 0, SEEK_SET);
-	if (ret < 0)
-		die();
-	if (cancel)
-		exit(-2);
-	ret = write(d->fd, chk0_zero, chunksize);
-	if (ret < 0)
-		die();
+	for (m = 0; m < s->nb_members; ++m) {
+		printf("Erasing common header area of member %u/%u...\n",
+		       m + 1, s->nb_members);
+
+		ret = lseek(s->member[m].d->fd, 0, SEEK_SET);
+		if (ret < 0)
+			die();
+		ret = write(s->member[m].d->fd, chk0_zero, 4096);
+		if (ret < 0)
+			die();
+	}
 
 	/*
-	 * Write htable entries
+	 * Erase hash table area or do a full format
 	 */
-	nb_hentries = hdr_config->htable_entries_per_bucket * hdr_config->htable_bucket_count;
-	htable_base = CHUNKS_TO_BYTES(hdr_config->htable_ref, chunksize);
-	htable_bak_base = CHUNKS_TO_BYTES(hdr_config->htable_ref, chunksize);
-	nb_hentries_per_chk = SHFS_HENTRIES_PER_CHUNK(chunksize);
-	status_i = 64;
-	if (verbosity == D_MAX)
-		status_i = 1;
-
-	for (i = 0; i < nb_hentries; i++) {
-		if (cancel)
-			exit(-2);
-
-		hentry_offset = htable_base + \
-			CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), chunksize) + \
-			SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
-		if (i % status_i == 0) {
-			printf("\rWriting table entries... [%ld/%ld]", i, nb_hentries);
-			dprintf(D_L0, " (@0x%08x)", hentry_offset);
-			fflush(stdout);
-		}
-		ret = lseek(d->fd, hentry_offset, SEEK_SET);
+	if (args->fullerase) {
+		/* full format */
+		printf("\rErasing volume area...\n");
+		ret = sync_erase_chunk(s, 2, hdr_common->vol_size - 2);
 		if (ret < 0)
 			die();
-		ret = write(d->fd, hentry, sizeof(*hentry));
+	} else {
+		/* quick format */
+		htable_size = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, chunksize);
+		printf("\rErasing hash table area...\n");
+		ret = sync_erase_chunk(s, hdr_config->htable_ref, htable_size);
 		if (ret < 0)
 			die();
 
-	}
-	printf("\rWriting table entries... [%ld/%ld]                   \n",
-	       nb_hentries, nb_hentries);
-
-	if (hdr_config->htable_bak_ref) {
-		printf("\n");
-		for (i = 0; i < nb_hentries; i++) {
-			if (cancel)
-				exit(-2);
-
-			hentry_offset = htable_bak_base + \
-				CHUNKS_TO_BYTES(SHFS_HTABLE_CHUNK_NO(i, nb_hentries_per_chk), chunksize) + \
-				SHFS_HTABLE_ENTRY_OFFSET(i, nb_hentries_per_chk);
-			if (i % status_i == 0) {
-				printf("\rWriting backup table entries... [%ld/%ld]",  i, nb_hentries);
-				dprintf(D_L0, " (@0x%08x)", hentry_offset);
-				fflush(stdout);
-			}
-			ret = lseek(d->fd, hentry_offset, SEEK_SET);
-			if (ret < 0)
-				die();
-			ret = write(d->fd, hentry, sizeof(*hentry));
+		if (hdr_config->htable_bak_ref) {
+			printf("\rErasing backup hash table area...\n");
+			ret = sync_erase_chunk(s, hdr_config->htable_bak_ref, htable_size);
 			if (ret < 0)
 				die();
 		}
-		printf("\rWriting backup table entries... [%ld/%ld]                   \n",
-		       nb_hentries, nb_hentries);
 	}
 
 	/*
@@ -381,24 +367,28 @@ static void mkfs(struct disk *d, struct args *args)
 	if (cancel)
 		exit(-2);
 	printf("Writing config header...\n");
-	ret = lseek(d->fd, chunksize, SEEK_SET);
-	if (ret < 0)
-		die();
-	ret = write(d->fd, chk1, chunksize);
+	ret = sync_write_chunk(s, 1, 1, chk1);
 	if (ret < 0)
 		die();
 
 	if (cancel)
 		exit(-2);
-	printf("Writing common header...\n");
-	ret = lseek(d->fd, 0, SEEK_SET);
-	if (ret < 0)
-		die();
-	ret = write(d->fd, chk0, chunksize);
-	if (ret < 0)
-		die();
 
-	free(hentry);
+	for (m = 0; m < s->nb_members; ++m) {
+		printf("Writing common header area to member %u/%u...\n",
+		       m + 1, s->nb_members);
+
+		ret = lseek(s->member[m].d->fd, 0, SEEK_SET);
+		if (ret < 0)
+			die();
+
+		/* write header with member's uuid */
+		uuid_copy(hdr_common->member_uuid, hdr_common->member[m].uuid);
+		ret = write(s->member[m].d->fd, chk0, 4096);
+		if (ret < 0)
+			die();
+	}
+
 	free(chk1);
 	free(chk0_zero);
 	free(chk0);
@@ -407,7 +397,8 @@ static void mkfs(struct disk *d, struct args *args)
 int main(int argc, char **argv)
 {
 	struct args args;
-	struct disk *d;
+	struct storage s;
+	uint8_t m;
 
 	signal(SIGINT,  sigint_handler);
 	signal(SIGTERM, sigint_handler);
@@ -436,17 +427,25 @@ int main(int argc, char **argv)
 	/*
 	 * MAIN
 	 */
-	if (args.nb_devs > 1) {
-		printf("Sorry, multi-member volume format is not supported yet.\n");
+	if (args.nb_devs > SHFS_MAX_NB_MEMBERS) {
+		printf("Sorry, supporting at most %u members for volume format.\n",
+		       SHFS_MAX_NB_MEMBERS);
 		exit(EXIT_FAILURE);
 	}
-	d = open_disk(args.devpath[0], O_RDWR);
-	if (!d)
-		exit(EXIT_FAILURE);
+	s.nb_members = args.nb_devs;
+	s.stripesize = args.stripesize;
+	s.stripemode = (args.combined_striping && (args.nb_devs > 1)) ?
+		SHFS_SM_COMBINED : SHFS_SM_INTERLEAVED;
+	for (m = 0; m < s.nb_members; ++m) {
+		s.member[m].d = open_disk(args.devpath[m], O_RDWR);
+		if (!s.member[m].d)
+			exit(EXIT_FAILURE);
+	}
 	if (cancel)
 		exit(-2);
-	mkfs(d, &args);
-	close_disk(d);
+	mkfs(&s, &args);
+	for (m = 0; m < s.nb_members; ++m)
+		close_disk(s.member[m].d);
 
 	/*
 	 * EXIT

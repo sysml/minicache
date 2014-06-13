@@ -2,36 +2,40 @@
 #define _HTTP_DATA_H_
 
 static const char __http_shdr00[] = "\r\n";
-static const char __http_shdr01[] = "HTTP/0.9 200\r\n";
-static const char __http_shdr02[] = "HTTP/0.9 206\r\n";
-static const char __http_shdr03[] = "HTTP/0.9 400\r\n";
-static const char __http_shdr04[] = "HTTP/0.9 404\r\n";
-static const char __http_shdr05[] = "HTTP/0.9 416\r\n";
-static const char __http_shdr06[] = "HTTP/0.9 500\r\n";
-static const char __http_shdr07[] = "HTTP/0.9 501\r\n";
-static const char __http_shdr08[] = "HTTP/1.0 200 OK\r\n";
-static const char __http_shdr09[] = "HTTP/1.0 206 Partial content\r\n";
-static const char __http_shdr10[] = "HTTP/1.0 400 Bad request\r\n";
-static const char __http_shdr11[] = "HTTP/1.0 404 Element not found\r\n";
-static const char __http_shdr12[] = "HTTP/1.0 416 Requested range not satisfiable\r\n";
-static const char __http_shdr13[] = "HTTP/1.0 500 Internal server error\r\n";
-static const char __http_shdr14[] = "HTTP/1.0 501 Not implemented\r\n";
-static const char __http_shdr15[] = "HTTP/1.1 200 OK\r\n";
-static const char __http_shdr16[] = "HTTP/1.1 206 Partial content\r\n";
-static const char __http_shdr17[] = "HTTP/1.1 400 Bad request\r\n";
-static const char __http_shdr18[] = "HTTP/1.1 404 Element not found\r\n";
-static const char __http_shdr19[] = "HTTP/1.1 416 Requested range not satisfiable\r\n";
-static const char __http_shdr20[] = "HTTP/1.1 500 Internal server error\r\n";
-static const char __http_shdr21[] = "HTTP/1.1 501 Not implemented\r\n";
-static const char __http_shdr22[] = "Content-type: text/plain\r\n";
-static const char __http_shdr23[] = "Content-type: text/html\r\n";
-static const char __http_shdr24[] = "Content-type: application/octet-stream\r\n";
-static const char __http_shdr25[] = "Connection: close\r\n";
-static const char __http_shdr26[] = "Connection: keep-alive\r\n";
-static const char __http_shdr27[] = "Expires: Thu, 1 Jan 1970 00:00:00 GMT\r\nPragma: no-chache\r\n";
-static const char __http_shdr28[] = "Server: "HTTPD_SERVER_AGENT"\r\n";
-static const char __http_shdr29[] = "Accept-ranges: bytes\r\n";
-static const char __http_shdr30[] = "Transfer-encoding: chunked\r\n";
+static const char __http_shdr01[] = "\r\n";
+static const char __http_shdr02[] = "HTTP/0.9 200\r\n";
+static const char __http_shdr03[] = "HTTP/0.9 206\r\n";
+static const char __http_shdr04[] = "HTTP/0.9 400\r\n";
+static const char __http_shdr05[] = "HTTP/0.9 404\r\n";
+static const char __http_shdr06[] = "HTTP/0.9 416\r\n";
+static const char __http_shdr07[] = "HTTP/0.9 500\r\n";
+static const char __http_shdr08[] = "HTTP/0.9 501\r\n";
+static const char __http_shdr09[] = "HTTP/0.9 503\r\n";
+static const char __http_shdr10[] = "HTTP/1.0 200 OK\r\n";
+static const char __http_shdr11[] = "HTTP/1.0 206 Partial content\r\n";
+static const char __http_shdr12[] = "HTTP/1.0 400 Bad request\r\n";
+static const char __http_shdr13[] = "HTTP/1.0 404 Element not found\r\n";
+static const char __http_shdr14[] = "HTTP/1.0 416 Requested range not satisfiable\r\n";
+static const char __http_shdr15[] = "HTTP/1.0 500 Internal server error\r\n";
+static const char __http_shdr16[] = "HTTP/1.0 501 Not implemented\r\n";
+static const char __http_shdr17[] = "HTTP/1.0 503 Service unavailable\r\n";
+static const char __http_shdr18[] = "HTTP/1.1 200 OK\r\n";
+static const char __http_shdr19[] = "HTTP/1.1 206 Partial content\r\n";
+static const char __http_shdr20[] = "HTTP/1.1 400 Bad request\r\n";
+static const char __http_shdr21[] = "HTTP/1.1 404 Element not found\r\n";
+static const char __http_shdr22[] = "HTTP/1.1 416 Requested range not satisfiable\r\n";
+static const char __http_shdr23[] = "HTTP/1.1 500 Internal server error\r\n";
+static const char __http_shdr24[] = "HTTP/1.1 501 Not implemented\r\n";
+static const char __http_shdr25[] = "HTTP/1.1 503 Service unavailable\r\n";
+static const char __http_shdr26[] = "Content-type: text/plain\r\n";
+static const char __http_shdr27[] = "Content-type: text/html\r\n";
+static const char __http_shdr28[] = "Content-type: application/octet-stream\r\n";
+static const char __http_shdr29[] = "Connection: close\r\n";
+static const char __http_shdr30[] = "Connection: keep-alive\r\n";
+static const char __http_shdr31[] = "Expires: Thu, 1 Jan 1970 00:00:00 GMT\r\nPragma: no-chache\r\n";
+static const char __http_shdr32[] = "Server: "HTTP_SERVER_AGENT"\r\n";
+static const char __http_shdr33[] = "Accept-ranges: bytes\r\n";
+static const char __http_shdr34[] = "Transfer-encoding: chunked\r\n";
 
 static const char * const _http_shdr[] = {
 	__http_shdr00, __http_shdr01, __http_shdr02, __http_shdr03, __http_shdr04,
@@ -40,7 +44,7 @@ static const char * const _http_shdr[] = {
 	__http_shdr15, __http_shdr16, __http_shdr17, __http_shdr18, __http_shdr19,
 	__http_shdr20, __http_shdr21, __http_shdr22, __http_shdr23, __http_shdr24,
 	__http_shdr25, __http_shdr26, __http_shdr27, __http_shdr28, __http_shdr29,
-	__http_shdr30
+	__http_shdr30, __http_shdr31, __http_shdr32, __http_shdr33, __http_shdr34
 };
 static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr00) - 1, sizeof(__http_shdr01) - 1,
@@ -58,46 +62,53 @@ static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr24) - 1, sizeof(__http_shdr25) - 1,
 	sizeof(__http_shdr26) - 1, sizeof(__http_shdr27) - 1,
 	sizeof(__http_shdr28) - 1, sizeof(__http_shdr29) - 1,
-	sizeof(__http_shdr30) - 1
+	sizeof(__http_shdr30) - 1, sizeof(__http_shdr31) - 1,
+	sizeof(__http_shdr32) - 1, sizeof(__http_shdr33) - 1,
+	sizeof(__http_shdr34) - 1
 };
 
 /* Indexes into _http_shdr */
 #define HTTP_EOH                  0 /* end of header */
-#define HTTP09_SHDR_OK            1 /* 200 OK (HTTP/0.9) */
-#define HTTP09_SHDR_206           2 /* 206 Partial content (HTTP/0.9) */
-#define HTTP09_SHDR_400           3 /* 400 Bad request (HTTP/0.9) */
-#define HTTP09_SHDR_404           4 /* 404 File not found (HTTP/0.9) */
-#define HTTP09_SHDR_416           5 /* 416 Requested range not satisfiable (HTTP/0.9) */
-#define HTTP09_SHDR_500           6 /* 500 Internal server error (HTTP/0.9) */
-#define HTTP09_SHDR_501           7 /* 501 Not implemented (HTTP/0.9) */
-#define HTTP10_SHDR_OK            8 /* 200 OK (HTTP/1.0) */
-#define HTTP10_SHDR_206           9 /* 206 Partial content (HTTP/1.0) */
-#define HTTP10_SHDR_400          10 /* 400 Bad request (HTTP/1.0) */
-#define HTTP10_SHDR_404          11 /* 404 Element not found (HTTP/1.0) */
-#define HTTP10_SHDR_416          12 /* 416 Requested range not satisfiable (HTTP/1.0) */
-#define HTTP10_SHDR_500          13 /* 500 Internal server error (HTTP/1.0) */
-#define HTTP10_SHDR_501          14 /* 501 Not implemented (HTTP/1.0) */
-#define HTTP11_SHDR_OK           15 /* 200 OK (HTTP/1.1) */
-#define HTTP11_SHDR_206          16 /* 206 Partial content (HTTP/1.1) */
-#define HTTP11_SHDR_400          17 /* 400 Bad request (HTTP/1.1) */
-#define HTTP11_SHDR_404          18 /* 404 Element not found (HTTP/1.1) */
-#define HTTP11_SHDR_416          19 /* 416 Requested range not satisfiable (HTTP/1.1) */
-#define HTTP11_SHDR_500          20 /* 500 Internal server error (HTTP/1.1) */
-#define HTTP11_SHDR_501          21 /* 501 Not implemented (HTTP/1.1) */
-#define HTTP_SHDR_PLAIN          22 /* text/plain */
-#define HTTP_SHDR_HTML           23 /* text/html */
-#define HTTP_SHDR_BINARY         24 /* application/octet-stream */
-#define HTTP_SHDR_CONN_CLOSE     25 /* Connection: close */
-#define HTTP_SHDR_CONN_KEEPALIVE 26 /* Connection: keep-alive */
-#define HTTP_SHDR_NOCACHE        27 /* Pragma: no-cache */
-#define HTTP_SHDR_SERVER         28 /* Server agent */
-#define HTTP_SHDR_ACC_BYTERANGE  29 /* Accept-ranges: bytes */
-#define HTTP_SHDR_ENC_CHUNKED    30 /* Transfer-Encoding: chunked */
+#define HTTP_EOM                  1 /* end of message */
+#define HTTP09_SHDR_200           2 /* 200 OK (HTTP/0.9) */
+#define HTTP09_SHDR_206           3 /* 206 Partial content (HTTP/0.9) */
+#define HTTP09_SHDR_400           4 /* 400 Bad request (HTTP/0.9) */
+#define HTTP09_SHDR_404           5 /* 404 File not found (HTTP/0.9) */
+#define HTTP09_SHDR_416           6 /* 416 Requested range not satisfiable (HTTP/0.9) */
+#define HTTP09_SHDR_500           7 /* 500 Internal server error (HTTP/0.9) */
+#define HTTP09_SHDR_501           8 /* 501 Not implemented (HTTP/0.9) */
+#define HTTP09_SHDR_503           9 /* 503 Service unavailable (HTTP/0.9) */
+#define HTTP10_SHDR_200          10 /* 200 OK (HTTP/1.0) */
+#define HTTP10_SHDR_206          11 /* 206 Partial content (HTTP/1.0) */
+#define HTTP10_SHDR_400          12 /* 400 Bad request (HTTP/1.0) */
+#define HTTP10_SHDR_404          13 /* 404 Element not found (HTTP/1.0) */
+#define HTTP10_SHDR_416          14 /* 416 Requested range not satisfiable (HTTP/1.0) */
+#define HTTP10_SHDR_500          15 /* 500 Internal server error (HTTP/1.0) */
+#define HTTP10_SHDR_501          16 /* 501 Not implemented (HTTP/1.0) */
+#define HTTP10_SHDR_503          17 /* 503 Service unavailable (HTTP/1.0) */
+#define HTTP11_SHDR_200          18 /* 200 OK (HTTP/1.1) */
+#define HTTP11_SHDR_206          19 /* 206 Partial content (HTTP/1.1) */
+#define HTTP11_SHDR_400          20 /* 400 Bad request (HTTP/1.1) */
+#define HTTP11_SHDR_404          21 /* 404 Element not found (HTTP/1.1) */
+#define HTTP11_SHDR_416          22 /* 416 Requested range not satisfiable (HTTP/1.1) */
+#define HTTP11_SHDR_500          23 /* 500 Internal server error (HTTP/1.1) */
+#define HTTP11_SHDR_501          24 /* 501 Not implemented (HTTP/1.1) */
+#define HTTP11_SHDR_503          25 /* 503 Service unavailable (HTTP/1.1) */
+#define HTTP_SHDR_PLAIN          26 /* text/plain */
+#define HTTP_SHDR_HTML           27 /* text/html */
+#define HTTP_SHDR_BINARY         28 /* application/octet-stream */
+#define HTTP_SHDR_CONN_CLOSE     29 /* Connection: close */
+#define HTTP_SHDR_CONN_KEEPALIVE 30 /* Connection: keep-alive */
+#define HTTP_SHDR_NOCACHE        31 /* Pragma: no-cache */
+#define HTTP_SHDR_SERVER         32 /* Server agent */
+#define HTTP_SHDR_ACC_BYTERANGE  33 /* Accept-ranges: bytes */
+#define HTTP_SHDR_ENC_CHUNKED    34 /* Transfer-Encoding: chunked */
 
 #define HTTP_SHDR_DEFAULT_TYPE   HTTP_SHDR_PLAIN
 
-#define HTTP_SHDR_OK(major, minor) \
-	(((major) < 1) ?  HTTP09_SHDR_OK : (((minor) < 1) ?  HTTP10_SHDR_OK :  HTTP11_SHDR_OK))
+#define HTTP_SHDR_OK(major, minor) HTTP_SHDR_200((major), (minor))
+#define HTTP_SHDR_200(major, minor) \
+	(((major) < 1) ? HTTP09_SHDR_200 : (((minor) < 1) ? HTTP10_SHDR_200 : HTTP11_SHDR_200))
 #define HTTP_SHDR_206(major, minor) \
 	(((major) < 1) ? HTTP09_SHDR_206 : (((minor) < 1) ? HTTP10_SHDR_206 : HTTP11_SHDR_206))
 #define HTTP_SHDR_400(major, minor) \
@@ -110,148 +121,94 @@ static const size_t _http_shdr_len[] = {
 	(((major) < 1) ? HTTP09_SHDR_500 : (((minor) < 1) ? HTTP10_SHDR_500 : HTTP11_SHDR_500))
 #define HTTP_SHDR_501(major, minor) \
 	(((major) < 1) ? HTTP09_SHDR_501 : (((minor) < 1) ? HTTP10_SHDR_501 : HTTP11_SHDR_501))
-
-#define IS_HTTP_OK(shdr_code) \
-	(((shdr_code) == HTTP09_SHDR_OK) || \
-	 ((shdr_code) == HTTP10_SHDR_OK) || \
-	 ((shdr_code) == HTTP11_SHDR_OK) || \
-	 ((shdr_code) == HTTP09_SHDR_206) || \
-	 ((shdr_code) == HTTP10_SHDR_206) || \
-	 ((shdr_code) == HTTP11_SHDR_206))
-#define IS_HTTP_400(shdr_code) \
-	(((shdr_code) == HTTP09_SHDR_400) || \
-	 ((shdr_code) == HTTP10_SHDR_400) || \
-	 ((shdr_code) == HTTP11_SHDR_400))
-#define IS_HTTP_404(shdr_code) \
-	(((shdr_code) == HTTP09_SHDR_404) || \
-	 ((shdr_code) == HTTP10_SHDR_404) || \
-	 ((shdr_code) == HTTP11_SHDR_404))
-#define IS_HTTP_416(shdr_code) \
-	(((shdr_code) == HTTP09_SHDR_416) || \
-	 ((shdr_code) == HTTP10_SHDR_416) || \
-	 ((shdr_code) == HTTP11_SHDR_416))
-#define IS_HTTP_500(shdr_code) \
-	(((shdr_code) == HTTP09_SHDR_500) || \
-	 ((shdr_code) == HTTP10_SHDR_500) || \
-	 ((shdr_code) == HTTP11_SHDR_500))
-#define IS_HTTP_501(shdr_code) \
-	(((shdr_code) == HTTP09_SHDR_501) || \
-	 ((shdr_code) == HTTP10_SHDR_501) || \
-	 ((shdr_code) == HTTP11_SHDR_501))
+#define HTTP_SHDR_503(major, minor) \
+	(((major) < 1) ? HTTP09_SHDR_503 : (((minor) < 1) ? HTTP10_SHDR_503 : HTTP11_SHDR_503))
 
 static const char __http_dhdr00[] = "Content-type: ";
 static const char __http_dhdr01[] = "Content-length: ";
 static const char __http_dhdr02[] = "Content-range: bytes ";
+static const char __http_dhdr03[] = "Retry-after: ";
 
 static const char * const _http_dhdr[] = {
-	__http_dhdr00, __http_dhdr01, __http_dhdr02,
+	__http_dhdr00, __http_dhdr01, __http_dhdr02, __http_dhdr03
 };
 
 #define HTTP_DHDR_MIME            0 /* content-type */
 #define HTTP_DHDR_SIZE            1 /* content-length */
 #define HTTP_DHDR_RANGE           2 /* content-range */
+#define HTTP_DHDR_RETRY           3 /* retry-after */
 
 static const char _http_err404p[] = \
-	"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n"
-	"<html>\n"
-	"	<head>\n"
-	"	<title>Element not found (404)</title>\n"
-	"	</head>\n"
-	"	\n"
-	"	<body style=\"background-color:#212121; color:#FFFFFF; font-family:'Ubuntu Light','Ubuntu','HelveticaNeue-Light','Helvetica Neue Light','Helvetica Neue','Helvetica','Droid Sans','Verdana';\">\n"
-	"	<div>\n"
-	"	<table border=\"0\" style=\"margin-left:auto; margin-right:auto; text-align:center;\">\n"
-	"		<tr height=\"50px\"></tr>"
-	"		<tr>\n"
-	"			<td style=\"text-align:center; vertical-align:middle;\">\n"
-	"				<div style=\"font-size:500%; color:#FF0000; text-shadow:#000000 3px 2px 5px;\">\n"
-	"					<b>X</b>\n"
-	"				</div>\n"
-	"			</td>\n"
-	"			<td>\n"
-	"				&nbsp;&nbsp;&nbsp;\n"
-	"			</td>\n"
-	"			<td style=\"text-align:left; vertical-align:middle;\">\n"
-	"				<div style=\"font-size:150%; text-shadow:#000000 3px 2px 5px;\">\n"
-	"					Sorry,\n"
-	"				</div>\n"
-	"				<br>\n"
-	"				the requested element could not be found.\n"
-	"			</td>\n"
-	"		</tr>\n"
-	"	</table>\n"
-	"	</div>\n"
-	"	</body>\n"
-	"</html>\n";
+	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
+	"<html><head>\r\n"
+	"<title>404 Element not found</title>\r\n"
+	"</head><body>\r\n"
+	"<h1>Element not found</h1>\r\n"
+	"<p>The requested element could not be found.</p>\r\n"
+	"</body></html>\r\n";
 static const size_t _http_err404p_len = sizeof(_http_err404p) - 1;
 
 static const char _http_err500p[] = \
-	"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n"
-	"<html>\n"
-	"	<head>\n"
-	"	<title>Internal server error (500)</title>\n"
-	"	</head>\n"
-	"	\n"
-	"	<body style=\"background-color:#212121; color:#FFFFFF; font-family:'Ubuntu Light','Ubuntu','HelveticaNeue-Light','Helvetica Neue Light','Helvetica Neue','Helvetica','Droid Sans','Verdana';\">\n"
-	"	<div>\n"
-	"	<table border=\"0\" style=\"margin-left:auto; margin-right:auto; text-align:center;\">\n"
-	"		<tr height=\"50px\"></tr>"
-	"		<tr>\n"
-	"			<td style=\"text-align:center; vertical-align:middle;\">\n"
-	"				<div style=\"font-size:500%; color:#FF0000; text-shadow:#000000 3px 2px 5px;\">\n"
-	"					<b>X</b>\n"
-	"				</div>\n"
-	"			</td>\n"
-	"			<td>\n"
-	"				&nbsp;&nbsp;&nbsp;\n"
-	"			</td>\n"
-	"			<td style=\"text-align:left; vertical-align:middle;\">\n"
-	"				<div style=\"font-size:150%; text-shadow:#000000 3px 2px 5px;\">\n"
-	"					Oops...\n"
-	"				</div>\n"
-	"				<br>\n"
-	"				an unexpected internal server error happend.<br>\n"
-	"				Please try it again.\n"
-	"			</td>\n"
-	"		</tr>\n"
-	"	</table>\n"
-	"	</div>\n"
-	"	</body>\n"
-	"</html>\n";
+	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
+	"<html><head>\r\n"
+	"<title>500 Internal server error</title>\r\n"
+	"</head><body>\r\n"
+	"<h1>Internal server error request</h1>\r\n"
+	"<p>An internal server error occured.</p>\r\n"
+	"</body></html>\r\n";
 static const size_t _http_err500p_len = sizeof(_http_err500p) - 1;
 
 static const char _http_err501p[] = \
-	"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n"
-	"<html>\n"
-	"	<head>\n"
-	"	<title>Invalid request (501)</title>\n"
-	"	</head>\n"
-	"	\n"
-	"	<body style=\"background-color:#212121; color:#FFFFFF; font-family:'Ubuntu Light','Ubuntu','HelveticaNeue-Light','Helvetica Neue Light','Helvetica Neue','Helvetica','Droid Sans','Verdana';\">\n"
-	"	<div>\n"
-	"	<table border=\"0\" style=\"margin-left:auto; margin-right:auto; text-align:center;\">\n"
-	"		<tr height=\"50px\"></tr>"
-	"		<tr>\n"
-	"			<td style=\"text-align:center; vertical-align:middle;\">\n"
-	"				<div style=\"font-size:500%; color:#FF0000; text-shadow:#000000 3px 2px 5px;\">\n"
-	"					<b>X</b>\n"
-	"				</div>\n"
-	"			</td>\n"
-	"			<td>\n"
-	"				&nbsp;&nbsp;&nbsp;\n"
-	"			</td>\n"
-	"			<td style=\"text-align:left; vertical-align:middle;\">\n"
-	"				<div style=\"font-size:150%; text-shadow:#000000 3px 2px 5px;\">\n"
-	"					Oops...\n"
-	"				</div>\n"
-	"				<br>\n"
-	"				request is malformed\n"
-	"			</td>\n"
-	"		</tr>\n"
-	"	</table>\n"
-	"	</td></tr></table>\n"
-	"	</body>\n"
-	"</html>\n";
-static const size_t _http_err501p_len = sizeof(_http_err500p) - 1;
+	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
+	"<html><head>\r\n"
+	"<title>501 Unsupported request</title>\r\n"
+	"</head><body>\r\n"
+	"<h1>Unsupported request</h1>\r\n"
+	"<p>The request method is unsupported.</p>\r\n"
+	"</body></html>\r\n";
+static const size_t _http_err501p_len = sizeof(_http_err501p) - 1;
+
+static const char _http_err503p[] = \
+	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
+	"<html><head>\r\n"
+	"<title>503 Service Unavailable</title>\r\n"
+	"</head><body>\r\n"
+	"<h1>Service Unavailable</h1>\r\n"
+	"<p>The service is temporarily unavailable.<br>Please try it again.</p>\r\n"
+	"</body></html>\r\n";
+static const size_t _http_err503p_len = sizeof(_http_err503p) - 1;
+
+#ifdef HTTP_TESTFILE
+static const char _http_testfile[] = \
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*   52 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  104 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  208 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  416 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  832 bytes */
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /* 1456 bytes */
+static const size_t _http_testfile_len = sizeof(_http_testfile) - 1;
+#endif
 
 #endif /* _HTTP_DATA_H_ */

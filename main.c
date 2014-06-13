@@ -41,7 +41,6 @@
 
 #include "debug.h"
 
-#define MAX_NB_VBD 64
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
 #endif /* CONFIG_LWIP_MINIMAL */
@@ -121,10 +120,11 @@ static struct _args {
     struct ip_addr  dns1;
 
     unsigned int    nb_vbds;
-    unsigned int    vbd_id[32];
+    unsigned int    vbd_id[MAX_NB_TRY_BLKDEVS];
     int             vbd_detect;
     unsigned int    stats_vbd_id;
     int             stats_vbd;
+    unsigned int    nb_http_sess;
 
     int             no_ctldir;
 
@@ -203,9 +203,13 @@ static int parse_args(int argc, char *argv[])
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
     args.no_ctldir = 0;
+    args.nb_http_sess = 500;
+#if ((100 + 4) > MEMP_NUM_TCP_PCB)
+    #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
+#endif
 
      while ((opt = getopt(argc, argv,
-                          "s:i:g:d:b:h"
+                          "s:i:g:d:b:hc:"
 #ifdef SHFS_STATS
                           "x:"
 #endif
@@ -221,7 +225,7 @@ static int parse_args(int argc, char *argv[])
               break;
          case 'i': /* IP address/mask */
 	      ret = parse_args_setval_ipv4cidr(&args.ip, &args.mask, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid host IP in CIDR notation specified (e.g., 192.168.0.2/24)\n");
 	           return -1;
               }
@@ -229,21 +233,21 @@ static int parse_args(int argc, char *argv[])
               break;
          case 'g': /* gateway */
 	      ret = parse_args_setval_ipv4(&args.gw, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid gateway IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
               break;
          case 'd': /* dns0 */
 	      ret = parse_args_setval_ipv4(&args.dns0, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid primary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
               break;
          case 'e': /* dns1 */
 	      ret = parse_args_setval_ipv4(&args.dns1, optarg);
-	      if (ret < 0 || ival < 0) {
+	      if (ret < 0) {
 	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
@@ -279,6 +283,15 @@ static int parse_args(int argc, char *argv[])
 	      args.stats_vbd_id = (unsigned int) ival;
               break;
 #endif
+         case 'c': /* number of http connections */
+	      ret = parse_args_setval_int(&ival, optarg);
+	      if (ret < 0 || ival < 1 || ival > MEMP_NUM_TCP_PCB - 4) {
+		      printk("at most %u http connections supported\n",
+		             MEMP_NUM_TCP_PCB - 4);
+	           return -1;
+	      }
+	      args.nb_http_sess = ival;
+              break;
 
          default:
 	      return -1;
@@ -438,9 +451,25 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 /**
  * MAIN
  */
+#ifdef TRACE_BOOTTIME
+#define TT_DECLARE(var) uint64_t (var) = 0
+#define TT_START(var) do { (var) = NOW(); } while(0)
+#define TT_END(var) do {(var) = (NOW() - (var)); } while(0)
+#define TT_PRINT(desc, var) printk(" %-32s: %lu.%06lus\n",	  \
+                                   (desc),	  \
+                                   (var) / 1000000000l,	  \
+                                   ((var) / 1000l) % 1000000l);
+#else
+#define TT_DECLARE(var) while(0) {}
+#define TT_START(var) while(0) {}
+#define TT_END(var) while(0) {}
+#endif
+
+
 int main(int argc, char *argv[])
 {
     struct netif netif;
+    struct netif *niret;
     struct ctldir *cd = NULL;
     int ret;
 #if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
@@ -457,7 +486,19 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
     uint64_t ts_minder = 0;
 #endif /* CONFIG_MINDER_PRINT */
+    TT_DECLARE(tt_boot);
+    TT_DECLARE(tt_netifadd);
+    TT_DECLARE(tt_lwipinit);
+    TT_DECLARE(tt_vbddetect);
+#ifdef CONFIG_AUTOMOUNT
+    TT_DECLARE(tt_automount);
+#endif
+    TT_DECLARE(tt_ctldirstart);
+#ifdef SHFS_STATS
+    TT_DECLARE(tt_statsdev);
+#endif
 
+    TT_START(tt_boot);
     init_debug();
 
     /* -----------------------------------
@@ -471,7 +512,7 @@ int main(int argc, char *argv[])
     printk("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
     printk("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
     printk("\n");
-    printk("Copyright(C) 2013-1014 NEC Laboratories Europe Ltd.\n");
+    printk("Copyright(C) 2013-2014 NEC Europe Ltd.\n");
     printk("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
@@ -514,40 +555,62 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     if (args.vbd_detect) {
 	    printk("Detecting block devices...\n");
+	    TT_START(tt_vbddetect);
 	    args.nb_vbds = detect_blkdevs(args.vbd_id, sizeof(args.vbd_id));
+	    TT_END(tt_vbddetect);
     }
+
+    /* -----------------------------------
+     * filesystem initialization & automount
+     * ----------------------------------- */
+    printk("Loading SHFS...\n");
+    init_shfs();
+#ifdef CONFIG_AUTOMOUNT
+    if (args.nb_vbds) {
+	    printk("Automount cache filesystem...\n");
+	    TT_START(tt_automount);
+	    ret = mount_shfs(args.vbd_id, args.nb_vbds);
+	    TT_END(tt_automount);
+	    if (ret < 0)
+		    printk("Warning: Could not find or mount a cache filesystem\n");
+    }
+#endif
 
     /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
     printk("Starting networking...\n");
+    TT_START(tt_lwipinit);
 #ifdef CONFIG_LWIP_SINGLETHREADED
     lwip_init(); /* single threaded */
 #else
     tcpip_init(NULL, NULL); /* multi-threaded */
 #endif
+    TT_END(tt_lwipinit);
 
     /* -----------------------------------
      * network interface initialization
      * ----------------------------------- */
+    TT_START(tt_netifadd);
 #ifdef CONFIG_LWIP_SINGLETHREADED
 #ifdef CONFIG_NMWRAP
-    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                   nmwif_init, ethernet_input)) {
+    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                      nmwif_init, ethernet_input);
 #else
-    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                   netfrontif_init, ethernet_input)) {
+    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                      netfrontif_init, ethernet_input);
 #endif /* CONFIG_NMWRAP */
 #else
 #ifdef CONFIG_NMWRAP
-    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                   nmwif_init, tcpip_input)) {
+    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                      nmwif_init, tcpip_input);
 #else
-    if (!netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                   netfrontif_init, tcpip_input)) {
+    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                      netfrontif_init, tcpip_input);
 #endif /* CONFIG_NMWRAP */
-
 #endif /* CONFIG_LWIP_SINGLETHREADED */
+    TT_END(tt_netifadd);
+
     /* device init function is user-defined
      * use ip_input instead of ethernet_input for non-ethernet hardware
      * (this function is assigned to netif.input and should be called by
@@ -579,6 +642,7 @@ int main(int argc, char *argv[])
      *                 there is no tcpip_ethinput() ; tcp_input()
      *                 handles ARP packets as well).
      */
+    if (!niret) {
         printk("FATAL: Could not initialize the network interface\n");
         goto out;
     }
@@ -590,24 +654,14 @@ int main(int argc, char *argv[])
     }
 
     /* -----------------------------------
-     * filesystem automount
-     * ----------------------------------- */
-    printk("Loading SHFS...\n");
-    init_shfs();
-#ifdef CONFIG_AUTOMOUNT
-    printk("Automount cache filesystem...\n");
-    ret = mount_shfs(args.vbd_id, args.nb_vbds);
-    if (ret < 0)
-	    printk("Warning: Could not find or mount a cache filesystem\n");
-#endif
-
-    /* -----------------------------------
      * service initialization
      * ----------------------------------- */
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
-    printk("Starting HTTP server...\n");
-    init_http(60); /* allow 60 simultaneous connections */
+    printk("Starting HTTP server (max number of connections: %u)...\n",
+           args.nb_http_sess);
+    init_http(args.nb_http_sess,
+              args.nb_http_sess + args.nb_http_sess / 2);
 
     /* add custom commands to the shell */
     shell_register_cmd("halt", shcmd_halt);
@@ -626,7 +680,9 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     printk("Initializing stats device...\n");
     if(args.stats_vbd) {
+	TT_START(tt_statsdev);
 	ret = init_shfs_stats_export(args.stats_vbd_id);
+	TT_END(tt_statsdev);
 	if (ret < 0) {
 	    printk("Warning: Could not open stats device: %s\n", strerror(-ret));
 	    args.stats_vbd = 0;
@@ -641,7 +697,9 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     if (cd) {
 	    printk("Registering xenstore control entries...\n");
+	    TT_START(tt_ctldirstart);
 	    ret = ctldir_start_watcher(cd);
+	    TT_END(tt_ctldirstart);
 	    if (ret < 0) {
 		    printk("FATAL: Could not register xenstore control entries: %s\n", strerror(-ret));
 		    goto out;
@@ -652,6 +710,24 @@ int main(int argc, char *argv[])
      * Processing loop
      * ----------------------------------- */
     printk("*** MiniCache is up and running ***\n");
+#ifdef TRACE_BOOTTIME
+    TT_END(tt_boot);
+    TT_PRINT("boot time since invoking main", tt_boot);
+    TT_PRINT("lwip initialization", tt_lwipinit);
+    TT_PRINT("vif addition", tt_netifadd);
+    if (args.vbd_detect)
+	    TT_PRINT("virtual block device detection", tt_vbddetect);
+#ifdef CONFIG_AUTOMOUNT
+    if (args.nb_vbds)
+	    TT_PRINT("file system mount time", tt_automount);
+#endif
+#ifdef SHFS_STATS
+    if (args.stats_vbd)
+	    TT_PRINT("stats device initialization", tt_statsdev);
+#endif
+    if (cd)
+	    TT_PRINT("xenstore registration", tt_ctldirstart);
+#endif /* TRACE_BOOTTIME */
 #ifdef CONFIG_MINDER_PRINT
     printk("\n");
 #endif

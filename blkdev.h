@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 
-#define MAX_REQUESTS 64
+#define MAX_REQUESTS ((__RING_SIZE((struct blkif_sring *)0, PAGE_SIZE)) - 1)
 #define MAX_DISKSIZE (1ll << 40) /* 1 TB */
 
 typedef uint64_t sector_t;
