@@ -727,6 +727,7 @@ int main(int argc, char *argv[])
 #endif
     if (cd)
 	    TT_PRINT("xenstore registration", tt_ctldirstart);
+    printk("***\n");
 #endif /* TRACE_BOOTTIME */
 #ifdef CONFIG_MINDER_PRINT
     printk("\n");
