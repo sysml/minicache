@@ -56,8 +56,8 @@ static void print_usage(char *argv0)
 	printf("  -f, --force                suppresses warnings and user questions\n");
 	printf("  -a, --add-file [FILE]      add a file to the volume\n");
 	printf("  For each add-file token:\n");
-	printf("    -m, --mime [MIME]        sets the MIME type of a file\n");
-	printf("    -n, --name [NAME]        sets an additionally name to a file\n");
+	printf("    -m, --mime [MIME]        sets the MIME type for the file\n");
+	printf("    -n, --name [NAME]        sets an additional name for the file\n");
 	printf("  -r, --rm-file [HASH]       removes a file from the volume\n");
 	printf("  -l, --ls                   lists the volume contents\n");
 	printf("  -i, --info                 shows volume information\n");

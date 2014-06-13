@@ -57,6 +57,7 @@ def ctltrigger(domid, action, args=[], scope="minicache"):
 
 def usage():
     sys.stderr.write("Usage: %s [OPTION]... [DEVICE]...\n" % sys.argv[0])
+    sys.stderr.write("  -d, --dom [DOMID]          triggers remount on Domain DOMID after completion\n");
     sys.stderr.write("  -r, --rm-file [HASH]       removes a file from the volume\n");
     exit(1)
 

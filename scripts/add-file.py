@@ -57,10 +57,11 @@ def ctltrigger(domid, action, args=[], scope="minicache"):
 
 def usage():
     sys.stderr.write("Usage: %s [OPTION]... [DEVICE]...\n" % sys.argv[0])
-    sys.stderr.write("  -a, --add-file [FILE]      add a file to the volume\n");
+    sys.stderr.write("  -d, --dom [DOMID]          triggers remount on Domain DOMID after completion\n");
+    sys.stderr.write("  -a, --add-file [FILE]      adds a file to the volume\n");
     sys.stderr.write("  For each add-file token:\n");
-    sys.stderr.write("    -m, --mime [MIME]        sets the MIME type of a file\n");
-    sys.stderr.write("    -n, --name [NAME]        sets an additionally name to a file\n");
+    sys.stderr.write("    -m, --mime [MIME]        sets the MIME type for the file\n");
+    sys.stderr.write("    -n, --name [NAME]        sets an additional name for the file\n");
     exit(1)
 
 ##---------------------------------------------------------------
