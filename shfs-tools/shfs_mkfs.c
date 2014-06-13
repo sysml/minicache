@@ -97,10 +97,10 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->volname[6]  = 'd';
 	args->volname[7]  = '\0';
 	args->volname[17] = '\0';
-	args->stripesize = 4096;
+	args->stripesize = 16384;
 	args->allocator = SALLOC_FIRSTFIT;
-	args->bucket_count = 4096;
-	args->entries_per_bucket = 16;
+	args->bucket_count = 2048;
+	args->entries_per_bucket = 8;
 	args->fullerase = 0;
 	args->combined_striping = 0;
 
