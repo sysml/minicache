@@ -512,7 +512,7 @@ int main(int argc, char *argv[])
     printk("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
     printk("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
     printk("\n");
-    printk("Copyright(C) 2013-1014 NEC Laboratories Europe Ltd.\n");
+    printk("Copyright(C) 2013-2014 NEC Europe Ltd.\n");
     printk("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
