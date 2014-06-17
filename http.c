@@ -81,6 +81,9 @@ struct http_srv {
 	uint16_t max_nb_sess;
 	uint32_t nb_reqs;
 	uint32_t max_nb_reqs;
+
+	struct http_sess *hsess_head;
+	struct http_sess *hsess_tail;
 };
 
 struct _hdr_dbuffer {
@@ -105,6 +108,9 @@ enum http_sess_state {
 };
 
 struct http_sess {
+	struct http_sess *next;
+	struct http_sess *prev;
+
 	struct mempool_obj *pobj;
 	struct http_srv *hsrv;
 	struct tcp_pcb *tpcb;
@@ -296,6 +302,10 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	hs->parser_settings.on_body = NULL;
 	hs->parser_settings.on_message_complete = httprecv_req_complete;
 
+	/* init session list */
+	hs->hsess_head = NULL;
+	hs->hsess_tail = NULL;
+
 	dprintf("HTTP server %p initialized\n", hs);
 
 	return ret;
@@ -322,7 +332,14 @@ void exit_http(struct http_srv *hs)
 void exit_http(void)
 #endif
 {
+	/* terminate connections that are still open */
+	while(hs->hsess_head) {
+		dprintf("Closing session %p...\n", hs->hsess_head);
+		httpsess_close(hs->hsess_head, HSC_CLOSE);
+	}
+
 	tcp_close(hs->tpcb);
+	free_mempool(hs->req_pool);
 	free_mempool(hs->sess_pool);
 	xfree(hs);
 #if !(HTTP_MULTISERVER)
@@ -460,6 +477,17 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->parser_settings = &hs->parser_settings;
 	httpsess_reset_parser(hsess);
 
+	/* register session to session list */
+	if (!hs->hsess_head) {
+		hs->hsess_head = hsess;
+		hsess->prev = NULL;
+	} else {
+		hs->hsess_tail->next = hsess;
+		hsess->prev = hs->hsess_tail;
+	}
+	hsess->next = NULL;
+	hs->hsess_tail = hsess;
+
 	hsess->state = HSS_ESTABLISHED;
 	++hs->nb_sess;
 	dprintf("New HTTP session accepted on server %p "
@@ -514,6 +542,16 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 		err = ERR_OK;
 		break;
 	}
+
+	/* unlink session from session list */
+	if (hsess->prev)
+		hsess->prev->next = hsess->next;
+	else
+		hs->hsess_head = hsess->next;
+	if (hsess->next)
+		hsess->next->prev = hsess->prev;
+	else
+		hs->hsess_tail = hsess->prev;
 
 	/* release memory */
 	mempool_put(hsess->pobj);
