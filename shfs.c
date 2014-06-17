@@ -528,8 +528,13 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 
 /**
  * Unmounts a previously mounted SHFS volume
+ * Note: Because semaphores are used to sync with opened files,
+ *  when force is enabled, this function has to be called
+ *  from a context that is different from the one of the main loop
  */
-int umount_shfs(void) {
+int umount_shfs(int force) {
+	struct htable_el *el;
+	struct shfs_bentry *bentry;
 	unsigned int i;
 
 	down(&shfs_mount_lock);
@@ -545,8 +550,18 @@ int umount_shfs(void) {
 			        MAX_REQUESTS - mempool_free_count(shfs_vol.aiotoken_pool));
 			dprintf(" Infly chunk buffers: %u\n",
 			        CHUNKPOOL_NB_BUFFERS - mempool_free_count(shfs_vol.chunkpool));
-			up(&shfs_mount_lock);
-			return -EBUSY;
+
+			if (!force) {
+				up(&shfs_mount_lock);
+				return -EBUSY;
+			}
+
+			/* lock entries */
+			foreach_htable_el(shfs_vol.bt, el) {
+				bentry = el->private;
+				bentry->update = 1; /* forbid further open() */
+				down(&bentry->updatelock); /* wait until file is closed */
+			}
 		}
 		shfs_mounted = 0;
 

@@ -272,9 +272,13 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 
 static int shcmd_shfs_umount(FILE *cio, int argc, char *argv[])
 {
+    int force = 0;
     int ret;
 
-    ret = umount_shfs();
+    if ((argc == 2) && (strcmp(argv[1], "-f") == 0))
+	    force = 1;
+
+    ret = umount_shfs(force);
     if (ret < 0)
 	    fprintf(cio, "Could not unmount: %s\n", strerror(-ret));
     return ret;
