@@ -435,7 +435,7 @@ int main(int argc, char **argv)
 	s.nb_members = args.nb_devs;
 	s.stripesize = args.stripesize;
 	s.stripemode = (args.combined_striping && (args.nb_devs > 1)) ?
-		SHFS_SM_COMBINED : SHFS_SM_INTERLEAVED;
+		SHFS_SM_COMBINED : SHFS_SM_INDEPENDENT;
 	for (m = 0; m < s.nb_members; ++m) {
 		s.member[m].d = open_disk(args.devpath[m], O_RDWR);
 		if (!s.member[m].d)

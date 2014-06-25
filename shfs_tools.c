@@ -272,9 +272,13 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 
 static int shcmd_shfs_umount(FILE *cio, int argc, char *argv[])
 {
+    int force = 0;
     int ret;
 
-    ret = umount_shfs();
+    if ((argc == 2) && (strcmp(argv[1], "-f") == 0))
+	    force = 1;
+
+    ret = umount_shfs(force);
     if (ret < 0)
 	    fprintf(cio, "Could not unmount: %s\n", strerror(-ret));
     return ret;
@@ -329,7 +333,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "\n");
 	fprintf(cio, "Member stripe size: %u KiB\n", shfs_vol.stripesize / 1024);
 	fprintf(cio, "Member stripe mode: %s\n", (shfs_vol.stripemode == SHFS_SM_COMBINED ?
-	                                          "Combined" : "Interleaved" ));
+	                                          "Combined" : "Independent" ));
 	fprintf(cio, "Volume members:     %u device(s)\n", shfs_vol.nb_members);
 	for (m = 0; m < shfs_vol.nb_members; m++) {
 		uuid_unparse(shfs_vol.member[m].uuid, str_uuid);

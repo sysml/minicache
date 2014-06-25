@@ -236,15 +236,13 @@ static inline struct htable_el *htable_add(struct htable *ht, hash512_t h)
 			/* update linked list of elements */
 			if (!ht->head) {
 				ht->head = el;
-				ht->tail = el;
 				el->prev = NULL;
-				el->next = NULL;
 			} else {
 				ht->tail->next = el;
 				el->prev = ht->tail;
-				el->next = NULL;
-				ht->tail = el;
 			}
+			el->next = NULL;
+			ht->tail = el;
 
 			return el;
 		}
@@ -306,15 +304,13 @@ static inline struct htable_el *htable_lookup_add(struct htable *ht, hash512_t h
 	el = _htable_bkt_el(b, e);
 	if (!ht->head) {
 		ht->head = el;
-		ht->tail = el;
 		el->prev = NULL;
-		el->next = NULL;
 	} else {
 		ht->tail->next = el;
 		el->prev = ht->tail;
-		el->next = NULL;
-		ht->tail = el;
 	}
+	el->next = NULL;
+	ht->tail = el;
 
 	if (is_new)
 		*is_new = 1;

@@ -153,7 +153,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	shfs_vol.stripesize = hdr_common->member_stripesize;
 	shfs_vol.stripemode = hdr_common->member_stripemode;
 	if (shfs_vol.stripemode != SHFS_SM_COMBINED &&
-	    shfs_vol.stripemode != SHFS_SM_INTERLEAVED) {
+	    shfs_vol.stripemode != SHFS_SM_INDEPENDENT) {
 		dprintf("Stripe mode 0x%x is not supported\n", shfs_vol.stripemode);
 		ret = -ENOTSUP;
 		goto err_close_bds;
@@ -528,8 +528,13 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 
 /**
  * Unmounts a previously mounted SHFS volume
+ * Note: Because semaphores are used to sync with opened files,
+ *  when force is enabled, this function has to be called
+ *  from a context that is different from the one of the main loop
  */
-int umount_shfs(void) {
+int umount_shfs(int force) {
+	struct htable_el *el;
+	struct shfs_bentry *bentry;
 	unsigned int i;
 
 	down(&shfs_mount_lock);
@@ -545,8 +550,18 @@ int umount_shfs(void) {
 			        MAX_REQUESTS - mempool_free_count(shfs_vol.aiotoken_pool));
 			dprintf(" Infly chunk buffers: %u\n",
 			        CHUNKPOOL_NB_BUFFERS - mempool_free_count(shfs_vol.chunkpool));
-			up(&shfs_mount_lock);
-			return -EBUSY;
+
+			if (!force) {
+				up(&shfs_mount_lock);
+				return -EBUSY;
+			}
+
+			/* lock entries */
+			foreach_htable_el(shfs_vol.bt, el) {
+				bentry = el->private;
+				bentry->update = 1; /* forbid further open() */
+				down(&bentry->updatelock); /* wait until file is closed */
+			}
 		}
 		shfs_mounted = 0;
 
@@ -766,7 +781,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 		start_s = (strp_t) start * (strp_t) shfs_vol.nb_members;
 		end_s = (strp_t) (start + len) * (strp_t) shfs_vol.nb_members;
 		break;
-	case SHFS_SM_INTERLEAVED:
+	case SHFS_SM_INDEPENDENT:
 	default:
 		start_s = (strp_t) start + (strp_t) (shfs_vol.nb_members - 1);
 		end_s = (strp_t) (start_s + len);

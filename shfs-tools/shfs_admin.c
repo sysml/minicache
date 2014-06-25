@@ -327,7 +327,7 @@ static void load_vol_cconf(char *path[], unsigned int count)
 	shfs_vol.s.stripesize = hdr_common->member_stripesize;
 	shfs_vol.s.stripemode = hdr_common->member_stripemode;
 	if (shfs_vol.s.stripemode != SHFS_SM_COMBINED &&
-	    shfs_vol.s.stripemode != SHFS_SM_INTERLEAVED)
+	    shfs_vol.s.stripemode != SHFS_SM_INDEPENDENT)
 		dief("Stripe mode 0x%x is not supported\n", shfs_vol.s.stripemode);
 	shfs_vol.chunksize = SHFS_CHUNKSIZE(hdr_common);
 	shfs_vol.volsize = hdr_common->vol_size;

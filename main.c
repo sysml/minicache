@@ -796,7 +796,7 @@ int main(int argc, char *argv[])
     printk("Stopping shell...\n");
     exit_shell();
     printk("Unmounting cache filesystem...\n");
-    umount_shfs();
+    umount_shfs(0); /* we cannot enforce unmount but all files should be closed here */
     exit_shfs();
     printk("Stopping networking...\n");
     netif_set_down(&netif);
