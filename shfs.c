@@ -153,7 +153,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	shfs_vol.stripesize = hdr_common->member_stripesize;
 	shfs_vol.stripemode = hdr_common->member_stripemode;
 	if (shfs_vol.stripemode != SHFS_SM_COMBINED &&
-	    shfs_vol.stripemode != SHFS_SM_INTERLEAVED) {
+	    shfs_vol.stripemode != SHFS_SM_INDEPENDENT) {
 		dprintf("Stripe mode 0x%x is not supported\n", shfs_vol.stripemode);
 		ret = -ENOTSUP;
 		goto err_close_bds;
@@ -781,7 +781,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 		start_s = (strp_t) start * (strp_t) shfs_vol.nb_members;
 		end_s = (strp_t) (start + len) * (strp_t) shfs_vol.nb_members;
 		break;
-	case SHFS_SM_INTERLEAVED:
+	case SHFS_SM_INDEPENDENT:
 	default:
 		start_s = (strp_t) start + (strp_t) (shfs_vol.nb_members - 1);
 		end_s = (strp_t) (start_s + len);

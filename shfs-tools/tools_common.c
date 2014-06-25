@@ -258,7 +258,7 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	printf("\n");
 	printf("Member stripe size: %u KiB\n", hdr_common->member_stripesize / 1024);
 	printf("Member stripe mode: %s\n", (hdr_common->member_stripemode == SHFS_SM_COMBINED ?
-	                                    "Combined" : "Interleaved" ));
+	                                    "Combined" : "Independent" ));
 	printf("Volume members:     %u device(s)\n", hdr_common->member_count);
 	for (m = 0; m < hdr_common->member_count; m++) {
 		uuid_unparse(hdr_common->member[m].uuid, str_uuid);

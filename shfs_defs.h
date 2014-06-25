@@ -99,7 +99,7 @@ struct shfs_hdr_common {
 	}                  member[16];
 } __attribute__((packed));
 
-#define SHFS_SM_INTERLEAVED 0x0
+#define SHFS_SM_INDEPENDENT 0x0
 #define SHFS_SM_COMBINED    0x1
 
 /**
