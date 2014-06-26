@@ -107,6 +107,8 @@ static inline void minder_print(void)
 }
 #endif /* CONFIG_MINDER_PRINT */
 
+#define MAX_NB_STATIC_ARP_ENTRIES 6
+
 /**
  * ARGUMENT PARSING
  */
@@ -129,6 +131,13 @@ static struct _args {
     int             no_ctldir;
 
     unsigned int    startup_delay;
+
+    /* static arp entries can only be added if DHCP is disabled */
+    struct {
+	    struct ip_addr  ip;
+	    struct eth_addr mac;
+    } sarp_entry[MAX_NB_STATIC_ARP_ENTRIES];
+    unsigned int    nb_sarp_entries;
 } args;
 
 static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
@@ -207,6 +216,16 @@ static int parse_args(int argc, char *argv[])
 #if ((100 + 4) > MEMP_NUM_TCP_PCB)
     #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
 #endif
+    /* **************** TEMP ******************** */
+    args.nb_sarp_entries = 1;
+    IP4_ADDR(&args.sarp_entry[0].ip, 10, 0, 10, 46);
+    args.sarp_entry[0].mac.addr[0] = 0xa0;
+    args.sarp_entry[0].mac.addr[1] = 0x36;
+    args.sarp_entry[0].mac.addr[2] = 0x9f;
+    args.sarp_entry[0].mac.addr[3] = 0x23;
+    args.sarp_entry[0].mac.addr[4] = 0xaa;
+    args.sarp_entry[0].mac.addr[5] = 0xca;
+    /* **************** TEMP ******************** */
 
      while ((opt = getopt(argc, argv,
                           "s:i:g:d:b:hc:"
@@ -472,6 +491,8 @@ int main(int argc, char *argv[])
     struct netif *niret;
     struct ctldir *cd = NULL;
     int ret;
+    err_t err;
+    unsigned int i;
 #if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
     uint64_t now;
 #endif
@@ -651,6 +672,20 @@ int main(int argc, char *argv[])
     if (args.dhclient) {
 	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
+    } else {
+	for (i = 0; i < args.nb_sarp_entries; ++i) {
+	    err = etharp_add_static_entry(&args.sarp_entry[i].ip, &args.sarp_entry[i].mac);
+	    if (err != ERR_OK) {
+	        printk("Could not add static ARP entry: %02x:%02x:%02x:%02x:%02x:%02x\n",
+	               args.sarp_entry[i].mac.addr[0],
+	               args.sarp_entry[i].mac.addr[1],
+	               args.sarp_entry[i].mac.addr[2],
+	               args.sarp_entry[i].mac.addr[3],
+	               args.sarp_entry[i].mac.addr[4],
+	               args.sarp_entry[i].mac.addr[5],
+	               args.sarp_entry[i].mac.addr[6]);
+	    }
+	}
     }
 
     /* -----------------------------------
