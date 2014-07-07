@@ -24,7 +24,7 @@ typedef uint64_t strp_t;
 typedef uint8_t uuid_t[16];
 #endif /* __MINIOS__ */
 
-#define SHFS_MAX_NB_MEMBERS 32
+#define SHFS_MAX_NB_MEMBERS 16
 
 /* vol_byteorder */
 #define SBO_LITTLEENDIAN 0
@@ -79,7 +79,7 @@ typedef uint8_t uuid_t[16];
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
 #define SHFSv1_VERSION1 0x01
-#define SHFSv1_VERSION0 0x03
+#define SHFSv1_VERSION0 0x04
 
 struct shfs_hdr_common {
 	uint8_t            magic[4];
@@ -92,11 +92,11 @@ struct shfs_hdr_common {
 	uint64_t           vol_ts_creation;
 	uint8_t            member_stripemode;
 	uint32_t           member_stripesize; /* at least 4 KiB (because of first chunk), blkfront can handle at most 32 KiB */
-	uint8_t            member_uuid[16]; /* this disk */
+	uuid_t             member_uuid; /* this disk */
 	uint8_t            member_count;
 	struct {           /* uuid's of all members */
 		uuid_t    uuid;
-	}                  member[16];
+	}                  member[SHFS_MAX_NB_MEMBERS];
 } __attribute__((packed));
 
 #define SHFS_SM_INDEPENDENT 0x0
