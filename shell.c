@@ -148,6 +148,9 @@ static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #ifdef __MINIOS__
 static int shcmd_free(FILE *cio, int argc, char *argv[]);
 #endif
+#ifdef HAVE_LWIP
+static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
+#endif
 
 static err_t shlsess_accept(void);
 static void  shlsess_close (struct shell_sess *sess);
@@ -218,6 +221,9 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("date",   shcmd_date);
 #ifdef __MINIOS__
     shell_register_cmd("free",   shcmd_free);
+#endif
+#ifdef HAVE_LWIP
+    shell_register_cmd("ifconfig",shcmd_ifconfig);
 #endif
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
@@ -1144,5 +1150,65 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
  usage:
     fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
     return -1;
+}
+#endif
+
+#ifdef HAVE_LWIP
+static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
+{
+	/* prints available interfaces */
+	struct netif *netif;
+	int is_up;
+	uint8_t flags;
+
+	for (netif = netif_list; netif != NULL; netif = netif->next) {
+		is_up = netif_is_up(netif);
+		flags = netif->flags;
+
+		/* name + mac */
+		fprintf(cio, "%c%c%c%c      ",
+		        (netif->name[0] ? netif->name[0] : ' '),
+		        (netif->name[1] ? netif->name[1] : ' '),
+		        (netif->name[2] ? netif->name[2] : ' '),
+		        (netif == netif_default ? '*' : ' '));
+		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
+		        netif->hwaddr[0], netif->hwaddr[1],
+		        netif->hwaddr[2], netif->hwaddr[3],
+		        netif->hwaddr[4], netif->hwaddr[5]);
+		/* flags + mtu */
+		fprintf(cio, "          ");
+		if (flags & NETIF_FLAG_UP)
+			fprintf(cio, "UP ");
+		if (flags & NETIF_FLAG_BROADCAST)
+			fprintf(cio, "BROADCAST ");
+		if (flags & NETIF_FLAG_POINTTOPOINT)
+			fprintf(cio, "P2P ");
+		if (flags & NETIF_FLAG_DHCP)
+			fprintf(cio, "DHCP ");
+		if (flags & NETIF_FLAG_ETHARP)
+			fprintf(cio, "ARP ");
+		if (flags & NETIF_FLAG_ETHERNET)
+			fprintf(cio, "ETHERNET ");
+		fprintf(cio, "MTU:%u\n", netif->mtu);
+	        /* ip addr */
+		if (is_up) {
+			fprintf(cio, "          inet addr:%u.%u.%u.%u",
+			        ip4_addr1(&netif->ip_addr),
+			        ip4_addr2(&netif->ip_addr),
+			        ip4_addr3(&netif->ip_addr),
+			        ip4_addr4(&netif->ip_addr));
+			fprintf(cio, " Mask:%u.%u.%u.%u",
+			        ip4_addr1(&netif->netmask),
+			        ip4_addr2(&netif->netmask),
+			        ip4_addr3(&netif->netmask),
+			        ip4_addr4(&netif->netmask));
+			fprintf(cio, " Gw:%u.%u.%u.%u\n",
+			        ip4_addr1(&netif->gw),
+			        ip4_addr2(&netif->gw),
+			        ip4_addr3(&netif->gw),
+			        ip4_addr4(&netif->gw));
+		}
+	}
+	return 0;
 }
 #endif
