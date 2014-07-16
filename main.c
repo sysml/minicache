@@ -8,7 +8,6 @@
 #include <kernel.h>
 #include <sched.h>
 #include <pkt_copy.h>
-#include <mempool.h>
 #include <semaphore.h>
 
 #include <lwip/ip_addr.h>
@@ -30,6 +29,7 @@
 #include <lwip-netfront.h>
 #endif
 
+#include "mempool.h"
 #include "http.h"
 #include "shell.h"
 #include "shfs.h"

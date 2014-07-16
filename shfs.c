@@ -9,7 +9,6 @@
 #include <mini-os/types.h>
 #include <stdint.h>
 #include <errno.h>
-#include <mempool.h>
 
 #include "shfs.h"
 #include "shfs_check.h"

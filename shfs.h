@@ -10,7 +10,7 @@
 #include <mini-os/types.h>
 #include <stdint.h>
 #include <semaphore.h>
-#include <mempool.h>
+#include "mempool.h"
 #include "blkdev.h"
 
 #include "shfs_defs.h"

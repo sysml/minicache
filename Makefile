@@ -12,7 +12,6 @@ stubdom		 = y
 
 CFLAGS          += -Wunused -Winline -Wtype-limits -Wcast-align --param large-stack-frame=256 --param large-stack-frame-growth=16
 
-CONFIG_MEMPOOL			= y
 
 ######################################
 ## Networking options
@@ -132,7 +131,7 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
+STUB_APP_OBJS0  = main.o mempool.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
 		  ctldir.o shfs.o shfs_check.o shfs_fio.o shfs_tools.o shfs_stats.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 

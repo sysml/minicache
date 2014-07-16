@@ -10,7 +10,7 @@
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
 #include <lwip/tcp.h>
-#include <mempool.h>
+#include "mempool.h"
 #include "shfs.h"
 #include "shfs_fio.h"
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
