@@ -1544,8 +1544,10 @@ static err_t httpsess_respond(struct http_sess *hsess)
 		switch (hreq->response_hdr.code) {
 #ifdef HTTP_TESTFILE
 		case 299:
+			/* static testfile */
 			len = _http_testfile_len;
 			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_testfile, len);
+			break;
 #endif
 		case 404:
 			/* Element not found */
