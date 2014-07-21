@@ -12,6 +12,7 @@
 #include <lwip/tcp.h>
 #include "mempool.h"
 #include "shfs.h"
+#include "shfs_cache.h"
 #include "shfs_fio.h"
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 #include "shfs_stats.h"
@@ -187,11 +188,9 @@ struct http_req {
 	uint32_t volchkoff_first;
 	uint32_t volchkoff_last;
 
-	struct mempool_obj *chk_buf[2]; /* references to chunk buffers for I/O */
-	chk_t chk_buf_addr[2];
-	SHFS_AIO_TOKEN *chk_buf_aiotoken[2];
-	int chk_buf_aioret[2];
-	unsigned int chk_buf_idx;
+	struct shfs_cache_entry *cce[2];
+	SHFS_AIO_TOKEN *cce_t[2];
+	unsigned int cce_idx;
 
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 	struct {
@@ -386,11 +385,11 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 	hreq->request_hdr.last_was_value = 1;
 	hreq->request_hdr.lines_overflow = 0;
 	hreq->fd = NULL;
-	hreq->chk_buf_idx = UINT_MAX;
-	hreq->chk_buf[0] = NULL;
-	hreq->chk_buf[1] = NULL;
-	hreq->chk_buf_addr[0] = 0;
-	hreq->chk_buf_addr[1] = 0;
+	hreq->cce_idx = UINT_MAX;
+	hreq->cce[0] = NULL;
+	hreq->cce[1] = NULL;
+	hreq->cce_t[0] = NULL;
+	hreq->cce_t[1] = NULL;
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	hreq->stats.dpc_i = 0;
 #endif
@@ -405,18 +404,18 @@ static inline void httpreq_close(struct http_req *hreq)
 
 	/* wait for I/O exit and close open file */
 	if (hreq->fd) {
-		hreq->chk_buf_idx = UINT_MAX; /* disable calling of httpsess_response from aio cb */
+		hreq->cce_idx = UINT_MAX; /* disable calling of httpsess_response from aio cb */
 
 		dprintf("Wait for unfinished I/O...\n");
-		shfs_aio_wait(hreq->chk_buf_aiotoken[0]);
-		shfs_aio_wait(hreq->chk_buf_aiotoken[1]);
+		shfs_aio_wait(hreq->cce_t[0]);
+		shfs_aio_wait(hreq->cce_t[1]);
 		dprintf("Done\n");
 	}
 
-	if (hreq->chk_buf[1])
-		mempool_put(hreq->chk_buf[1]);
-	if (hreq->chk_buf[0])
-		mempool_put(hreq->chk_buf[0]);
+	if (hreq->cce[1])
+		shfs_cache_release(hreq->cce[1]);
+	if (hreq->cce[0])
+		shfs_cache_release(hreq->cce[0]);
 
 	if (hreq->fd) {
 		shfs_fio_close(hreq->fd);
@@ -1006,18 +1005,6 @@ static inline void httpreq_make_response(struct http_req *hreq)
 		goto err500_hdr; /* 500 Internal server error */
 	}
 
-	/* pick and reserve exclusively chunk buffers for async I/O */
-	hreq->chk_buf[0] = mempool_pick(shfs_vol.chunkpool);
-	if (!hreq->chk_buf[0]) {
-		dprintf("Could not get a chunk buffer from SHFS\n");
-		goto err503_hdr; /* 503 Service temporarily unavailable (we ran out of memory) */
-	}
-	hreq->chk_buf[1] = mempool_pick(shfs_vol.chunkpool);
-	if (!hreq->chk_buf[1]) {
-		dprintf("Could not get a chunk buffer from SHFS\n");
-		goto err503_hdr; /* 503 Service temporarily unavailable (we ran out of memory) */
-	}
-
 	hreq->response_hdr.code = 200;	/* 200 OK */
 	shfs_fio_size(hreq->fd, &hreq->fsize);
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
@@ -1310,11 +1297,11 @@ static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	struct http_req *hreq = (struct http_req *) cookie;
 	register unsigned int idx = (unsigned int)(uintptr_t) argp;
 
-	hreq->chk_buf_aioret[idx] = shfs_aio_finalize(t);
-	hreq->chk_buf_aiotoken[idx] = NULL;
+	shfs_aio_finalize(t);
+	hreq->cce_t[idx] = NULL;
 
 	/* continue sending process */
-	if (idx == hreq->chk_buf_idx) {
+	if (idx == hreq->cce_idx) {
 		dprintf("** [idx=%u] request done, calling httpsess_respond()\n", idx);
 		httpsess_respond(hreq->hsess);
 	} else {
@@ -1326,19 +1313,24 @@ static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	}
 }
 
-static inline int _httpreq_shfs_aioreq(struct http_req *hreq, unsigned int idx)
+static inline int _httpreq_shfs_aioreq(struct http_req *hreq, chk_t addr, unsigned int cce_idx)
 {
-	hreq->chk_buf_aiotoken[idx] = shfs_aread_chunk(hreq->chk_buf_addr[idx], 1,
-	                                               hreq->chk_buf[idx]->data,
-	                                               _httpreq_shfs_aiocb,
-	                                               hreq,
-	                                               (void *)(uintptr_t) idx);
-	if (unlikely(!hreq->chk_buf_aiotoken[idx])) {
-		dprintf("failed setting up request for [idx=%u]!\n", idx);
-		return -errno;
+	int ret;
+
+	if (hreq->cce[cce_idx])
+		shfs_cache_release(hreq->cce[cce_idx]);
+	ret = shfs_cache_aread(addr,
+	                       _httpreq_shfs_aiocb,
+	                       hreq,
+	                       (void *)(uintptr_t) cce_idx,
+	                       &hreq->cce[cce_idx],
+	                       &hreq->cce_t[cce_idx]);
+	if (unlikely(ret < 0)) {
+		dprintf("failed to perform request for [cce_idx=%u]!\n", cce_idx);
+		return ret;
 	}
-	dprintf("request set up for [idx=%u]\n", idx);
-	return 0;
+	dprintf("request set up for [cce_idx=%u]\n", cce_idx);
+	return ret;
 }
 
 static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
@@ -1355,51 +1347,47 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	err_t err;
 	int ret;
 
-	idx = hreq->chk_buf_idx;
+	idx = hreq->cce_idx;
 	roff = *sent; /* offset in request */
 	foff = roff + hreq->rfirst;  /* offset in file */
 	cur_chk = shfs_volchk_foff(hreq->fd, foff);
  next:
 	err = ERR_OK;
 
-	if (idx == UINT_MAX || cur_chk != hreq->chk_buf_addr[idx]) {
+	if (idx == UINT_MAX || !hreq->cce[idx] || cur_chk != hreq->cce[idx]->addr) {
 		/* we got called for the first time
 		 * or requested chunk is not loaded yet (for whatever reason) */
 		if (idx == UINT_MAX)
 			idx = 0;
-		hreq->chk_buf_addr[idx] = cur_chk;
-		ret = _httpreq_shfs_aioreq(hreq, idx);
-		if (unlikely(ret < 0)) {
-			/* !!! TODO: setup a retry when errno happend !!! */
-			if (ret == -ENOMEM) {
-				dprintf("[idx=%u] could not setup request (out of request objects)...\n", idx);
-			}
-			err = ERR_MEM; /* could not setup request at all: abort */
-			dprintf("[idx=%u] aborting...\n", idx);
+		ret = _httpreq_shfs_aioreq(hreq, cur_chk, idx);
+		if (unlikely(ret < 0 && ret != -EAGAIN)) {
+			/* Read ERROR happened -> abort */
+			dprintf("[idx=%u] Fatal read error (%d): aborting...\n", idx, ret);
 			goto err_abort;
 		}
-		goto out;
+		if (ret == 1)
+			goto out; /* we need to wait for completion */
 	}
 
-	if (hreq->chk_buf_aiotoken[idx] != NULL) {
+	if (!shfs_aio_is_done(hreq->cce_t[idx])) {
 		/* current request is not done yet,
 		 * we need to wait. httpsess_response
 		 * will be recalled from within callback */
-		dprintf("[idx=%u] current request is not done yet\n", idx);
+		dprintf("[idx=%u] current request is not done yet\n", cce_idx);
 		goto out;
 	}
 
-	/* time for doing a read ahead? */
+	/* request next buffer already */
 	next_chk = cur_chk + 1;
 	next_idx = (idx + 1) & 0x01; /* (idx + 1) % 2 */
-	if (hreq->chk_buf_addr[next_idx] != next_chk &&
-	    next_chk <= hreq->volchk_last) {
-		/* try to do the read ahaed
-		 * on errors, there will by a retry set up */
-		hreq->chk_buf_addr[next_idx] = next_chk;
-		ret = _httpreq_shfs_aioreq(hreq, next_idx);
-		if (unlikely(ret < 0))
-			hreq->chk_buf_addr[next_idx] = 0; /* trigger retry */
+	if (next_chk <= hreq->volchk_last &&
+	    (!hreq->cce[next_idx] || hreq->cce[next_idx]->addr != next_chk)) {
+		ret = _httpreq_shfs_aioreq(hreq, next_chk, next_idx);
+		if (unlikely(ret < 0 && ret != -EAGAIN)) {
+			/* Read ERROR happened -> abort */
+			dprintf("[idx=%u] Fatal read error (%d): aborting...\n", idx, ret);
+			goto err_abort;
+		}
 	}
 
 	/* send out data from chk buffer that is loaded already */
@@ -1414,7 +1402,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	chk_off = shfs_volchkoff_foff(hreq->fd, foff);
 	left = (uint16_t) min3(UINT16_MAX, shfs_vol.chunksize - chk_off, hreq->rlen - roff);
 	slen = (uint16_t) min3(UINT16_MAX, avail, left);
-	err = httpsess_write(hreq->hsess, ((uint8_t *) (hreq->chk_buf[idx]->data)) + chk_off,
+	err = httpsess_write(hreq->hsess, ((uint8_t *) (hreq->cce[idx]->buffer)) + chk_off,
 	                     &slen, TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
 	                    /* TODO: We need to copy because the buffers might be 
 	                     *  obsolete already but client has not yet acknowledged the
@@ -1441,9 +1429,10 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		foff += slen;
 		avail -= slen;
 		cur_chk = shfs_volchk_foff(hreq->fd, foff);
-		if (hreq->chk_buf_aiotoken[idx] == NULL &&
-		    hreq->chk_buf_addr[idx] == cur_chk) {
-			hreq->chk_buf_idx = idx;
+		if (hreq->cce[idx] &&
+		    shfs_aio_is_done(hreq->cce_t[idx]) &&
+		    hreq->cce[idx]->addr == cur_chk) {
+			hreq->cce_idx = idx;
 			dprintf("httpsess_write_shfsafio: next chunk [idx=%u] is ready already, " \
 			        "resume processing\n", idx);
 			goto next;
@@ -1452,7 +1441,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		}
 	}
  out:
-	hreq->chk_buf_idx = idx;
+	hreq->cce_idx = idx;
 	return err;
 
  err_abort:

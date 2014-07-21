@@ -115,6 +115,7 @@ CONFIG_DEBUG_LWIP_MALLOC	= n
 //CFLAGS			+= -DCONFIG_MINDER_PRINT
 //CFLAGS			+= -DHTTP_DEBUG
 //CFLAGS			+= -DSHFS_DEBUG
+//CFLAGS			+= -DSHFS_CACHE_DEBUG
 //CFLAGS			+= -DSHELL_DEBUG
 //CFLAGS			+= -DHTABLE_DEBUG
 //CFLAGS			+= -DMEMPOOL_DEBUG
@@ -132,7 +133,7 @@ STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
 STUB_APP_OBJS0  = main.o mempool.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
-		  ctldir.o shfs.o shfs_check.o shfs_fio.o shfs_tools.o shfs_stats.o
+		  ctldir.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o shfs_stats.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 include $(MINI_OS_ROOT)/stub.mk

@@ -15,6 +15,7 @@
 #include "shfs_defs.h"
 #include "shfs_btable.h"
 #include "shfs_tools.h"
+#include "shfs_cache.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
 #include "shfs_stats.h"
@@ -480,16 +481,14 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	if (ret < 0)
 		goto err_close_members;
 
-	/* a memory pool that is used by shfs_io for
-	 * doing I/O */
-	shfs_vol.chunkpool = alloc_mempool(CHUNKPOOL_NB_BUFFERS,
-	                                   shfs_vol.chunksize,
-	                                   shfs_vol.ioalign,
-	                                   0, 0, NULL, NULL, 0);
-	if (!shfs_vol.chunkpool) {
-		shfs_mounted = 0;
+	shfs_vol.remount_chunk_buffer = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+	if (!shfs_vol.remount_chunk_buffer)
 		goto err_free_htable;
-	}
+
+	/* chunk buffer cache for I/O */
+	ret = shfs_alloc_cache(CHUNKCACHE_NB_BUFFERS, 4);
+	if (ret < 0)
+		goto err_free_remount_buffer;
 
 #ifdef SHFS_STATS
 	ret = shfs_init_mstats(shfs_vol.htable_nb_buckets,
@@ -497,7 +496,7 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	                       shfs_vol.hlen);
 	if (!ret < 0) {
 		shfs_mounted = 0;
-		goto  err_free_chunkpool;
+		goto  err_free_chunkcache;
 	}
 #endif
 
@@ -505,8 +504,10 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	up(&shfs_mount_lock);
 	return 0;
 
- err_free_chunkpool:
-	free_mempool(shfs_vol.chunkpool);
+ err_free_chunkcache:
+	shfs_free_cache();
+ err_free_remount_buffer:
+	xfree(shfs_vol.remount_chunk_buffer);
  err_free_htable:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
 		if (shfs_vol.htable_chunk_cache[i])
@@ -540,7 +541,7 @@ int umount_shfs(int force) {
 	if (shfs_mounted) {
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
-		    mempool_free_count(shfs_vol.chunkpool) < CHUNKPOOL_NB_BUFFERS) {
+		    mempool_free_count(shfs_vol.chunkcache->pool) < CHUNKCACHE_NB_BUFFERS) {
 			/* there are still open files and/or async I/O is happening */
 			dprintf("Could not umount: SHFS is busy:\n");
 			dprintf(" Open files:          %u\n",
@@ -548,7 +549,7 @@ int umount_shfs(int force) {
 			dprintf(" Infly AIO tokens:    %u\n",
 			        MAX_REQUESTS - mempool_free_count(shfs_vol.aiotoken_pool));
 			dprintf(" Infly chunk buffers: %u\n",
-			        CHUNKPOOL_NB_BUFFERS - mempool_free_count(shfs_vol.chunkpool));
+			        CHUNKCACHE_NB_BUFFERS - mempool_free_count(shfs_vol.chunkcache->pool));
 
 			if (!force) {
 				up(&shfs_mount_lock);
@@ -564,7 +565,8 @@ int umount_shfs(int force) {
 		}
 		shfs_mounted = 0;
 
-		free_mempool(shfs_vol.chunkpool);
+		shfs_free_cache();
+		xfree(shfs_vol.remount_chunk_buffer);
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
 			if (shfs_vol.htable_chunk_cache[i])
 				xfree(shfs_vol.htable_chunk_cache[i]);
@@ -596,20 +598,12 @@ static int reload_vol_htable(void) {
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *chentry;
 	struct shfs_hentry *nhentry;
-	struct mempool_obj *nchk_buf_obj;
 	void *cchk_buf;
-	void *nchk_buf;
+	void *nchk_buf = shfs_vol.remount_chunk_buffer;
 	int chash_is_zero, nhash_is_zero;
 	register chk_t c;
 	register unsigned int e;
 	int ret;
-
-	nchk_buf_obj = mempool_pick(shfs_vol.chunkpool);
-	if (!nchk_buf_obj) {
-		ret = -errno;
-		goto out;
-	}
-	nchk_buf = nchk_buf_obj->data;
 
 	dprintf("Re-reading hash table...\n");
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
@@ -617,7 +611,7 @@ static int reload_vol_htable(void) {
 		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf);
 		if (ret < 0) {
 			ret = -EIO;
-			goto out_free_nchk_buf;
+			goto out;
 		}
 		cchk_buf = shfs_vol.htable_chunk_cache[c];
 
@@ -670,6 +664,8 @@ static int reload_vol_htable(void) {
 #endif
 					memcpy(chentry, nhentry, sizeof(*chentry));
 
+					shfs_flush_cache();
+
 					/* unlock entry */
 					up(&bentry->updatelock);
 					bentry->update = 0;
@@ -689,6 +685,8 @@ static int reload_vol_htable(void) {
 
 				memcpy(chentry, nhentry, sizeof(*chentry));
 
+				shfs_flush_cache();
+
 				/* unlock entry */
 				up(&bentry->updatelock);
 				bentry->update = 0;
@@ -706,8 +704,6 @@ static int reload_vol_htable(void) {
 		}
 	}
 
- out_free_nchk_buf:
-	mempool_put(nchk_buf_obj);
  out:
 	return ret;
 }
@@ -733,6 +729,31 @@ int remount_shfs(void) {
  out:
 	up(&shfs_mount_lock);
 	return ret;
+}
+
+/* Internal AIO token management */
+SHFS_AIO_TOKEN *shfs_aio_pick_token(shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp)
+{
+	struct mempool_obj *t_obj;
+	SHFS_AIO_TOKEN *t;
+
+	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
+	if (!t_obj)
+	    return NULL;
+	t = t_obj->data;
+	t->p_obj = t_obj;
+	t->ret = 0;
+	t->infly = 0;
+	t->cb = cb;
+	t->cb_cookie = cb_cookie;
+	t->cb_argp = cb_argp;
+
+	return t;
+}
+
+void shfs_aio_put_token(SHFS_AIO_TOKEN *t)
+{
+	mempool_put(t->p_obj);
 }
 
 /*
@@ -763,7 +784,6 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	sector_t start_sec;
 	unsigned int m;
 	uint8_t *ptr = buffer;
-	struct mempool_obj *t_obj;
 	SHFS_AIO_TOKEN *t;
 	strp_t start_s;
 	strp_t end_s;
@@ -797,18 +817,11 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	}
 
 	/* pick token */
-	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
-	if (!t_obj) {
+	t = shfs_aio_pick_token(cb, cb_cookie, cb_argp);
+	if (!t) {
 		errno = EAGAIN;
 		goto err_out;
 	}
-	t = t_obj->data;
-	t->p_obj = t_obj;
-	t->ret = 0;
-	t->infly = 0;
-	t->cb = cb;
-	t->cb_cookie = cb_cookie;
-	t->cb_argp = cb_argp;
 
 	/* setup requests */
 	for (strp = start_s; strp < end_s; ++strp) {
@@ -835,7 +848,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	return t;
 
  err_free_token:
-	mempool_put(t_obj);
+	shfs_aio_put_token(t);
  err_out:
 	return NULL;
 }
