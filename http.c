@@ -1373,7 +1373,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		/* current request is not done yet,
 		 * we need to wait. httpsess_response
 		 * will be recalled from within callback */
-		dprintf("[idx=%u] current request is not done yet\n", cce_idx);
+		dprintf("[idx=%u] current request is not done yet\n", idx);
 		goto out;
 	}
 
