@@ -66,6 +66,7 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
 CFLAGS				+= -DSHFS_STATS
+//CFLAGS				+= -DSHFS_CACHE_STATS_DISPLAY
 
 # Advanced statistics from HTTP
 #  This enables counting the number of successful downloads
@@ -92,6 +93,7 @@ CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 ######################################
 CFLAGS				+= -DHTTP_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
 //CFLAGS			+= -DHTTP_TESTFILE
+CFLAGS				+= -DHTTP_STATS_DISPLAY
 
 ######################################
 ## ctldir options

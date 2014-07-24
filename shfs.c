@@ -37,9 +37,13 @@ struct vol_info shfs_vol;
 
 int init_shfs(void) {
 	init_SEMAPHORE(&shfs_mount_lock, 1);
-
 	return 0;
 }
+
+void exit_shfs(void) {
+	BUG_ON(shfs_mounted);
+}
+
 
 /**
  * This function tries to open a blkdev and checks if it has a valid SHFS label
@@ -437,6 +441,8 @@ static int load_vol_htable(void)
 	return ret;
 }
 
+static void _aiotoken_pool_objinit(struct mempool_obj *, void *);
+
 /**
  * Mount a SHFS volume
  * The volume is searched on the given list of VBD
@@ -463,8 +469,9 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	if (ret < 0)
 		goto err_out;
 
-	/* a memory pool required for async I/O requests */
-	shfs_vol.aiotoken_pool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _shfs_aio_token));
+	/* a memory pool required for async I/O requests (even on cache) */
+	shfs_vol.aiotoken_pool = alloc_mempool(NB_AIOTOKEN, sizeof(struct _shfs_aio_token),
+	                                       0, 0, 0, _aiotoken_pool_objinit, NULL, 0);
 	if (!shfs_vol.aiotoken_pool)
 		goto err_close_members;
 	shfs_mounted = 1; /* required by next function calls */
@@ -541,15 +548,15 @@ int umount_shfs(int force) {
 	if (shfs_mounted) {
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
-		    mempool_free_count(shfs_vol.chunkcache->pool) < CHUNKCACHE_NB_BUFFERS) {
+		    shfs_cache_ref_count()) {
 			/* there are still open files and/or async I/O is happening */
 			dprintf("Could not umount: SHFS is busy:\n");
-			dprintf(" Open files:          %u\n",
+			dprintf(" Open files:               %u\n",
 			        shfs_nb_open);
-			dprintf(" Infly AIO tokens:    %u\n",
+			dprintf(" Infly AIO tokens:         %u\n",
 			        MAX_REQUESTS - mempool_free_count(shfs_vol.aiotoken_pool));
-			dprintf(" Infly chunk buffers: %u\n",
-			        CHUNKCACHE_NB_BUFFERS - mempool_free_count(shfs_vol.chunkcache->pool));
+			dprintf(" Referenced chunk buffers: %u\n",
+			        shfs_cache_ref_count());
 
 			if (!force) {
 				up(&shfs_mount_lock);
@@ -731,37 +738,25 @@ int remount_shfs(void) {
 	return ret;
 }
 
-/* Internal AIO token management */
-SHFS_AIO_TOKEN *shfs_aio_pick_token(shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp)
+/*
+ * Note: Async I/O token data access is atomic since none of these functions are
+ * interrupted or can yield the CPU. Even blkfront calls the callbacks outside
+ * of the interrupt context via blkdev_poll_req() and there is only the
+ * cooperative scheduler...
+ */
+static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 {
-	struct mempool_obj *t_obj;
 	SHFS_AIO_TOKEN *t;
 
-	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
-	if (!t_obj)
-	    return NULL;
 	t = t_obj->data;
 	t->p_obj = t_obj;
 	t->ret = 0;
 	t->infly = 0;
-	t->cb = cb;
-	t->cb_cookie = cb_cookie;
-	t->cb_argp = cb_argp;
-
-	return t;
+	t->cb = NULL;
+	t->cb_argp = NULL;
+	t->cb_cookie = NULL;
 }
 
-void shfs_aio_put_token(SHFS_AIO_TOKEN *t)
-{
-	mempool_put(t->p_obj);
-}
-
-/*
- * Note: Async I/O token data access is atomic since none of these functions can
- * be interrupted or yield the CPU. Even blkfront calls the callbacks outside
- * of the interrupt context via blkdev_poll_req() and there is only the
- * cooperative scheduler.
- */
 static void _shfs_aio_cb(int ret, void *argp) {
 	SHFS_AIO_TOKEN *t = argp;
 
@@ -769,7 +764,7 @@ static void _shfs_aio_cb(int ret, void *argp) {
 		t->ret = ret;
 	--t->infly;
 
-	if (unlikely(t->infly == 0)) {
+	if (t->infly == 0) {
 		/* call user's callback */
 		if (t->cb)
 			t->cb(t, t->cb_cookie, t->cb_argp);
@@ -817,11 +812,14 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	}
 
 	/* pick token */
-	t = shfs_aio_pick_token(cb, cb_cookie, cb_argp);
+	t = shfs_aio_pick_token();
 	if (!t) {
 		errno = EAGAIN;
 		goto err_out;
 	}
+	t->cb = cb;
+	t->cb_argp = cb_argp;
+	t->cb_cookie = cb_cookie;
 
 	/* setup requests */
 	for (strp = start_s; strp < end_s; ++strp) {
@@ -851,8 +849,4 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	shfs_aio_put_token(t);
  err_out:
 	return NULL;
-}
-
-void exit_shfs(void) {
-	BUG_ON(shfs_mounted);
 }

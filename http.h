@@ -10,18 +10,8 @@
 
 #define HTTP_LISTEN_PORT          80
 #define HTTP_TCP_PRIO             TCP_PRIO_MAX
-#define HTTP_MULTISERVER          0
 
-#if HTTP_MULTISERVER
-struct http_srv;
-#endif
-
-#if HTTP_MULTISERVER
-struct http_srv *init_http(uint16_t nb_sess, uint32_t nb_reqs, uint16_t port);
-void exit_http(struct http_srv *hs);
-#else
 int init_http(uint16_t nb_sess, uint32_t nb_reqs);
 void exit_http(void);
-#endif
 
 #endif

@@ -19,7 +19,8 @@
 #endif
 
 #define MAX_NB_TRY_BLKDEVS 64
-#define CHUNKCACHE_NB_BUFFERS 128
+#define CHUNKCACHE_NB_BUFFERS 128 /* cache size */
+#define NB_AIOTOKEN 750 /* should be at least MAX_REQUESTS */
 
 struct shfs_cache;
 
@@ -126,8 +127,16 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 /*
  * Internal AIO token management (do not use this functions directly!)
  */
-SHFS_AIO_TOKEN *shfs_aio_pick_token(shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp);
-void shfs_aio_put_token(SHFS_AIO_TOKEN *t);
+static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
+{
+	struct mempool_obj *t_obj;
+	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
+	if (!t_obj)
+		return NULL;
+	return (SHFS_AIO_TOKEN *) t_obj->data;
+}
+#define shfs_aio_put_token(t) \
+	mempool_put(t->p_obj)
 
 /*
  * Returns 1 if the I/O operation has finished, 0 otherwise

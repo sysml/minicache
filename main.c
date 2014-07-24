@@ -406,6 +406,7 @@ static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
 {
 	stats_display();
+	fprintf(cio, "Stats dumped to system output\n");
 	return 0;
 }
 #endif

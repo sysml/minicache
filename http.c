@@ -18,6 +18,10 @@
 #include "shfs_stats.h"
 #endif
 
+#ifdef HTTP_STATUS_CMD
+#include "shell.h"
+#endif
+
 #include "http_parser.h"
 #include "http_data.h"
 #include "http.h"
@@ -142,7 +146,8 @@ enum http_req_state {
 	HRS_RESPONDING_HDR,
 	HRS_RESPONDING_MSG,
 	HRS_RESPONDING_SMSG,
-	HRS_RESPONDING_EOM
+	HRS_RESPONDING_EOM,
+	HRS_DESTROYED
 };
 
 struct http_req {
@@ -203,9 +208,7 @@ struct http_req {
 #endif
 };
 
-#if !(HTTP_MULTISERVER)
 static struct http_srv *hs = NULL;
-#endif
 
 static err_t httpsess_accept (void *argp, struct tcp_pcb *new_tpcb, err_t err);
 static err_t httpsess_close  (struct http_sess *hsess, enum http_sess_close type);
@@ -218,23 +221,18 @@ static int httprecv_req_complete(struct http_parser *parser);
 static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len);
-
-#if HTTP_MULTISERVER
-struct http_srv *init_http(uint16_t nb_sess, uint32_t nb_reqs, uint16_t port)
-#else
-int init_http(uint16_t nb_sess, uint32_t nb_reqs)
+#ifdef HTTP_STATS_DISPLAY
+static int shcmd_http_stats(FILE *cio, int argc, char *argv[]);
 #endif
+
+int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 {
 	err_t err;
 	int ret = 0;
 
 	hs = _xmalloc(sizeof(*hs), PAGE_SIZE);
 	if (!hs) {
-#if HTTP_MULTISERVER
-		errno = ENOMEM;
-#else
 		ret = -ENOMEM;
-#endif
 		goto err_out;
 	}
 	hs->max_nb_sess = nb_sess;
@@ -245,46 +243,26 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	/* allocate session pool */
 	hs->sess_pool = alloc_simple_mempool(hs->max_nb_sess, sizeof(struct http_sess));
 	if (!hs->sess_pool) {
-#if HTTP_MULTISERVER
-		errno = ENOMEM;
-#else
 		ret = -ENOMEM;
-#endif
 		goto err_free_hs;
 	}
 
 	/* allocate request pool */
 	hs->req_pool = alloc_simple_mempool(hs->max_nb_reqs, sizeof(struct http_req));
 	if (!hs->req_pool) {
-#if HTTP_MULTISERVER
-		errno = ENOMEM;
-#else
 		ret = -ENOMEM;
-#endif
 		goto err_free_sesspool;
 	}
 
 	/* register TCP listener */
 	hs->tpcb = tcp_new();
 	if (!hs->tpcb) {
-#if HTTP_MULTISERVER
-		errno = ENOMEM;
-#else
 		ret = -ENOMEM;
-#endif
 		goto err_free_reqpool;
 	}
-#if HTTP_MULTISERVER
-	err = tcp_bind(hs->tpcb, IP_ADDR_ANY, port);
-#else
 	err = tcp_bind(hs->tpcb, IP_ADDR_ANY, HTTP_LISTEN_PORT);
-#endif
 	if (err != ERR_OK) {
-#if HTTP_MULTISERVER
-		errno = err;
-#else
 		ret = -err;
-#endif
 		goto err_free_tcp;
 	}
 	hs->tpcb = tcp_listen(hs->tpcb);
@@ -306,7 +284,9 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	hs->hsess_tail = NULL;
 
 	dprintf("HTTP server %p initialized\n", hs);
-
+#ifdef HTTP_STATS_DISPLAY
+	shell_register_cmd("http-stats", shcmd_http_stats);
+#endif
 	return ret;
 
  err_free_tcp:
@@ -318,18 +298,10 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
  err_free_hs:
 	xfree(hs);
  err_out:
-#if HTTP_MULTISERVER
-	return NULL;
-#else
 	return ret;
-#endif
 }
 
-#if HTTP_MULTISERVER
-void exit_http(struct http_srv *hs)
-#else
 void exit_http(void)
-#endif
 {
 	/* terminate connections that are still open */
 	while(hs->hsess_head) {
@@ -337,13 +309,16 @@ void exit_http(void)
 		httpsess_close(hs->hsess_head, HSC_CLOSE);
 	}
 
+	/* wait for infly I/Os */
+	dprintf("Wait for unfinished I/O...\n");
+	while (hs->nb_reqs != 0)
+		shfs_poll_blkdevs();
+
 	tcp_close(hs->tpcb);
 	free_mempool(hs->req_pool);
 	free_mempool(hs->sess_pool);
 	xfree(hs);
-#if !(HTTP_MULTISERVER)
 	hs = NULL;
-#endif
 }
 
 
@@ -385,7 +360,7 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 	hreq->request_hdr.last_was_value = 1;
 	hreq->request_hdr.lines_overflow = 0;
 	hreq->fd = NULL;
-	hreq->cce_idx = UINT_MAX;
+	hreq->cce_idx = 0;
 	hreq->cce[0] = NULL;
 	hreq->cce[1] = NULL;
 	hreq->cce_t[0] = NULL;
@@ -402,36 +377,42 @@ static inline void httpreq_close(struct http_req *hreq)
 {
 	struct http_sess *hsess = hreq->hsess;
 
+	hreq->state = HRS_DESTROYED; /* aio cb will call us again when I/O's are still in fly */
+
 	/* wait for I/O exit and close open file */
 	if (hreq->fd) {
-		hreq->cce_idx = UINT_MAX; /* disable calling of httpsess_response from aio cb */
-
-		dprintf("Wait for unfinished I/O...\n");
-		shfs_aio_wait(hreq->cce_t[0]);
-		shfs_aio_wait(hreq->cce_t[1]);
-		dprintf("Done\n");
+		if (hreq->cce[0]) {
+			if (!shfs_aio_is_done(hreq->cce_t[0])) {
+				dprintf("I/O of [cce_idx=%d] (chunk %llu) is not done yet: "
+				        "Delaying destruction of request %p\n", 0, hreq->cce[0]->addr, hreq);
+				return;
+			}
+			shfs_cache_release(hreq->cce[0]);
+			hreq->cce[0] = NULL;
+		}
+		if (hreq->cce[1]) {
+			if (!shfs_aio_is_done(hreq->cce_t[1])) {
+				dprintf("I/O of [cce_idx=%d] (chunk %llu) is not done yet: "
+				        "Delaying destruction of request %p\n", 1, hreq->cce[1]->addr, hreq);
+				return;
+			}
+			shfs_cache_release(hreq->cce[1]);
+			hreq->cce[1] = NULL;
+		}
 	}
 
-	if (hreq->cce[1])
-		shfs_cache_release(hreq->cce[1]);
-	if (hreq->cce[0])
-		shfs_cache_release(hreq->cce[0]);
-
-	if (hreq->fd) {
+	/* free object since their are no dependencies to it anymore */
+	if (hreq->fd)
 		shfs_fio_close(hreq->fd);
-	}
-
 	mempool_put(hreq->pobj);
 	--hsess->hsrv->nb_reqs;
+	dprintf("Request %p destroyed\n", hreq);
 }
 
 static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 {
 	struct mempool_obj *hsobj;
 	struct http_sess *hsess;
-#if HTTP_MULTISERVER
-	struct http_srv *hs = argp;
-#endif
 
 	if (err != ERR_OK)
 		goto err_out;
@@ -505,9 +486,6 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
 static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 {
-#if HTTP_MULTISERVER
-	struct http_srv *hs = hsess->hs;
-#endif
 	struct http_req *hreq;
 	err_t err;
 
@@ -1295,20 +1273,31 @@ static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
 static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 {
 	struct http_req *hreq = (struct http_req *) cookie;
-	register unsigned int idx = (unsigned int)(uintptr_t) argp;
+	unsigned int idx = (unsigned int)(uintptr_t) argp;
 
 	shfs_aio_finalize(t);
 	hreq->cce_t[idx] = NULL;
 
-	/* continue sending process */
-	if (idx == hreq->cce_idx) {
-		dprintf("** [idx=%u] request done, calling httpsess_respond()\n", idx);
+	if (unlikely(hreq->state == HRS_DESTROYED)) {
+		/* our connection was closed already
+		 * but this I/O was still in progress
+		 * -> continue freeing this request object */
+		shfs_cache_release(hreq->cce[idx]);
+		hreq->cce[idx] = NULL;
+		httpreq_close(hreq);
+		return;
+	}
+
+	/* continue sending */
+	if (hreq->cce_idx == idx) {
+		dprintf("** [cce_idx=%u] request done, calling httpsess_respond()\n", idx);
 		httpsess_respond(hreq->hsess);
 	} else {
-		dprintf("** [idx=%u] request done\n", idx);
+		/* pre-loading of next buffer was done */
+		dprintf("** [cce_idx=%u] request done\n", idx);
                 /* The TCP stack might be still waiting for more input
                  * of the previous chunk, but this guy seems not to be get
-                 * called anymore: enforce it here */
+                 * called anymore: enforce it here by flushing data out */
                 httpsess_flush(hreq->hsess);
 	}
 }
@@ -1319,6 +1308,7 @@ static inline int _httpreq_shfs_aioreq(struct http_req *hreq, chk_t addr, unsign
 
 	if (hreq->cce[cce_idx])
 		shfs_cache_release(hreq->cce[cce_idx]);
+
 	ret = shfs_cache_aread(addr,
 	                       _httpreq_shfs_aiocb,
 	                       hreq,
@@ -1326,7 +1316,7 @@ static inline int _httpreq_shfs_aioreq(struct http_req *hreq, chk_t addr, unsign
 	                       &hreq->cce[cce_idx],
 	                       &hreq->cce_t[cce_idx]);
 	if (unlikely(ret < 0)) {
-		dprintf("failed to perform request for [cce_idx=%u]!\n", cce_idx);
+		dprintf("failed to perform request for [cce_idx=%u]: %d\n", cce_idx, ret);
 		return ret;
 	}
 	dprintf("request set up for [cce_idx=%u]\n", cce_idx);
@@ -1354,38 +1344,51 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
  next:
 	err = ERR_OK;
 
-	if (idx == UINT_MAX || !hreq->cce[idx] || cur_chk != hreq->cce[idx]->addr) {
-		/* we got called for the first time
-		 * or requested chunk is not loaded yet (for whatever reason) */
-		if (idx == UINT_MAX)
-			idx = 0;
+	/* is the chunk to process loaded? */
+	if (!hreq->cce[idx] || cur_chk != hreq->cce[idx]->addr) {
 		ret = _httpreq_shfs_aioreq(hreq, cur_chk, idx);
-		if (unlikely(ret < 0 && ret != -EAGAIN)) {
-			/* Read ERROR happened -> abort */
-			dprintf("[idx=%u] Fatal read error (%d): aborting...\n", idx, ret);
+		if (unlikely(ret == -EAGAIN)) {
+			/* TODO: Retry it later because we are out of memory currently */
+			dprintf("[idx=%u] out of memory (%d): aborting...\n", idx, ret);
+			err = ERR_MEM;
 			goto err_abort;
-		}
-		if (ret == 1)
+		} else if (unlikely(ret < 0)) {
+			/* Read ERROR happened -> abort */
+			dprintf("[idx=%u] fatal read error (%d): aborting...\n", idx, ret);
+			err = ERR_ABRT;
+			goto err_abort;
+		} else if (ret == 1) {
+			/* current request is not done yet,
+			 * we need to wait. httpsess_response
+			 * will be recalled from within callback */
+			dprintf("[idx=%u] requested chunk is not ready yet\n", idx);
 			goto out; /* we need to wait for completion */
+		}
 	}
 
+	/* is the chunk to process ready now? */
 	if (!shfs_aio_is_done(hreq->cce_t[idx])) {
-		/* current request is not done yet,
-		 * we need to wait. httpsess_response
-		 * will be recalled from within callback */
-		dprintf("[idx=%u] current request is not done yet\n", idx);
+		dprintf("[idx=%u] requested chunk is not ready yet\n", idx);
 		goto out;
+	}
+
+	/* is the chunk to process valid? (it might be invalid due to I/O erros) */
+	if (unlikely(hreq->cce[idx]->invalid)) {
+		dprintf("[idx=%u] requested chunk is INVALID! (I/O error)\n", idx);
+		err = ERR_ABRT;
+		goto err_abort;
 	}
 
 	/* request next buffer already */
 	next_chk = cur_chk + 1;
 	next_idx = (idx + 1) & 0x01; /* (idx + 1) % 2 */
 	if (next_chk <= hreq->volchk_last &&
-	    (!hreq->cce[next_idx] || hreq->cce[next_idx]->addr != next_chk)) {
+	    (!hreq->cce[next_idx] || next_chk != hreq->cce[next_idx]->addr)) {
 		ret = _httpreq_shfs_aioreq(hreq, next_chk, next_idx);
 		if (unlikely(ret < 0 && ret != -EAGAIN)) {
 			/* Read ERROR happened -> abort */
-			dprintf("[idx=%u] Fatal read error (%d): aborting...\n", idx, ret);
+			dprintf("[idx=%u] fatal read error (%d): aborting...\n", idx, ret);
+			err = ERR_ABRT;
 			goto err_abort;
 		}
 	}
@@ -1396,7 +1399,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		/* we need to wait for free space on tcp sndbuf
 		 * httpsess_response is recalled when client has
 		 * acknowledged its received data */
-		dprintf("[idx=%u] tcp send buffer is full\n", idx);
+		dprintf("[idx=%u] tcp send buffer is full, retry it next round\n", idx);
 		goto out;
 	}
 	chk_off = shfs_volchkoff_foff(hreq->fd, foff);
@@ -1430,15 +1433,15 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		avail -= slen;
 		cur_chk = shfs_volchk_foff(hreq->fd, foff);
 		if (hreq->cce[idx] &&
-		    shfs_aio_is_done(hreq->cce_t[idx]) &&
-		    hreq->cce[idx]->addr == cur_chk) {
+		    hreq->cce[idx]->addr == cur_chk &&
+		    shfs_aio_is_done(hreq->cce_t[idx])) {
 			hreq->cce_idx = idx;
 			dprintf("httpsess_write_shfsafio: next chunk [idx=%u] is ready already, " \
 			        "resume processing\n", idx);
 			goto next;
-		} else {
-			dprintf("httpsess_write_shfsafio: next chunk [idx=%u] not ready yet\n", idx);
 		}
+
+		dprintf("httpsess_write_shfsafio: next chunk [idx=%u] not ready yet\n", idx);
 	}
  out:
 	hreq->cce_idx = idx;
@@ -1586,8 +1589,8 @@ static err_t httpsess_respond(struct http_sess *hsess)
 	case HRS_RESPONDING_MSG:
 		/* send out data */
 		err = httpreq_write_shfsafio(hreq, &hsess->sent);
-		if (unlikely(err))
-			goto err_close;
+		if (unlikely(err != ERR_OK && err != ERR_MEM))
+			goto err_close; /* drop connection because of an unrecoverable error */
 
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 		while (unlikely(hsess->sent >= hreq->stats.dpc_threshold[hreq->stats.dpc_i]))
@@ -1628,3 +1631,28 @@ static err_t httpsess_respond(struct http_sess *hsess)
 	/* error happened -> kill connection */
 	return httpsess_close(hsess, HSC_ABORT);
 }
+
+#ifdef HTTP_STATS_DISPLAY
+static int shcmd_http_stats(FILE *cio, int argc, char *argv[])
+{
+	uint32_t nb_sess, max_nb_sess;
+	uint32_t nb_reqs, max_nb_reqs;
+
+	if (!hs) {
+		fprintf(cio, "HTTP server is not online\n");
+		return -1;
+	}
+
+	/* copy values in order to print them
+	 * (writing to cio can lead to thread switching) */
+	nb_sess     = hs->nb_sess;
+	max_nb_sess = hs->max_nb_sess;
+	nb_reqs     = hs->nb_reqs;
+	max_nb_reqs = hs->max_nb_reqs;
+
+	fprintf(cio, " Listen port:         %8u\n", HTTP_LISTEN_PORT);
+	fprintf(cio, " Number of sessions: %4u/%4u\n", nb_sess, max_nb_sess);
+	fprintf(cio, " Number of requests: %4u/%4u\n", nb_reqs, max_nb_reqs);
+	return 0;
+}
+#endif

@@ -37,6 +37,8 @@ struct shfs_cache {
 	uint32_t htlen;
 	uint32_t htmask;
 
+	uint32_t nb_ref_entries;
+
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };
@@ -44,6 +46,8 @@ struct shfs_cache {
 int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order);
 void shfs_flush_cache(void); /* releases unreferenced buffers */
 void shfs_free_cache(void);
+#define shfs_cache_ref_count() \
+	(shfs_vol.chunkcache->nb_ref_entries)
 
 /*
  * Function to read one chunk from the SHFS volume through the cache
@@ -114,5 +118,9 @@ static inline struct shfs_cache_entry *shfs_cache_read(chk_t addr)
 	return cce;
 }
 
+#ifdef SHFS_CACHE_STATS_DISPLAY
+#include "shell.h"
+int shcmd_shfs_cache_stats(FILE *cio, int argc, char *argv[]);
+#endif
 
 #endif /* _SHFS_CACHE_ */

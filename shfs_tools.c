@@ -367,6 +367,7 @@ int register_shfs_tools(struct ctldir *cd)
 		ctldir_register_shcmd(cd, "mount", shcmd_shfs_mount);
 		ctldir_register_shcmd(cd, "umount", shcmd_shfs_umount);
 		ctldir_register_shcmd(cd, "remount", shcmd_shfs_remount);
+		ctldir_register_shcmd(cd, "flush", shcmd_shfs_flush_cache);
 	}
 
 	/* shell commands (ignore errors) */
@@ -378,8 +379,11 @@ int register_shfs_tools(struct ctldir *cd)
 	shell_register_cmd("file", shcmd_shfs_file);
 	shell_register_cmd("df", shcmd_shfs_dumpfile);
 	shell_register_cmd("cat", shcmd_shfs_cat);
+	shell_register_cmd("flush", shcmd_shfs_flush_cache);
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
-	shell_register_cmd("shfs-flush", shcmd_shfs_flush_cache);
+#ifdef SHFS_CACHE_STATS_DISPLAY
+	shell_register_cmd("shfs-cache-stats", shcmd_shfs_cache_stats);
+#endif
 
 	return 0;
 }
