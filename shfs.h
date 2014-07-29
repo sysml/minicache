@@ -19,7 +19,6 @@
 #endif
 
 #define MAX_NB_TRY_BLKDEVS 64
-#define CHUNKCACHE_NB_BUFFERS 128 /* cache size */
 #define NB_AIOTOKEN 750 /* should be at least MAX_REQUESTS */
 
 struct shfs_cache;
@@ -105,7 +104,8 @@ struct _shfs_aio_token {
 	void *cb_cookie;
 	void *cb_argp;
 
-	struct _shfs_aio_token *_next; /* token chains (used by shfs_cache) */
+	struct _shfs_aio_token *_prev; /* token chains (used by shfs_cache) */
+	struct _shfs_aio_token *_next;
 };
 
 /*

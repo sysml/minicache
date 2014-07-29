@@ -17,6 +17,7 @@
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 #include "shfs_stats.h"
 #endif
+#include "dlist.h"
 
 #ifdef HTTP_STATUS_CMD
 #include "shell.h"
@@ -89,6 +90,8 @@ struct http_srv {
 
 	struct http_sess *hsess_head;
 	struct http_sess *hsess_tail;
+
+	struct dlist_head ioretry_chain;
 };
 
 struct _hdr_dbuffer {
@@ -136,6 +139,8 @@ struct http_sess {
 
 	int retry_replychain; /* marker for rare cases: reply could not be initiated
 	                       * within recv because of ERR_MEM */
+	int _in_respond;      /* diables recursive httpsess_respond calls */
+	dlist_el(ioretry_chain);
 };
 
 enum http_req_state {
@@ -146,8 +151,7 @@ enum http_req_state {
 	HRS_RESPONDING_HDR,
 	HRS_RESPONDING_MSG,
 	HRS_RESPONDING_SMSG,
-	HRS_RESPONDING_EOM,
-	HRS_DESTROYED
+	HRS_RESPONDING_EOM
 };
 
 struct http_req {
@@ -283,6 +287,9 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	hs->hsess_head = NULL;
 	hs->hsess_tail = NULL;
 
+	/* wait for I/O retry list */
+	dlist_init_head(hs->ioretry_chain);
+
 	dprintf("HTTP server %p initialized\n", hs);
 #ifdef HTTP_STATS_DISPLAY
 	shell_register_cmd("http-stats", shcmd_http_stats);
@@ -308,11 +315,8 @@ void exit_http(void)
 		dprintf("Closing session %p...\n", hs->hsess_head);
 		httpsess_close(hs->hsess_head, HSC_CLOSE);
 	}
-
-	/* wait for infly I/Os */
-	dprintf("Wait for unfinished I/O...\n");
-	while (hs->nb_reqs != 0)
-		shfs_poll_blkdevs();
+	BUG_ON(hs->nb_reqs != 0);
+	BUG_ON(hs->nb_sess != 0);
 
 	tcp_close(hs->tpcb);
 	free_mempool(hs->req_pool);
@@ -320,7 +324,6 @@ void exit_http(void)
 	xfree(hs);
 	hs = NULL;
 }
-
 
 /*******************************************************************************
  * Session + Request handling
@@ -339,6 +342,60 @@ void exit_http(void)
 		http_parser_init(&(hsess)->parser, HTTP_REQUEST);	\
 		httpsess_reset_keepalive((hsess));	  \
 	} while(0)
+
+#define httpsess_register_ioretry(hsess) \
+	do { \
+		if (!dlist_is_linked((hsess), \
+		                     hs->ioretry_chain, \
+		                     ioretry_chain)) { \
+			dlist_append((hsess), \
+			             hs->ioretry_chain, \
+			             ioretry_chain); \
+		} \
+	} while(0)
+
+#define httpsess_unregister_ioretry(hsess) \
+	do { \
+		if (unlikely(dlist_is_linked((hsess), \
+		                             hs->ioretry_chain, \
+		                             ioretry_chain))) { \
+			dlist_unlink((hsess), \
+			             hs->ioretry_chain, \
+			             ioretry_chain); \
+		} \
+	} while(0)
+
+/* gets called whenever it is worth
+ * to retry an failed I/O operation (with EAGAIN) */
+void http_retry_aio_cb(void) {
+	struct http_sess *hsess;
+	struct http_sess *hsess_next;
+
+	if (unlikely(!hs))
+		return;
+
+	hsess = dlist_first_el(hs->ioretry_chain, struct http_sess);
+	/* clear head so that a new list is created
+	 * This avoids the the case that within a callback the elements gets
+	 * appanded to the list over an over again */
+	dlist_init_head(hs->ioretry_chain);
+	while (hsess) {
+		hsess_next = dlist_next_el(hsess, ioretry_chain);
+
+		/* "unlink" this element from the list because
+		 * the head is released already -> we need to do a list cleanup */
+		hsess->ioretry_chain.next = NULL;
+		hsess->ioretry_chain.prev = NULL;
+
+		dprintf("Retrying I/O on session %p\n", hsess);
+		if (!hsess->_in_respond)
+			httpsess_respond(hsess); /* can register itself to the new list */
+		else
+			httpsess_register_ioretry(hsess); /* register element to the new list */
+
+		hsess = hsess_next;
+	}
+}
 
 static inline struct http_req *httpreq_open(struct http_sess *hsess)
 {
@@ -377,33 +434,18 @@ static inline void httpreq_close(struct http_req *hreq)
 {
 	struct http_sess *hsess = hreq->hsess;
 
-	hreq->state = HRS_DESTROYED; /* aio cb will call us again when I/O's are still in fly */
+	/* unlink session from ioretry chain if it was linked before */
+	httpsess_unregister_ioretry(hreq->hsess);
 
-	/* wait for I/O exit and close open file */
+	/* close open file */
 	if (hreq->fd) {
-		if (hreq->cce[0]) {
-			if (!shfs_aio_is_done(hreq->cce_t[0])) {
-				dprintf("I/O of [cce_idx=%d] (chunk %llu) is not done yet: "
-				        "Delaying destruction of request %p\n", 0, hreq->cce[0]->addr, hreq);
-				return;
-			}
-			shfs_cache_release(hreq->cce[0]);
-			hreq->cce[0] = NULL;
-		}
-		if (hreq->cce[1]) {
-			if (!shfs_aio_is_done(hreq->cce_t[1])) {
-				dprintf("I/O of [cce_idx=%d] (chunk %llu) is not done yet: "
-				        "Delaying destruction of request %p\n", 1, hreq->cce[1]->addr, hreq);
-				return;
-			}
-			shfs_cache_release(hreq->cce[1]);
-			hreq->cce[1] = NULL;
-		}
-	}
+		if (hreq->cce[0])
+			shfs_cache_release_ioabort(hreq->cce[0], hreq->cce_t[0]);
+		if (hreq->cce[1])
+			shfs_cache_release_ioabort(hreq->cce[1], hreq->cce_t[1]);
 
-	/* free object since their are no dependencies to it anymore */
-	if (hreq->fd)
 		shfs_fio_close(hreq->fd);
+	}
 	mempool_put(hreq->pobj);
 	--hsess->hsrv->nb_reqs;
 	dprintf("Request %p destroyed\n", hreq);
@@ -436,6 +478,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->rqueue_tail = NULL;
 	hsess->rqueue_len = 0;
 	hsess->retry_replychain = 0;
+	hsess->_in_respond = 0;
 
 	/* register tpcb */
 	hsess->tpcb = new_tpcb;
@@ -468,6 +511,8 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->next = NULL;
 	hs->hsess_tail = hsess;
 
+	dlist_init_el(hsess, ioretry_chain);
+
 	hsess->state = HSS_ESTABLISHED;
 	++hs->nb_sess;
 	dprintf("New HTTP session accepted on server %p "
@@ -491,6 +536,13 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 
 	ASSERT(hsess != NULL);
 
+	dprintf("%s session %p (caller: 0x%x)\n",
+	        (type == HSC_ABORT ? "Aborting" :
+	         (type == HSC_CLOSE ? "Closing" : "Killing")),
+	        hsess,
+	        get_caller());
+	hsess->state = -99999;
+
 	/* disable tcp connection */
 	tcp_arg(hsess->tpcb,  NULL);
 	tcp_sent(hsess->tpcb, NULL);
@@ -500,6 +552,10 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 	tcp_poll(hsess->tpcb, NULL, 0);
 
 	/* close unserved requests */
+	if (dlist_is_linked(hsess, hs->ioretry_chain, ioretry_chain))
+		dprintf(" Session is linked to IORetry list, removing it\n");
+	httpsess_unregister_ioretry(hsess);
+
 	for (hreq = hsess->rqueue_head; hreq != NULL; hreq = hreq->next)
 		httpreq_close(hreq);
 	if (hsess->cpreq)
@@ -534,8 +590,6 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 	mempool_put(hsess->pobj);
 	--hs->nb_sess;
 
-	dprintf("HTTP session %s (caller: 0x%x)\n", (type == HSC_ABORT ? "aborted" :
-	                                             (type == HSC_CLOSE ? "closed" : "killed")), get_caller());
 	return err;
 }
 
@@ -655,7 +709,7 @@ static err_t httpsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 static void httpsess_error(void *argp, err_t err)
 {
 	struct http_sess *hsess = argp;
-	dprintf("Killing HTTP session due to error: %d\n", err);
+	dprintf("Killing HTTP session %p due to error: %d\n", hsess, err);
 	httpsess_close(hsess, HSC_KILL); /* drop connection */
 }
 
@@ -1275,18 +1329,11 @@ static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	struct http_req *hreq = (struct http_req *) cookie;
 	unsigned int idx = (unsigned int)(uintptr_t) argp;
 
+	BUG_ON(t != hreq->cce_t[idx]);
+	BUG_ON(hreq->state != HRS_RESPONDING_MSG);
+
 	shfs_aio_finalize(t);
 	hreq->cce_t[idx] = NULL;
-
-	if (unlikely(hreq->state == HRS_DESTROYED)) {
-		/* our connection was closed already
-		 * but this I/O was still in progress
-		 * -> continue freeing this request object */
-		shfs_cache_release(hreq->cce[idx]);
-		hreq->cce[idx] = NULL;
-		httpreq_close(hreq);
-		return;
-	}
 
 	/* continue sending */
 	if (hreq->cce_idx == idx) {
@@ -1304,10 +1351,15 @@ static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 
 static inline int _httpreq_shfs_aioreq(struct http_req *hreq, chk_t addr, unsigned int cce_idx)
 {
+	/* gets called whenever an async I/O request completed */
 	int ret;
+	struct shfs_cache_entry *cce;
 
-	if (hreq->cce[cce_idx])
-		shfs_cache_release(hreq->cce[cce_idx]);
+	if (hreq->cce[cce_idx]) {
+		cce = hreq->cce[cce_idx];
+		hreq->cce[cce_idx] = NULL;
+		shfs_cache_release(cce); /* calls notify_retry */
+	}
 
 	ret = shfs_cache_aread(addr,
 	                       _httpreq_shfs_aiocb,
@@ -1341,6 +1393,9 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	roff = *sent; /* offset in request */
 	foff = roff + hreq->rfirst;  /* offset in file */
 	cur_chk = shfs_volchk_foff(hreq->fd, foff);
+
+	/* unlink session from ioretry chain if it was linked before */
+	httpsess_unregister_ioretry(hreq->hsess);
  next:
 	err = ERR_OK;
 
@@ -1348,9 +1403,10 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	if (!hreq->cce[idx] || cur_chk != hreq->cce[idx]->addr) {
 		ret = _httpreq_shfs_aioreq(hreq, cur_chk, idx);
 		if (unlikely(ret == -EAGAIN)) {
-			/* TODO: Retry it later because we are out of memory currently */
-			dprintf("[idx=%u] out of memory (%d): aborting...\n", idx, ret);
-			err = ERR_MEM;
+			/* Retry I/O later because we are out of memory currently */
+			dprintf("[idx=%u] could not perform I/O: append session to I/O retry chain...\n", idx, ret);
+			httpsess_register_ioretry(hreq->hsess);
+			err = ERR_OK;
 			goto err_abort;
 		} else if (unlikely(ret < 0)) {
 			/* Read ERROR happened -> abort */
@@ -1494,9 +1550,10 @@ static err_t httpsess_respond(struct http_sess *hsess)
 	err_t err = ERR_OK;
 
 	BUG_ON(hsess->state != HSS_ESTABLISHED);
-	//if (unlikely(hsess->state != HSS_ESTABLISHED))
-	//	return ERR_OK;
+	BUG_ON(hsess->_in_respond >= 1); /* no function nesting */
+	BUG_ON(!hsess->rqueue_head);
 
+	hsess->_in_respond = 1;
 	hreq = hsess->rqueue_head;
 	switch (hreq->state) {
 	case HRS_MAKING_RESP:
@@ -1625,9 +1682,11 @@ static err_t httpsess_respond(struct http_sess *hsess)
 		dprintf("FATAL: Invalid send state\n");
 		goto err_close;
 	}
+	hsess->_in_respond = 0;
 	return ERR_OK;
 
  err_close:
+	hsess->_in_respond = 0;
 	/* error happened -> kill connection */
 	return httpsess_close(hsess, HSC_ABORT);
 }

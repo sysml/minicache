@@ -14,4 +14,6 @@
 int init_http(uint16_t nb_sess, uint32_t nb_reqs);
 void exit_http(void);
 
+void http_retry_aio_cb(void);
+
 #endif

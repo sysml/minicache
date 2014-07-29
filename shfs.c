@@ -26,6 +26,8 @@
 #endif
 #include "debug.h"
 
+#include "http.h"
+
 #ifndef CACHELINE_SIZE
 #define CACHELINE_SIZE 64
 #endif
@@ -206,7 +208,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 		shfs_vol.member[i].sfactor = shfs_vol.stripesize / blkdev_ssize(shfs_vol.member[i].bd);
 		if (shfs_vol.member[i].sfactor == 0) {
 			dprintf("Stripe size invalid on volume '%s'\n",
-			       shfs_vol.volname);
+			        shfs_vol.volname);
 			ret = -ENOENT;
 			goto err_close_bds;
 		}
@@ -493,7 +495,10 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 		goto err_free_htable;
 
 	/* chunk buffer cache for I/O */
-	ret = shfs_alloc_cache(CHUNKCACHE_NB_BUFFERS, 4);
+	/* TODO/NOTE: For now the http server is the only service supporting the
+	 *            AIO retry callback. In case there will be more in the future,
+	 *            a callback registration service needs to be implemented */
+	ret = shfs_alloc_cache(CHUNKCACHE_NB_BUFFERS, 4, http_retry_aio_cb);
 	if (ret < 0)
 		goto err_free_remount_buffer;
 
@@ -570,9 +575,9 @@ int umount_shfs(int force) {
 				down(&bentry->updatelock); /* wait until file is closed */
 			}
 		}
-		shfs_mounted = 0;
-
 		shfs_free_cache();
+
+		shfs_mounted = 0;
 		xfree(shfs_vol.remount_chunk_buffer);
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
 			if (shfs_vol.htable_chunk_cache[i])

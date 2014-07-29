@@ -8,6 +8,8 @@
 #include "dlist.h"
 #include "mempool.h"
 
+#define CHUNKCACHE_NB_BUFFERS 128 /* cache size */
+
 struct shfs_cache_entry {
 	struct mempool_obj *pobj;
 
@@ -36,14 +38,19 @@ struct shfs_cache {
 	struct mempool *pool;
 	uint32_t htlen;
 	uint32_t htmask;
-
 	uint32_t nb_ref_entries;
+	void (*cb_retry)(void); /* callback that is called whenever it is
+	                         * worth to retry an AIO request that
+	                         * failed with EAGAIN */
+	int call_cb_retry;      /* is set to true there was an event happening
+	                         * that increases the chaance to retry the I/O */
+	int _in_cb_retry;
 
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };
 
-int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order);
+int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void));
 void shfs_flush_cache(void); /* releases unreferenced buffers */
 void shfs_free_cache(void);
 #define shfs_cache_ref_count() \
@@ -81,7 +88,9 @@ void shfs_free_cache(void);
  */
 int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp, struct shfs_cache_entry **cce_out, SHFS_AIO_TOKEN **t_out);
 
-void shfs_cache_release(struct shfs_cache_entry *cce); /* release a shfs cache buffer */
+/* Release a shfs cache buffer */
+void shfs_cache_release(struct shfs_cache_entry *cce); /* Note: I/O needs to be done! */
+void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t); /* I/O can be still in progress */
 
 /* synchronous I/O read using the cache */
 static inline struct shfs_cache_entry *shfs_cache_read(chk_t addr)

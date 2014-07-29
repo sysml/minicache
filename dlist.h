@@ -28,6 +28,12 @@ struct dlist_head {
 		(head).first = NULL; \
 		(head).last = NULL; \
 	} while (0)
+#define dlist_init_el(el, dlname) /* optional as long as */	  \
+                                  /* dlist_is_linked() is not used  */	  \
+	do { \
+		(el)->dlname.next = NULL; \
+		(el)->dlname.prev = NULL; \
+	} while (0)
 
 #define dlist_is_empty(head) \
 	((head).first == NULL)
@@ -41,6 +47,13 @@ struct dlist_head {
 #define dlist_last_el(head, eltype) \
 	((eltype *) ((head).last))
 
+/* Note: This function only supports checking if an element is linked into
+ *       a specific list. It will fail as soon as the element is linked to a
+ *       different list (with same dlname) than checked against */
+#define dlist_is_linked(el, head, dlname) /* requires dlist_init_el() */ \
+	(((el)->dlname.prev != NULL || (el)->dlname.next != NULL) || \
+	 ((head).first == (el) || (head).last == (el)))
+
 #define dlist_unlink(el, head, dlname) \
 	do { \
 		if ((el)->dlname.prev) { \
@@ -53,6 +66,7 @@ struct dlist_head {
 		} else {  \
 			(head).last = (el)->dlname.prev; \
 		} \
+		dlist_init_el((el), dlname); \
 	} while(0)
 
 #define dlist_foreach(el, head, dlname) \

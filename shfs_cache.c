@@ -12,6 +12,19 @@
 
 #define MIN_ALIGN 8
 
+#define shfs_cache_notify_retry() \
+	do { \
+		if (unlikely(!shfs_vol.chunkcache->_in_cb_retry && \
+		             shfs_vol.chunkcache->call_cb_retry && \
+		             shfs_vol.chunkcache->cb_retry)) { \
+			dprintf("Notify retry of failed AIO request setup...\n"); \
+			shfs_vol.chunkcache->call_cb_retry = 0; \
+			shfs_vol.chunkcache->_in_cb_retry = 1; \
+			shfs_vol.chunkcache->cb_retry(); \
+			shfs_vol.chunkcache->_in_cb_retry = 0; \
+		} \
+	} while(0)
+
 static void _cce_pobj_init(struct mempool_obj *pobj, void *unused)
 {
     struct shfs_cache_entry *cce = pobj->private;
@@ -26,7 +39,7 @@ static void _cce_pobj_init(struct mempool_obj *pobj, void *unused)
     cce->aio_chain.last = NULL;
 }
 
-int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order)
+int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
 {
     struct shfs_cache *cc;
     uint32_t htlen, i;
@@ -57,6 +70,9 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order)
     cc->htlen = htlen;
     cc->htmask = htlen - 1;
     cc->nb_ref_entries = 0;
+    cc->cb_retry = cb_retry;
+    cc->call_cb_retry = 0;
+    cc->_in_cb_retry = 0;
 
     shfs_vol.chunkcache = cc;
     return 0;
@@ -97,26 +113,56 @@ static inline void shfs_cache_unlink(struct shfs_cache_entry *cce)
 }
 
 /* put unreferenced buffers back to the pool */
-void shfs_flush_cache(void)
+static inline void shfs_cache_flush_alist(void)
 {
     struct shfs_cache_entry *cce;
+    int orig_call_cb_retry = shfs_vol.chunkcache->call_cb_retry;
 
-    /* TODO: Proper release of memory
-     * (because next pointer should not be accessed after the memory got release) */
-    dlist_foreach(cce, shfs_vol.chunkcache->alist, alist) {
-	/* release object from cache */
-	shfs_cache_unlink(cce);
-        /* release buffer */
-        mempool_put(cce->pobj);
+    dprintf("Flushing cache...\n");
+    while (cce = dlist_first_el(shfs_vol.chunkcache->alist, struct shfs_cache_entry)) {
+	    if (cce->t) {
+		    dprintf("I/O of chunk buffer %llu is not done yet, "
+		            "waiting for completion...\n", cce->addr);
+		    /* set refcount to 1 in order to avoid freeing of an invalid
+		     * buffer by aiocb */
+		    cce->refcount = 1;
+		    /* disable retry notification call */
+		    shfs_vol.chunkcache->call_cb_retry = 0;
+
+		     /* wait for I/O without having thread switching
+		      * because otherwise, the state of alist might change */
+		    while (cce->t)
+			    shfs_poll_blkdevs(); /* requires shfs_mounted = 1 */
+
+		    cce->refcount = 0; /* retore refcount */
+
+		    /* since we come back from an I/O we should schedule
+		     * an I/O retry call */
+		    orig_call_cb_retry = 1;
+	    }
+
+	    dprintf("Releasing chunk buffer %llu...\n", cce->addr);
+	    shfs_cache_unlink(cce); /* unlinks element from alist and clist */
+	    mempool_put(cce->pobj);
     }
+
+    /* reenable previous state of retry notification call */
+    shfs_vol.chunkcache->call_cb_retry = orig_call_cb_retry;
+}
+
+void shfs_flush_cache(void)
+{
+    shfs_cache_flush_alist();
+    shfs_cache_notify_retry();
 }
 
 void shfs_free_cache(void)
 {
-    shfs_flush_cache();
+    shfs_cache_flush_alist();
     free_mempool(shfs_vol.chunkcache->pool); /* will fail with an assertion
                                               * if objects were not put back to the pool already */
     xfree(shfs_vol.chunkcache);
+    shfs_vol.chunkcache = NULL;
 }
 
 static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
@@ -124,6 +170,9 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
     struct shfs_cache_entry *cce = (struct shfs_cache_entry *) cookie;
     SHFS_AIO_TOKEN *t_cur, *t_next;
     int ret;
+
+    BUG_ON(cce->refcount == 0 && cce->aio_chain.first);
+    BUG_ON(t != cce->t);
 
     ret = shfs_aio_finalize(t);
     cce->t = NULL;
@@ -134,11 +183,15 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	shfs_cache_unlink(cce);
 	mempool_put(cce->pobj);
         dprintf("Destroyed failed cache I/O at chunk %llu: %d\n", cce->addr, ret);
-	return;
+        goto out;
     }
 
-    /* call registered callbacks (AIO_TOKEN emulation) */
+    /* clear chain */
     t_cur = cce->aio_chain.first;
+    cce->aio_chain.first = NULL;
+    cce->aio_chain.last = NULL;
+
+    /* call registered callbacks (AIO_TOKEN emulation) */
     while (t_cur) {
 	dprintf("Notify child token (chunk %llu): %p\n", cce->addr, t_cur);
 	t_next = t_cur->_next;
@@ -151,9 +204,8 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	t_cur = t_next;
     }
 
-    /* clear chain */
-    cce->aio_chain.first = NULL;
-    cce->aio_chain.last = NULL;
+ out:
+    shfs_cache_notify_retry();
 }
 
 static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
@@ -168,13 +220,16 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 	cce = cce_obj->private;
 	dlist_append(cce, shfs_vol.chunkcache->alist, alist);
     } else {
-	/* try to pick a buffer from the available list */
-	if (unlikely(dlist_is_empty(shfs_vol.chunkcache->alist))) {
-		/* we are out of buffers */
-		errno = ENOBUFS;
-		return NULL;
+	/* try to pick a buffer (that has completed I/O) from the available list */
+	dlist_foreach(cce, shfs_vol.chunkcache->alist, alist) {
+		if (cce->t == NULL)
+			goto found;
 	}
-	cce = dlist_first_el(shfs_vol.chunkcache->alist, struct shfs_cache_entry);
+	/* we are out of buffers */
+	errno = EAGAIN;
+	return NULL;
+
+    found:
 	/* unlink from hash table */
 	i = shfs_cache_htindex(cce->addr);
 	dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
@@ -206,6 +261,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     int ret;
 
     ASSERT(cce_out != NULL);
+    ASSERT(t_out != NULL);
 
     /* sanity checks */
     if (unlikely(!shfs_mounted)) {
@@ -225,6 +281,8 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 	cce = shfs_cache_add(addr);
 	if (!cce) {
 	    ret = -errno;
+	    if (errno == EAGAIN)
+		    shfs_vol.chunkcache->call_cb_retry = 1;
 	    goto err_out;
 	}
     }
@@ -239,8 +297,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     /* I/O of element done already? */
     if (likely(shfs_aio_is_done(cce->t))) {
         dprintf("Chunk %llu found in cache and it is ready\n", addr);
-        if (t_out)
-	        *t_out = NULL;
+        *t_out = NULL;
         *cce_out = cce;
         return 0;
     }
@@ -250,6 +307,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     t = shfs_aio_pick_token();
     if (unlikely(!t)) {
 	dprintf("Failed to append AIO token: Out of token\n");
+	shfs_vol.chunkcache->call_cb_retry = 1; /* note that callback will be called */
 	ret = -EAGAIN;
 	goto err_dec_refcount;
     }
@@ -257,36 +315,93 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     t->cb_cookie = cb_cookie;
     t->cb_argp = cb_argp;
     t->infly = 1; /* mark token as "busy" */
-    t->_next = NULL;
-    if (cce->aio_chain.last)
+    if (cce->aio_chain.last) {
 	    cce->aio_chain.last->_next = t;
-    else
+	    t->_prev = cce->aio_chain.last;
+    } else {
 	    cce->aio_chain.first = t;
+	    t->_prev = NULL;
+    }
+    t->_next = NULL;
     cce->aio_chain.last = t;
-
-    if (t_out)
-	    *t_out = t;
+    *t_out = t;
     *cce_out = cce;
     return 1;
 
  err_dec_refcount:
-    shfs_cache_release(cce);
+    --cce->refcount;
+    if (cce->refcount == 0) {
+	--shfs_vol.chunkcache->nb_ref_entries;
+	dlist_append(cce, shfs_vol.chunkcache->alist, alist);
+	/* because we are out of AIO token it does not make sense to not notify
+	 * others for retry: There is indeed a buffer free'd but no I/O operation
+	 * can be done so far and on this buffer an I/O operation is in fly */
+    }
  err_out:
-    if (t_out)
-	    *t_out = NULL;
+    *t_out = NULL;
     *cce_out = NULL;
     return ret;
 }
 
+/*
+ * Fast version to release a cache buffer,
+ * however, the I/O needs to be completed on the buffer
+ */
 void shfs_cache_release(struct shfs_cache_entry *cce)
 {
     dprintf("Release cache of chunk %llu (refcount=%u, caller=%p)\n", cce->addr, cce->refcount, get_caller());
-    ASSERT(cce->refcount > 0);
+    BUG_ON(cce->refcount == 0);
+    BUG_ON(!shfs_aio_is_done(cce->t));
 
     --cce->refcount;
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
-	if (likely(!cce->invalid) || !shfs_aio_is_done(cce->t)) {
+	if (likely(!cce->invalid)) {
+	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
+	} else {
+            dprintf("Destroy invalid cache of chunk %llu\n", cce->addr);
+	    shfs_cache_unlink(cce);
+            mempool_put(cce->pobj);
+	}
+
+	shfs_cache_notify_retry();
+    }
+}
+
+/*
+ * Release a cache buffer (like shfs_cache_release)
+ * but also cancels an incomplete I/O request
+ * The corresponding AIO token is released
+ */
+void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
+{
+    dprintf("Release cache of chunk %llu (refcount=%u, caller=%p)\n", cce->addr, cce->refcount, get_caller());
+    BUG_ON(cce->refcount == 0);
+    BUG_ON(!shfs_aio_is_done(cce->t) && t == NULL);
+    BUG_ON(shfs_aio_is_done(cce->t) && !shfs_aio_is_done(t));
+
+    if (!shfs_aio_is_done(t)) {
+	    /* unlink token from AIO notification chain */
+	    dprintf(" \\_ Abort AIO token %p\n", t);
+	    if (t->_prev)
+		t->_prev->_next = t->_next;
+	    else
+		cce->aio_chain.first = t->_next;
+	    if (t->_next)
+		t->_next->_prev = t->_prev;
+	    else
+		cce->aio_chain.last = t->_prev;
+    }
+    if (t) {
+	    /* release token */
+	    shfs_aio_put_token(t);
+    }
+
+    /* decrease refcount */
+    --cce->refcount;
+    if (cce->refcount == 0) {
+	--shfs_vol.chunkcache->nb_ref_entries;
+	if (likely(!cce->invalid)) {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	} else {
             dprintf("Destroy invalid cache of chunk %llu\n", cce->addr);
@@ -294,6 +409,10 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
             mempool_put(cce->pobj);
 	}
     }
+
+    /* notify retry if cache buffer can be reused/was released or the AIO token was released */
+    if (t || (shfs_aio_is_done(cce->t) && cce->refcount==0))
+	shfs_cache_notify_retry();
 }
 
 #ifdef SHFS_CACHE_STATS_DISPLAY
@@ -307,6 +426,8 @@ int shcmd_shfs_cache_stats(FILE *cio, int argc, char *argv[])
 		return -1;
 	}
 
+	printk("Number of referenced cache buffers: %3u\n", shfs_vol.chunkcache->nb_ref_entries);
+	printk("Buffer states:\n");
 	for (i = 0; i < shfs_vol.chunkcache->htlen; ++i) {
 		dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
 			printk(" ht[%2u] chk:%8llu, refcount:%3u, %s\n",
