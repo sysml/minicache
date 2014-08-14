@@ -34,7 +34,7 @@ static inline void print_version()
 
 static void print_usage(char *argv0)
 {
-	eprintf("Usage: %s [[OPTION]...] [DOMAIN-ID] [SCOPE] [TRIGGER] [[ARGUMENTS]...]\n", argv0);
+	eprintf("Usage: %s [[OPTION]...] [DOMAIN-ID] [SCOPE] -- [TRIGGER] [[ARGUMENTS]...]\n", argv0);
 	eprintf(" Tiggers an ctldir action via XenStore and returns its return string to stdout\n");
 	eprintf(" This command returns 0 on successful trigger execution via XenStore\n");
 	eprintf(" (Note: this is independent from the return string of the action)\n");
@@ -46,7 +46,7 @@ static void print_usage(char *argv0)
 	eprintf("  -n, --no-wait              do not wait for ctldir lock\n");
 	eprintf("\n");
 	eprintf("Example (mount 51760 on DomU 16):\n");
-	eprintf(" %s 16 minicache mount 51760\n", argv0);
+	eprintf(" %s 16 minicache -- mount 51760\n", argv0);
 
 }
 
@@ -112,28 +112,29 @@ static int parse_args(int argc, char **argv, struct args *args)
 		}
 	}
 
-	/* at least extra arguments are: domain ID, scope, and trigger */
-	if (argc < optind + 3) {
+	/* there have to be two extra arguments: domain ID, scope; trigger is extra */
+	if (argc < optind + 2) {
 		print_usage(argv[0]);
 		return -EINVAL;
 	}
 
 	/* domain ID */
-	if (sscanf(argv[optind], "%u", &args->domid) != 1) {
+	if (sscanf(argv[optind++], "%u", &args->domid) != 1) {
 		eprintf("Invalid domain ID\n\n");
 		print_usage(argv[0]);
 		return -EINVAL;
 	}
 	/* scope */
-	args->scope = argv[++optind];
-	/* TODO: str blank check */
-	/* trigger */
-	args->trigger = argv[++optind];
-	/* TODO: str blank check */
-	/* args (concatenate them together) */
+	args->scope = argv[optind++]; /* TODO: str blank check */
+
+	/* copy arguments after '--' to args */
+	/* (concatenate them together) */
+	argc -= optind;
+	argv += optind;
 	arglen = 0;
-	++optind;
-	for (i = optind; i < argc; ++i)
+
+	args->trigger = argv[0]; /* TODO: str blank check */
+	for (i = 1; i < argc; ++i)
 		arglen += strlen(argv[i]) + 1;
 	if (arglen) {
 		args->args = malloc(arglen);
@@ -142,7 +143,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 			return -ENOMEM;
 		}
 		cp_p = 0;
-		for (i = optind; i < argc; ++i) {
+		for (i = 1; i < argc; ++i) {
 			strcpy(&args->args[cp_p], argv[i]);
 			cp_p += strlen(argv[i]);
 			args->args[cp_p] = ' ';
@@ -150,6 +151,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 		}
 		args->args[cp_p - 1] = '\0';
 	}
+
 	return 0;
 }
 

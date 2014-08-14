@@ -19,7 +19,7 @@ def ctltrigger(domid, action, args=[], scope="minicache"):
         if e.errno == os.errno.ENOENT:
             try:
                 # try again with CMDB
-                pargs = [CMDB_CTLTRIGGER, domid, scope, action]
+                pargs = [CMDB_CTLTRIGGER, domid, scope, "--", action]
                 pargs.extend(args)
                 p = subprocess.Popen(pargs, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
             except OSError as e:
