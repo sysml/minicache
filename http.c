@@ -43,6 +43,8 @@
 #define HTTPHDR_RESP_MAXNB_SLINES  8
 #define HTTPHDR_RESP_MAXNB_DLINES  8
 
+#define HTTPREQ_MAXNB_BUFFERS     ((DIV_ROUND_UP((size_t) TCP_SND_BUF * 4, SHFS_MIN_CHUNKSIZE)))
+
 #ifndef min
 #define min(a, b) \
     ({ __typeof__ (a) __a = (a); \
@@ -135,6 +137,8 @@ struct http_sess {
 	struct http_req *cpreq; /* current request that is parsed */
 	struct http_req *rqueue_head; /* request serve queue of parsed requests */
 	struct http_req *rqueue_tail;
+	struct http_req *aqueue_head; /* acknowledge queue (requests that are done with sending out but not yet acknowledged) */
+	struct http_req *aqueue_tail;
 	unsigned int rqueue_len; /* current number of simultaneous requests */
 
 	int retry_replychain; /* marker for rare cases: reply could not be initiated
@@ -147,11 +151,17 @@ enum http_req_state {
 	HRS_UNDEF = 0,
 	HRS_PARSING_HDR,
 	HRS_PARSING_MSG,
-	HRS_MAKING_RESP,
+	HRS_BUILDING_RESP,
 	HRS_RESPONDING_HDR,
 	HRS_RESPONDING_MSG,
-	HRS_RESPONDING_SMSG,
 	HRS_RESPONDING_EOM
+};
+
+enum http_req_type {
+	HRT_UNDEF = 0,
+	HRT_SMSG, /* static message body */
+	HRT_DMSG, /* dynamic message body (file from shfs) */
+	HRT_NOMSG, /* just response header, no body */
 };
 
 struct http_req {
@@ -159,6 +169,7 @@ struct http_req {
 	struct http_sess *hsess;
 	struct http_req *next;
 	enum http_req_state state;
+	enum http_req_type type;
 
 	struct {
 		uint8_t http_major;
@@ -185,21 +196,33 @@ struct http_req {
 		size_t dlines_tlen;
 		size_t eoh_off; /* end of header offset */
 		size_t total_len; /* total length (inclusive EOH line) */
+		size_t acked_len; /* acked bytes from HDR */
 	} response_hdr;
 
+	struct {
+		size_t acked_len;
+	} response_ftr;
+
+	uint64_t rlen; /* (requested) number of bytes of message body */
+	uint64_t alen; /* (acknowledged) number of bytes (of rlen) */
+
+	/* Static buffer I/O */
+	const char *smsg;
+
+	/* SHFS I/O */
 	SHFS_FD fd;
 	uint64_t fsize; /* file size */
 	uint64_t rfirst; /* (requested) first byte to read from file */
 	uint64_t rlast;  /* (requested) last byte to read from file */
-	uint64_t rlen; /* (requested) number of bytes to read */
 	chk_t volchk_first;
 	chk_t volchk_last;
 	uint32_t volchkoff_first;
 	uint32_t volchkoff_last;
 
-	struct shfs_cache_entry *cce[2];
-	SHFS_AIO_TOKEN *cce_t[2];
+	struct shfs_cache_entry *cce[HTTPREQ_MAXNB_BUFFERS];
+	SHFS_AIO_TOKEN *cce_t;
 	unsigned int cce_idx;
+	unsigned int cce_idx_ack;
 
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 	struct {
@@ -221,6 +244,7 @@ static err_t httpsess_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, 
 static void  httpsess_error  (void *argp, err_t err);
 static err_t httpsess_poll   (void *argp, struct tcp_pcb *tpcb);
 static err_t httpsess_respond(struct http_sess *hsess);
+static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len);
 static int httprecv_req_complete(struct http_parser *parser);
 static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len);
@@ -401,6 +425,7 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 {
 	struct mempool_obj *hrobj;
 	struct http_req *hreq;
+	unsigned int i;
 
 	hrobj = mempool_pick(hsess->hsrv->req_pool);
 	if (!hrobj)
@@ -411,17 +436,24 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 	hreq->next = NULL;
 
 	hreq->state = HRS_PARSING_HDR;
+	hreq->type = HRT_UNDEF;
 	hreq->request_hdr.nb_lines = 0;
 	hreq->request_hdr.url_len = 0;
 	hreq->request_hdr.url_overflow = 0;
 	hreq->request_hdr.last_was_value = 1;
 	hreq->request_hdr.lines_overflow = 0;
+	hreq->response_hdr.total_len = 0;
+	hreq->response_hdr.acked_len = 0;
+	hreq->response_ftr.acked_len = 0;
+	hreq->smsg = NULL;
 	hreq->fd = NULL;
 	hreq->cce_idx = 0;
-	hreq->cce[0] = NULL;
-	hreq->cce[1] = NULL;
-	hreq->cce_t[0] = NULL;
-	hreq->cce_t[1] = NULL;
+	hreq->cce_idx_ack = HTTPREQ_MAXNB_BUFFERS - 1;
+	for (i = 0; i < HTTPREQ_MAXNB_BUFFERS; ++i)
+		hreq->cce[i] = NULL;
+	hreq->cce_t = NULL;
+	hreq->rlen = 0;
+	hreq->alen = 0;
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	hreq->stats.dpc_i = 0;
 #endif
@@ -433,17 +465,23 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 static inline void httpreq_close(struct http_req *hreq)
 {
 	struct http_sess *hsess = hreq->hsess;
+	unsigned int i;
+
+	dprintf("Closing request %p...\n", hreq);
 
 	/* unlink session from ioretry chain if it was linked before */
 	httpsess_unregister_ioretry(hreq->hsess);
 
 	/* close open file */
 	if (hreq->fd) {
-		if (hreq->cce[0])
-			shfs_cache_release_ioabort(hreq->cce[0], hreq->cce_t[0]);
-		if (hreq->cce[1])
-			shfs_cache_release_ioabort(hreq->cce[1], hreq->cce_t[1]);
-
+		for (i = 0; i < HTTPREQ_MAXNB_BUFFERS; ++i) {
+			if (i == hreq->cce_idx && hreq->cce[i]) {
+				shfs_cache_release_ioabort(hreq->cce[i], hreq->cce_t);
+			} else if (hreq->cce[i]) {
+				shfs_cache_release(hreq->cce[i]);
+				hreq->cce[i] = NULL;
+			}
+		}
 		shfs_fio_close(hreq->fd);
 	}
 	mempool_put(hreq->pobj);
@@ -477,6 +515,8 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->rqueue_head = NULL;
 	hsess->rqueue_tail = NULL;
 	hsess->rqueue_len = 0;
+	hsess->aqueue_head = NULL;
+	hsess->aqueue_tail = NULL;
 	hsess->retry_replychain = 0;
 	hsess->_in_respond = 0;
 
@@ -556,6 +596,8 @@ static err_t httpsess_close(struct http_sess *hsess, enum http_sess_close type)
 		dprintf(" Session is linked to IORetry list, removing it\n");
 	httpsess_unregister_ioretry(hsess);
 
+	for (hreq = hsess->aqueue_head; hreq != NULL; hreq = hreq->next)
+		httpreq_close(hreq);
 	for (hreq = hsess->rqueue_head; hreq != NULL; hreq = hreq->next)
 		httpreq_close(hreq);
 	if (hsess->cpreq)
@@ -774,27 +816,12 @@ static err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *
 
 static err_t httpsess_sent(void *argp, struct tcp_pcb *tpcb, uint16_t len) {
 	struct http_sess *hsess = argp;
-	struct http_req *hreq;
 
 	hsess->sent_infly -= len;
 	switch (hsess->state) {
 	case HSS_ESTABLISHED:
-		hreq = hsess->rqueue_head;
-		if (likely(hreq != NULL)) {
-			switch (hreq->state) {
-			case HRS_RESPONDING_HDR:
-			case HRS_RESPONDING_MSG:
-			case HRS_RESPONDING_SMSG:
-				/* continue replying */
-				if (len) {
-					dprintf("Client acknowledged %u bytes, continue...\n", len);
-					return httpsess_respond(hsess);
-				}
-				break;
-			default:
-				break;
-			}
-		}
+		if (len)
+			return httpsess_acknowledge(hsess, len); /* will continue replying */
 		break;
 
 	case HSS_CLOSING:
@@ -978,12 +1005,12 @@ static int httprecv_req_complete(struct http_parser *parser)
 		_hdr_dbuffer_terminate(&hreq->request_hdr.line[l].value);
 	}
 	hreq->request_hdr.url[hreq->request_hdr.url_len++] = '\0';
-	hreq->state = HRS_MAKING_RESP;
+	hreq->state = HRS_BUILDING_RESP;
 
 	return 0;
 }
 
-static inline void httpreq_make_response(struct http_req *hreq)
+static inline void httpreq_build_response(struct http_req *hreq)
 {
 	register size_t url_offset = 0;
 	register int ret;
@@ -1085,9 +1112,7 @@ static inline void httpreq_make_response(struct http_req *hreq)
 		if (hreq->response_hdr.code == 416) {
 			/* (parsing/out of range) error: response with 416 error header */
 			dprintf("Could not parse range request\n");
-			ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-			ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
-			goto finalize_hdr;
+			goto err416_hdr;
 		}
 
 		dprintf("Client requested range of element: %lu-%lu\n",
@@ -1099,6 +1124,7 @@ static inline void httpreq_make_response(struct http_req *hreq)
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_206(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
 	else
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	hreq->type = HRT_DMSG;
 
 	/* MIME (by element or default) */
 	shfs_fio_mime(hreq->fd, fmime, sizeof(fmime));
@@ -1176,6 +1202,17 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err404p_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err404p;
+	hreq->rlen = _http_err404p_len;
+	goto finalize_hdr;
+
+ err416_hdr:
+	/* 416 Range request error */
+	hreq->response_hdr.code = 416;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+	hreq->type = HRT_NOMSG;
 	goto finalize_hdr;
 
  err500_hdr:
@@ -1186,6 +1223,9 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err500p_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err500p;
+	hreq->rlen = _http_err500p_len;
 	goto finalize_hdr;
 
  err501_hdr:
@@ -1196,6 +1236,9 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err501p_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err501p;
+	hreq->rlen = _http_err501p_len;
 	goto finalize_hdr;
 
  err503_hdr:
@@ -1208,15 +1251,21 @@ static inline void httpreq_make_response(struct http_req *hreq)
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err503p_len);
 	/* Retry-after (TODO: here, just set to 2 second) */
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_RETRY], 2);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err503p;
+	hreq->rlen = _http_err503p_len;
 	goto finalize_hdr;
 
 #ifdef HTTP_TESTFILE
  testfile_hdr:
-	hreq->response_hdr.code = 299; /* special code for testfile */
+	hreq->response_hdr.code = 200;
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
 	/* Content length */
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_testfile;
+	hreq->rlen = _http_testfile_len;
 	goto finalize_hdr;
 #endif
 }
@@ -1324,16 +1373,19 @@ static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
 }
 
 /* async SHFS I/O */
+#define _httpreq_shfs_nextidx(idx) \
+	((idx + 1) % HTTPREQ_MAXNB_BUFFERS)
+
 static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 {
 	struct http_req *hreq = (struct http_req *) cookie;
 	unsigned int idx = (unsigned int)(uintptr_t) argp;
 
-	BUG_ON(t != hreq->cce_t[idx]);
+	BUG_ON(t != hreq->cce_t);
 	BUG_ON(hreq->state != HRS_RESPONDING_MSG);
 
 	shfs_aio_finalize(t);
-	hreq->cce_t[idx] = NULL;
+	hreq->cce_t = NULL;
 
 	/* continue sending */
 	if (hreq->cce_idx == idx) {
@@ -1353,20 +1405,15 @@ static inline int _httpreq_shfs_aioreq(struct http_req *hreq, chk_t addr, unsign
 {
 	/* gets called whenever an async I/O request completed */
 	int ret;
-	struct shfs_cache_entry *cce;
 
-	if (hreq->cce[cce_idx]) {
-		cce = hreq->cce[cce_idx];
-		hreq->cce[cce_idx] = NULL;
-		shfs_cache_release(cce); /* calls notify_retry */
-	}
+	BUG_ON(hreq->cce_t);
 
 	ret = shfs_cache_aread(addr,
 	                       _httpreq_shfs_aiocb,
 	                       hreq,
 	                       (void *)(uintptr_t) cce_idx,
 	                       &hreq->cce[cce_idx],
-	                       &hreq->cce_t[cce_idx]);
+	                       &hreq->cce_t);
 	if (unlikely(ret < 0)) {
 		dprintf("failed to perform request for [cce_idx=%u]: %d\n", cce_idx, ret);
 		return ret;
@@ -1382,9 +1429,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	register uint16_t left;
 	register chk_t  cur_chk;
 	register size_t chk_off;
-	register chk_t next_chk;
 	register unsigned int idx;
-	register unsigned int next_idx;
 	uint16_t slen;
 	err_t err;
 	int ret;
@@ -1399,8 +1444,8 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
  next:
 	err = ERR_OK;
 
-	/* is the chunk to process loaded? */
-	if (!hreq->cce[idx] || cur_chk != hreq->cce[idx]->addr) {
+	/* is the chunk already requested? */
+	if (!hreq->cce[idx]) {
 		ret = _httpreq_shfs_aioreq(hreq, cur_chk, idx);
 		if (unlikely(ret == -EAGAIN)) {
 			/* Retry I/O later because we are out of memory currently */
@@ -1422,31 +1467,22 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		}
 	}
 
-	/* is the chunk to process ready now? */
-	if (!shfs_aio_is_done(hreq->cce_t[idx])) {
-		dprintf("[idx=%u] requested chunk is not ready yet\n", idx);
+	/* is the available chunk the one that we want to send out? */
+	if (cur_chk != hreq->cce[idx]->addr) {
+		dprintf("[idx=%u] buffer cannot be used yet. client did not acknowledge yet\n", idx);
 		goto out;
 	}
 
+	/* is the chunk to process ready now? */
+	if (!shfs_aio_is_done(hreq->cce_t)) {
+		dprintf("[idx=%u] requested chunk is not ready yet\n", idx);
+		goto out;
+	}
 	/* is the chunk to process valid? (it might be invalid due to I/O erros) */
 	if (unlikely(hreq->cce[idx]->invalid)) {
 		dprintf("[idx=%u] requested chunk is INVALID! (I/O error)\n", idx);
 		err = ERR_ABRT;
 		goto err_abort;
-	}
-
-	/* request next buffer already */
-	next_chk = cur_chk + 1;
-	next_idx = (idx + 1) & 0x01; /* (idx + 1) % 2 */
-	if (next_chk <= hreq->volchk_last &&
-	    (!hreq->cce[next_idx] || next_chk != hreq->cce[next_idx]->addr)) {
-		ret = _httpreq_shfs_aioreq(hreq, next_chk, next_idx);
-		if (unlikely(ret < 0 && ret != -EAGAIN)) {
-			/* Read ERROR happened -> abort */
-			dprintf("[idx=%u] fatal read error (%d): aborting...\n", idx, ret);
-			err = ERR_ABRT;
-			goto err_abort;
-		}
 	}
 
 	/* send out data from chk buffer that is loaded already */
@@ -1462,7 +1498,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	left = (uint16_t) min3(UINT16_MAX, shfs_vol.chunksize - chk_off, hreq->rlen - roff);
 	slen = (uint16_t) min3(UINT16_MAX, avail, left);
 	err = httpsess_write(hreq->hsess, ((uint8_t *) (hreq->cce[idx]->buffer)) + chk_off,
-	                     &slen, TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
+	                     &slen, TCP_WRITE_FLAG_MORE);
 	                    /* TODO: We need to copy because the buffers might be 
 	                     *  obsolete already but client has not yet acknowledged the
 	                     *  data yet */
@@ -1474,30 +1510,15 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	dprintf("[idx=%u] sent %u bytes (%lu-%lu, chunksize: %lu, left on this chunk: %lu)\n",
 	        idx, slen, chk_off, chk_off + slen, shfs_vol.chunksize, left - (size_t) slen);
 
-	/* are we done with this chunkbuffer?
-	 *  -> switch to next buffer for next data */
-	if (slen == left) {
-		dprintf("[idx=%u] switch to next buffer [idx=%u]\n", idx, next_idx);
-		idx = next_idx;
-
-		/* It might be the case here that the read ahead operation has
-		 * already finished at this point. Thus, no callback would be
-		 * called that resumes the transmission. That's why we need to
-		 * check for this case here */
+	/* are we done with this chunkbuffer and there is still data that needs to be sent?
+	 *  -> continue with next buffer */
+	if (slen == left && *sent < hreq->rlen) {
+		dprintf("[idx=%u] switch to next buffer [idx=%u]\n", idx, _httpreq_shfs_nextidx(idx));
+		idx = _httpreq_shfs_nextidx(idx);
 		roff += slen; /* new offset */
 		foff += slen;
-		avail -= slen;
 		cur_chk = shfs_volchk_foff(hreq->fd, foff);
-		if (hreq->cce[idx] &&
-		    hreq->cce[idx]->addr == cur_chk &&
-		    shfs_aio_is_done(hreq->cce_t[idx])) {
-			hreq->cce_idx = idx;
-			dprintf("httpsess_write_shfsafio: next chunk [idx=%u] is ready already, " \
-			        "resume processing\n", idx);
-			goto next;
-		}
-
-		dprintf("httpsess_write_shfsafio: next chunk [idx=%u] not ready yet\n", idx);
+		goto next;
 	}
  out:
 	hreq->cce_idx = idx;
@@ -1505,6 +1526,61 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 
  err_abort:
 	return err;
+}
+
+static inline void httpreq_ack_shfsafio(struct http_req *hreq, size_t acked)
+{
+	register size_t roff, foff;
+	register chk_t start_chk;
+	register chk_t end_chk;
+	register chk_t nb_chk;
+	register chk_t i;
+	register unsigned int idx;
+	struct shfs_cache_entry *cce;
+
+	roff = hreq->alen - acked; /* already ack'ed offset in request */
+	foff = roff + hreq->rfirst;  /* offset in file */
+	start_chk = shfs_volchk_foff(hreq->fd, foff);
+	end_chk  = shfs_volchk_foff(hreq->fd, foff + acked);
+
+	dprintf("Client acknowledged %u bytes from buffers\n", acked);
+	if (start_chk < end_chk) {
+		/* release cache buffers */
+		nb_chk = end_chk - start_chk;
+		idx = hreq->cce_idx_ack;
+		for (i = 0; i < nb_chk; ++i) {
+			dprintf("[idx=%u] Releasing buffer because data got acknowledged\n", idx);
+			idx = _httpreq_shfs_nextidx(idx);
+			cce = hreq->cce[idx];
+			BUG_ON(cce->addr != start_chk + i);
+			hreq->cce[idx] = NULL;
+			shfs_cache_release(cce); /* calls notify_retry */
+		}
+		hreq->cce_idx_ack = idx;
+	}
+}
+
+#define httpreq_infly(hreq) \
+	(((hreq)->response_hdr.total_len - (hreq)->response_hdr.acked_len) \
+	 + ((hreq)->rlen - (hreq)->alen) \
+	 + (_http_shdr_len[HTTP_EOM] - (hreq)->response_ftr.acked_len))
+
+static inline void httpreq_finalize(struct http_req *hreq)
+{
+	struct http_sess *hsess = hreq->hsess;
+
+	if (httpreq_infly(hreq)) {
+		/* append reqest to aqueue */
+		dprintf("request %p appended to aqueue because not all data was acknowledged yet\n", hreq);
+		hreq->next = NULL;
+		if (hsess->aqueue_tail)
+			hsess->aqueue_tail->next = hreq;
+		else
+			hsess->aqueue_head = hreq;
+		hsess->aqueue_tail = hreq;
+	} else {
+		httpreq_close(hreq);
+	}
 }
 
 /* Resume reply with next enqueued reply.
@@ -1519,14 +1595,14 @@ static inline err_t httpsess_eor(struct http_sess *hsess)
 		/* resume reply with next request from queue */
 		hsess->rqueue_head = hreq->next;
 		--hsess->rqueue_len;
-		httpreq_close(hreq);
+		httpreq_finalize(hreq);
 		return httpsess_respond(hsess);
 	} else {
 		/* close connection/wait because of keepalive */
 		hsess->rqueue_head = NULL;
 		hsess->rqueue_tail = NULL;
 		hsess->rqueue_len = 0;
-		httpreq_close(hreq);
+		httpreq_finalize(hreq);
 
 		if (hsess->keepalive) {
 			/* wait for next request */
@@ -1556,12 +1632,13 @@ static err_t httpsess_respond(struct http_sess *hsess)
 	hsess->_in_respond = 1;
 	hreq = hsess->rqueue_head;
 	switch (hreq->state) {
-	case HRS_MAKING_RESP:
-		httpreq_make_response(hreq);
-		hsess->sent = 0;
+	case HRS_BUILDING_RESP:
+		httpreq_build_response(hreq);
 		goto case_HRS_RESPONDING_HDR;
 
 	case_HRS_RESPONDING_HDR:
+		hreq->state = HRS_RESPONDING_HDR;
+		hsess->sent = 0;
 	case HRS_RESPONDING_HDR:
 		/* send out header */
 		err = httpreq_write_hdr(hreq, &hsess->sent);
@@ -1569,106 +1646,59 @@ static err_t httpsess_respond(struct http_sess *hsess)
 			goto err_close;
 
 		if (hsess->sent == hreq->response_hdr.total_len) {
-			/* we are done */
-			hsess->sent = 0;
-
-			switch (hreq->response_hdr.code) {
-			case 299:
-#ifdef HTTP_TESTFILE
-				/* response testbody */
-				hreq->state = HRS_RESPONDING_SMSG;
-				goto case_HRS_RESPONDING_SMSG;
-#endif
-			case 200 ... 298:
-				/* response body (file) */
-				hreq->state = HRS_RESPONDING_MSG;
-				goto case_HRS_RESPONDING_MSG;
-			case 404:
-			case 500:
-			case 501:
-			case 503:
-				/* error body */
-				hreq->state = HRS_RESPONDING_SMSG;
-				goto case_HRS_RESPONDING_SMSG;
-			default:
-				/* no body */
-				hreq->state = HRS_RESPONDING_EOM;
+			/* we are done -> switch to next phase */
+			if (hreq->type == HRT_NOMSG)
 				goto case_HRS_RESPONDING_EOM;
-			}
-		}
-		break;
-
-	case_HRS_RESPONDING_SMSG:
-	case HRS_RESPONDING_SMSG:
-		/* send out error message */
-		switch (hreq->response_hdr.code) {
-#ifdef HTTP_TESTFILE
-		case 299:
-			/* static testfile */
-			len = _http_testfile_len;
-			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_testfile, len);
-			break;
-#endif
-		case 404:
-			/* Element not found */
-			len = _http_err404p_len;
-			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err404p, len);
-			break;
-		case 501:
-			/* Invalid request */
-			len = _http_err501p_len;
-			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err501p, len);
-			break;
-		case 503:
-			/* Service unavailable */
-			len = _http_err503p_len;
-			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err503p, len);
-			break;
-		case 500:
-		default:
-			/* Internal server error */
-			len = _http_err500p_len;
-			err = httpsess_write_sbuf(hsess, &hsess->sent, _http_err500p, len);
-			break;
-		}
-		if (unlikely(err))
-			goto err_close;
-
-		if (hsess->sent == len) {
-			/* we are done */
-			hreq->state = HRS_RESPONDING_EOM;
-			hsess->sent = 0;
-			goto case_HRS_RESPONDING_EOM;
+			goto case_HRS_RESPONDING_MSG;
 		}
 		break;
 
 	case_HRS_RESPONDING_MSG:
+		hreq->state = HRS_RESPONDING_MSG;
+		hsess->sent = 0;
 	case HRS_RESPONDING_MSG:
-		/* send out data */
-		err = httpreq_write_shfsafio(hreq, &hsess->sent);
-		if (unlikely(err != ERR_OK && err != ERR_MEM))
-			goto err_close; /* drop connection because of an unrecoverable error */
+		switch(hreq->type) {
+		case HRT_SMSG:
+			err = httpsess_write_sbuf(hsess, &hsess->sent, hreq->smsg, hreq->rlen);
+			if (unlikely(err))
+				goto err_close;
+
+			if (hsess->sent == hreq->rlen)
+				goto case_HRS_RESPONDING_EOM; /* we are done */
+			break;
+
+		case HRT_DMSG:
+			/* send out data from file */
+			err = httpreq_write_shfsafio(hreq, &hsess->sent);
+			if (unlikely(err != ERR_OK && err != ERR_MEM))
+				goto err_close; /* drop connection because of an unrecoverable error */
 
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
-		while (unlikely(hsess->sent >= hreq->stats.dpc_threshold[hreq->stats.dpc_i]))
-			++hreq->stats.el_stats->p[hreq->stats.dpc_i++];
+			while (unlikely(hsess->sent >= hreq->stats.dpc_threshold[hreq->stats.dpc_i]))
+				++hreq->stats.el_stats->p[hreq->stats.dpc_i++];
 #endif
 
-		if (unlikely(hsess->sent == hreq->rlen)) {
-			/* we are done */
+			if (unlikely(hsess->sent == hreq->rlen)) {
+				/* we are done */
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
-			++hreq->stats.el_stats->c; /* successfully completed request */
+				++hreq->stats.el_stats->c; /* successfully completed request */
 #endif
-			hreq->state = HRS_RESPONDING_EOM;
-			hsess->sent = 0;
-			goto case_HRS_RESPONDING_EOM;
+				goto case_HRS_RESPONDING_EOM;
+			}
+			break;
+		default:
+			goto err_close;
 		}
 		break;
 
 	case_HRS_RESPONDING_EOM:
+		hreq->state = HRS_RESPONDING_EOM;
+		hsess->sent = 0;
 	case HRS_RESPONDING_EOM:
 		len = _http_shdr_len[HTTP_EOM];
-		err = httpsess_write_sbuf(hsess, &hsess->sent, _http_shdr[HTTP_EOM], len);
+		err = httpsess_write_sbuf(hsess, &hsess->sent,
+		                          _http_shdr[HTTP_EOM],
+		                          len);
 		if (hsess->sent == len) {
 			/* we are done */
 			err = httpsess_eor(hsess);
@@ -1689,6 +1719,88 @@ static err_t httpsess_respond(struct http_sess *hsess)
 	hsess->_in_respond = 0;
 	/* error happened -> kill connection */
 	return httpsess_close(hsess, HSC_ABORT);
+}
+
+static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *isdone)
+{
+	size_t acked = *len;
+	size_t hdr_infly;
+	uint64_t msg_infly;
+	size_t ftr_infly;
+
+	hdr_infly = hreq->response_hdr.total_len - hreq->response_hdr.acked_len;
+	if (hdr_infly > acked) {
+		hreq->response_hdr.acked_len += acked;
+		acked = 0;
+	} else {
+		hreq->response_hdr.acked_len += hdr_infly;
+		acked -= hdr_infly;
+	}
+
+	msg_infly = hreq->rlen - hreq->alen;
+	if (msg_infly > acked) {
+		hreq->alen += acked;
+		if (acked && hreq->type == HRT_DMSG)
+			httpreq_ack_shfsafio(hreq, acked);
+		acked = 0;
+	} else {
+		hreq->alen += msg_infly;
+		acked -= msg_infly;
+		if (msg_infly && hreq->type == HRT_DMSG)
+			httpreq_ack_shfsafio(hreq, msg_infly);
+	}
+
+	ftr_infly = _http_shdr_len[HTTP_EOM] - hreq->response_ftr.acked_len;
+	if (ftr_infly > acked) {
+		hreq->response_ftr.acked_len += acked;
+		*len = 0;
+		*isdone = 0;
+		return;
+	}
+	hreq->response_ftr.acked_len += ftr_infly;
+	acked -= ftr_infly;
+	*len = acked;
+	*isdone = 1;
+}
+
+static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
+{
+	struct http_req *hreq;
+	int isdone = 0;
+
+	dprintf("Client acknowledged %u bytes\n", len);
+	while (len) {
+		hreq = hsess->aqueue_head;
+		if (hreq) {
+			dprintf("Acknowledge data on request %p (len: %lu, left: %lu)\n",
+			        hreq, len, httpreq_infly(hreq));
+			httpreq_acknowledge(hreq, &len, &isdone);
+			if (isdone) {
+				dprintf("Serving of request %p is done\n", hreq);
+				/* dequeue and close request that is done */
+				if (hreq->next) {
+					hsess->aqueue_head = hreq->next;
+				} else {
+					hsess->aqueue_head = NULL;
+					hsess->aqueue_tail = NULL;
+				}
+				httpreq_close(hreq);
+			}
+			continue;
+		}
+
+		/* no request is left on aqueue, pick current request */
+		hreq = hsess->rqueue_head;
+		BUG_ON(!hreq); /* Client acknowledged data that was
+		                  not sent out yet?! (or simply the object got closed already) */
+
+		httpreq_acknowledge(hreq, &len, &isdone);
+		BUG_ON(len > 0);
+	}
+
+	if (hsess->rqueue_head)
+		return httpsess_respond(hsess);
+	return ERR_OK;
 }
 
 #ifdef HTTP_STATS_DISPLAY
