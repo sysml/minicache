@@ -104,6 +104,7 @@ CFLAGS				+= -DCTLDIR_NOCHMOD
 ## General MiniCache options
 ######################################
 CFLAGS				+= -DCONFIG_AUTOMOUNT
+CONFIG_TESTSUITE		= y
 
 ######################################
 ## Debugging options
@@ -122,6 +123,9 @@ CONFIG_DEBUG_LWIP_MALLOC	= n
 //CFLAGS			+= -DHTABLE_DEBUG
 //CFLAGS			+= -DMEMPOOL_DEBUG
 CFLAGS				+= -DTRACE_BOOTTIME
+ifeq ($(CONFIG_TESTSUITE),y)
+CFLAGS				+= -DTESTSUITE
+endif
 
 ######################################
 ## MiniOS path
@@ -137,5 +141,9 @@ STUBDOM_ROOT	= $(realpath .)
 STUB_APP_OBJS0  = main.o mempool.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
 		  ctldir.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o shfs_stats.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
+
+ifeq ($(CONFIG_TESTSUITE),y)
+STUB_APP_OBJS0  += testsuite.o
+endif
 
 include $(MINI_OS_ROOT)/stub.mk

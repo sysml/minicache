@@ -38,6 +38,9 @@
 #ifdef SHFS_STATS
 #include "shfs_stats.h"
 #endif
+#ifdef TESTSUITE
+#include "testsuite.h"
+#endif
 
 #include "debug.h"
 
@@ -669,6 +672,9 @@ int main(int argc, char *argv[])
     }
 
     register_shfs_stats_tools(cd);
+#endif
+#ifdef TESTSUITE
+    register_testsuite(cd);
 #endif
 
     /* -----------------------------------
