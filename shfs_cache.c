@@ -56,12 +56,20 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
 	    ret = -ENOMEM;
 	    goto err_out;
     }
+#ifdef SHFS_CACHE_GROW
+    if (nb_bffs) {
+#endif
     cc->pool = alloc_mempool(nb_bffs, shfs_vol.chunksize, shfs_vol.ioalign, 0, 0,
                              _cce_pobj_init, NULL, sizeof(struct shfs_cache_entry));
     if (!cc->pool) {
 	    ret = -ENOMEM;
 	    goto err_free_cc;
     }
+#ifdef SHFS_CACHE_GROW
+    } else {
+	    cc->pool = NULL;
+    }
+#endif
     dlist_init_head(cc->alist);
     for (i = 0; i < htlen; ++i) {
 	    dlist_init_head(cc->htable[i].clist);
@@ -85,6 +93,59 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
 
 #define shfs_cache_htindex(addr) \
 	(((uint32_t) (addr)) & (shfs_vol.chunkcache->htmask))
+
+static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
+    struct mempool_obj *cce_obj;
+#ifdef SHFS_CACHE_GROW
+    struct shfs_cache_entry *cce;
+    void *buf;
+
+    if (shfs_vol.chunkcache->pool) {
+#endif
+    cce_obj = mempool_pick(shfs_vol.chunkcache->pool);
+    if (cce_obj) {
+	/* got a new buffer: append it to alist */
+	return (struct shfs_cache_entry *) cce_obj->private;
+    }
+#ifdef SHFS_CACHE_GROW
+    }
+
+    /* try to malloc a buffer from heap */
+    buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+    if (!buf)
+	return NULL;
+    cce = _xmalloc(sizeof(*cce), MIN_ALIGN);
+    if (!cce) {
+	xfree(buf);
+	return NULL;
+    }
+    cce->pobj = NULL;
+    cce->refcount = 0;
+    cce->buffer = buf;
+    cce->invalid = 1; /* buffer is not ready yet */
+    cce->t = NULL;
+    cce->aio_chain.first = NULL;
+    cce->aio_chain.last = NULL;
+    dprintf("Cache increased by 1 chunk on heap\n");
+    return cce;
+#else
+    return NULL;
+#endif
+}
+
+#ifdef SHFS_CACHE_GROW
+static inline void shfs_cache_put_cce(struct shfs_cache_entry *cce) {
+	if (!cce->pobj) {
+		xfree(cce->buffer);
+		xfree(cce);
+		dprintf("Cache decreased by 1 chunk on heap\n");
+	} else {
+		mempool_put(cce->pobj);
+	}
+}
+#else
+#define shfs_cache_put_cce(cce) mempool_put((cce)->pobj)
+#endif
 
 static inline struct shfs_cache_entry *shfs_cache_find(chk_t addr)
 {
@@ -143,7 +204,7 @@ static inline void shfs_cache_flush_alist(void)
 
 	    dprintf("Releasing chunk buffer %llu...\n", cce->addr);
 	    shfs_cache_unlink(cce); /* unlinks element from alist and clist */
-	    mempool_put(cce->pobj);
+	    shfs_cache_put_cce(cce);
     }
 
     /* reenable previous state of retry notification call */
@@ -180,9 +241,9 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 
     /* I/O failed and no references? (in case of read-ahead) */
     if (unlikely(cce->refcount == 0 && cce->invalid)) {
+        dprintf("Destroy failed cache I/O at chunk %llu: %d\n", cce->addr, ret);
 	shfs_cache_unlink(cce);
-	mempool_put(cce->pobj);
-        dprintf("Destroyed failed cache I/O at chunk %llu: %d\n", cce->addr, ret);
+	shfs_cache_put_cce(cce);
         goto out;
     }
 
@@ -210,14 +271,12 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 
 static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 {
-    struct mempool_obj *cce_obj;
     struct shfs_cache_entry *cce;
     register uint32_t i;
 
-    cce_obj = mempool_pick(shfs_vol.chunkcache->pool);
-    if (cce_obj) {
+    cce = shfs_cache_pick_cce();
+    if (cce) {
 	/* got a new buffer: append it to alist */
-	cce = cce_obj->private;
 	dlist_append(cce, shfs_vol.chunkcache->alist, alist);
     } else {
 	/* try to pick a buffer (that has completed I/O) from the available list */
@@ -242,7 +301,7 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
                               _cce_aiocb, cce, NULL);
     if (unlikely(!cce->t)) {
 	    dlist_unlink(cce, shfs_vol.chunkcache->alist, alist);
-	    mempool_put(cce->pobj);
+	    shfs_cache_put_cce(cce);
 	    dprintf("Could not initiate I/O request for chunk %llu: %d\n", addr, errno);
 	    return NULL;
     }
@@ -345,7 +404,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 
 /*
  * Fast version to release a cache buffer,
- * however, the I/O needs to be completed on the buffer
+ * however, be sure that the I/O is finilized on the buffer
  */
 void shfs_cache_release(struct shfs_cache_entry *cce)
 {
@@ -361,7 +420,7 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
 	} else {
             dprintf("Destroy invalid cache of chunk %llu\n", cce->addr);
 	    shfs_cache_unlink(cce);
-            mempool_put(cce->pobj);
+	    shfs_cache_put_cce(cce);
 	}
 
 	shfs_cache_notify_retry();
@@ -406,7 +465,7 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 	} else {
             dprintf("Destroy invalid cache of chunk %llu\n", cce->addr);
 	    shfs_cache_unlink(cce);
-            mempool_put(cce->pobj);
+	    shfs_cache_put_cce(cce);
 	}
     }
 
