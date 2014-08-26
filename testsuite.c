@@ -1,11 +1,12 @@
 /*
- * Simon's HashFS (SHFS) for Mini-OS
- *
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
+#include <mini-os/os.h>
+#include <mini-os/types.h>
+#include <mini-os/xmalloc.h>
 #include <stdio.h>
-#include <hexdump.h>
+#include <lwip/udp.h>
 
 #include "shfs.h"
 #include "shfs_btable.h"
@@ -15,17 +16,144 @@
 #include "shell.h"
 #include "ctldir.h"
 
-static int shcmd_netcat(FILE *cio, int argc, char *argv[])
+static inline int parse_ipv4(struct ip_addr *out, const char *buf)
 {
+	int ip0, ip1, ip2, ip3;
+
+	if (sscanf(buf, "%d.%d.%d.%d", &ip0, &ip1, &ip2, &ip3) != 4)
+		return -1;
+	if ((ip0 < 0 || ip0 > 255) ||
+	    (ip1 < 0 || ip1 > 255) ||
+	    (ip2 < 0 || ip2 > 255) ||
+	    (ip3 < 0 || ip3 > 255))
+		return -1;
+
+	IP4_ADDR(out, ip0, ip1, ip2, ip3);
+	return 0;
+}
+
+
+
+static int shcmd_netdf(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	uint64_t fsize, left, cur, dlen;
+	struct udp_pcb *upcb;
+	struct pbuf *pb;
+	int ret = 0;
+	err_t err;
+	uint64_t pkts = 0;
+	struct timeval tm_start;
+	struct timeval tm_end;
+	uint64_t usecs, pps, bps;
+
+	struct ip_addr remote_ip;
+	u16_t remote_port = 10692;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [file] [[IP]]\n", argv[0]);
+		ret = -1;
+		goto out;
+	}
+	if (argc >= 3) {
+		if (parse_ipv4(&remote_ip, argv[2]) < 0) {
+			fprintf(cio, "Invalid target IP address specified\n");
+			ret = -1;
+			goto out;
+		}
+	} else {
+		IP4_ADDR(&remote_ip, 0, 0, 0, 0);
+	}
+
+	f = shfs_fio_open(argv[1]);
+	if (!f) {
+		fprintf(cio, "Could not open %s: %s\n", argv[1], strerror(errno));
+		ret = -1;
+		goto out;
+	}
+	shfs_fio_size(f, &fsize);
+
+	upcb = udp_new();
+	if (!upcb) {
+		fprintf(cio, "Could not allocate UDP PCB\n");
+		ret = -1;
+		goto close_f;
+	}
+
+	err = udp_connect(upcb, &remote_ip, remote_port);
+	if (err != ERR_OK) {
+		fprintf(cio, "Could bind UDP PCB to remote IP and port\n");
+		ret = -1;
+		goto free_upcb;
+	}
+
+	gettimeofday(&tm_start, NULL);
+	left = fsize;
+	cur = 0;
+	while (left) {
+		dlen = min(left, TCP_MSS);
+
+		pb = pbuf_alloc(PBUF_TRANSPORT, TCP_MSS, PBUF_POOL);
+		if (unlikely(!pb)) {
+			fprintf(cio, "Could not allocate pbuf\n");
+			ret = -1;
+			break;
+		}
+		ret = shfs_fio_cache_read(f, cur, pb->payload, dlen);
+		if (unlikely(ret < 0)) {
+			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+			pbuf_free(pb);
+			ret = -1;
+			break;
+		}
+		pb->len = pb->tot_len = (u16_t) dlen;
+
+		err = udp_send(upcb, pb);
+		if (unlikely(err != ERR_OK)) {
+			fprintf(cio, "%s: UDP send error: %d\n", argv[1], err);
+			pbuf_free(pb);
+			ret = -1;
+			break;
+		}
+
+		pkts++;
+		left -= dlen;
+		cur += dlen;
+		pbuf_free(pb);
+	}
+
+	if (pkts) {
+		gettimeofday(&tm_end, NULL);
+		if (tm_end.tv_usec < tm_start.tv_usec) {
+			tm_end.tv_usec += 1000000l;
+			--tm_end.tv_sec;
+		}
+		usecs = (tm_end.tv_usec - tm_start.tv_usec);
+		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		pps = (pkts * 1000000 + usecs / 2) / usecs; /* from pkt-gen */
+		bps = (cur * 1000000 + usecs / 2) / usecs;
+		fprintf(cio, "%s: Sent %lu bytes payload in %lu packets in %lu.%06u seconds to the stack (%lu pps, %lu B/s)\n",
+		        argv[1], cur, pkts, usecs / 1000000, usecs % 1000000, pps, bps);
+	}
+
+ free_upcb:
+	schedule();
+	udp_remove(upcb);
+ close_f:
+	shfs_fio_close(f);
+ out:
+	return ret;
 }
 
 int register_testsuite(struct ctldir *cd)
 {
 	/* ctldir entries (ignore errors) */
-	//if (cd) {}
+	if (cd) {
+		ctldir_register_shcmd(cd, "netdf", shcmd_netdf);
+	}
 
 	/* shell commands (ignore errors) */
-	shell_register_cmd("netcat", shcmd_netcat);
+	shell_register_cmd("netdf", shcmd_netdf);
 
 	return 0;
 }
