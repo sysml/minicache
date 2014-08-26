@@ -145,6 +145,80 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	uint64_t fsize, left, cur, dlen;
+	int ret = 0;
+	struct timeval tm_start;
+	struct timeval tm_end;
+	uint64_t usecs, bps;
+	void *buf;
+	size_t buflen;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [file]\n", argv[0]);
+		ret = -1;
+		goto out;
+	}
+
+	f = shfs_fio_open(argv[1]);
+	if (!f) {
+		fprintf(cio, "Could not open %s: %s\n", argv[1], strerror(errno));
+		ret = -1;
+		goto out;
+	}
+	shfs_fio_size(f, &fsize);
+
+	buflen = shfs_vol.chunksize;
+	buf = _xmalloc(shfs_vol.chunksize, 8);
+
+	left = fsize;
+	cur = 0;
+	gettimeofday(&tm_start, NULL);
+	while (left) {
+		dlen = min(left, buflen);
+
+		ret = shfs_fio_cache_read(f, cur, buf, dlen);
+		if (unlikely(ret < 0)) {
+			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+			ret = -1;
+			break;
+		}
+
+		left -= dlen;
+		cur += dlen;
+	}
+	gettimeofday(&tm_end, NULL);
+
+	if (ret >= 0) {
+		if (tm_end.tv_usec < tm_start.tv_usec) {
+			tm_end.tv_usec += 1000000l;
+			--tm_end.tv_sec;
+		}
+		usecs = (tm_end.tv_usec - tm_start.tv_usec);
+		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		fprintf(cio, "%s: Read %lu bytes in %lu.%06u seconds ",
+		        argv[1], cur, usecs / 1000000, usecs % 1000000);
+		bps = (cur * 1000000 + usecs / 2) / usecs;
+		if (bps > 1000000000) {
+			bps /= 10000000;
+			fprintf(cio, "(%lu.%02lu GB/s)\n", bps / 100, bps % 100);
+		} else if (bps > 1000000) {
+			bps /= 10000;
+			fprintf(cio, "(%lu.%02lu MB/s)\n", bps / 100, bps % 100);
+		} else if (bps > 1000) {
+			bps /= 10;
+			fprintf(cio, "(%lu.%02lu KB/s)\n", bps / 100, bps % 100);
+		} else {
+			fprintf(cio, "(%lu B/s)\n", bps);
+		}
+	}
+	shfs_fio_close(f);
+ out:
+	return ret;
+}
+
 int register_testsuite(struct ctldir *cd)
 {
 	/* ctldir entries (ignore errors) */
@@ -154,6 +228,7 @@ int register_testsuite(struct ctldir *cd)
 
 	/* shell commands (ignore errors) */
 	shell_register_cmd("netdf", shcmd_netdf);
+	shell_register_cmd("ioperf", shcmd_ioperf);
 
 	return 0;
 }
