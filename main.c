@@ -143,6 +143,30 @@ static struct _args {
     unsigned int    nb_sarp_entries;
 } args;
 
+static int parse_args_setval_cut(char delimiter, char **out_presnip, char **out_postsnip,
+                                 const char *buf)
+{
+	size_t len = strlen(buf);
+	size_t p;
+
+	for (p = 0; p < len; ++p) {
+		if (buf[p] == delimiter) {
+			*out_presnip = strndup(buf, p);
+			*out_postsnip = strdup(&buf[p+1]);
+			if (!*out_presnip || !*out_postsnip) {
+				if (out_postsnip)
+					free(*out_postsnip);
+				if (out_presnip)
+					free(*out_presnip);
+				return -ENOMEM;
+			}
+			return 0;
+		}
+	}
+
+	return -1; /* delimiter not found */
+}
+
 static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
 {
 	int ip0, ip1, ip2, ip3;
@@ -189,6 +213,24 @@ static int parse_args_setval_ipv4(struct ip_addr *out, const char *buf)
 	return 0;
 }
 
+static int parse_args_setval_hwaddr(struct eth_addr *out, const char *buf)
+{
+	uint8_t hwaddr[6];
+
+	if (sscanf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+	           &hwaddr[0], &hwaddr[1], &hwaddr[2],
+	           &hwaddr[3], &hwaddr[4], &hwaddr[5]) != 6)
+		return -1;
+
+	out->addr[0] = hwaddr[0];
+	out->addr[1] = hwaddr[1];
+	out->addr[2] = hwaddr[2];
+	out->addr[3] = hwaddr[3];
+	out->addr[4] = hwaddr[4];
+	out->addr[5] = hwaddr[5];
+	return 0;
+}
+
 static int parse_args_setval_int(int *out, const char *buf)
 {
 	if (sscanf(buf, "%d", out) != 1)
@@ -198,6 +240,8 @@ static int parse_args_setval_int(int *out, const char *buf)
 
 static int parse_args(int argc, char *argv[])
 {
+    char *presnip;
+    char *postsnip;
     int opt;
     int ret;
     int ival;
@@ -219,21 +263,11 @@ static int parse_args(int argc, char *argv[])
 #if ((100 + 4) > MEMP_NUM_TCP_PCB)
     #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
 #endif
-    /* **************** TEMP ******************** */
-    args.nb_sarp_entries = 1;
-    IP4_ADDR(&args.sarp_entry[0].ip, 10, 0, 10, 46);
-    args.sarp_entry[0].mac.addr[0] = 0xa0;
-    args.sarp_entry[0].mac.addr[1] = 0x36;
-    args.sarp_entry[0].mac.addr[2] = 0x9f;
-    args.sarp_entry[0].mac.addr[3] = 0x23;
-    args.sarp_entry[0].mac.addr[4] = 0xaa;
-    args.sarp_entry[0].mac.addr[5] = 0xca;
-    /* **************** TEMP ******************** */
-
-     while ((opt = getopt(argc, argv,
-                          "s:i:g:d:b:hc:"
+    args.nb_sarp_entries = 0;
+    while ((opt = getopt(argc, argv,
+                         "s:i:g:d:b:hc:a:"
 #ifdef SHFS_STATS
-                          "x:"
+                         "x:"
 #endif
                           )) != -1) {
          switch(opt) {
@@ -273,6 +307,38 @@ static int parse_args(int argc, char *argv[])
 	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
+              break;
+         case 'a': /* static arp entry */
+	      if (args.nb_sarp_entries == (MAX_NB_STATIC_ARP_ENTRIES - 1)) {
+		   printk("At most %d static ARP entries can be specified\n",
+		          MAX_NB_STATIC_ARP_ENTRIES);
+		   return -1;
+	      }
+	      ret = parse_args_setval_cut('/', &presnip, &postsnip, optarg);
+	      if (ret < 0) {
+		   if (ret == -ENOMEM)
+			printk("static ARP parsing error: Out of memory\n");
+		   else
+			printk("invalid static ARP entry specified (e.g., 01:23:45:67:89:AB/192.168.0.1)\n");
+	           return -1;
+              }
+	      ret = parse_args_setval_hwaddr(&args.sarp_entry[args.nb_sarp_entries].mac, presnip);
+	      if (ret < 0) {
+	           printk("invalid static ARP entry specified (e.g., 01:23:45:67:89:AB/192.168.0.1)\n");
+	           free(postsnip);
+	           free(presnip);
+	           return -1;
+              }
+	      ret = parse_args_setval_ipv4(&args.sarp_entry[args.nb_sarp_entries].ip, postsnip);
+	      if (ret < 0) {
+	           printk("invalid static ARP entry specified (e.g., 01:23:45:67:89:AB/192.168.0.1)\n");
+	           free(postsnip);
+	           free(presnip);
+	           return -1;
+              }
+	      free(postsnip);
+	      free(presnip);
+	      args.nb_sarp_entries++;
               break;
          case 'b': /* virtual block device (specified manually to skip detection) */
 	      ret = parse_args_setval_int(&ival, optarg);
