@@ -50,6 +50,8 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 	struct ip_addr remote_ip;
 	u16_t remote_port = 10692;
 
+	unsigned int schedbatch;
+
 	if (argc <= 1) {
 		fprintf(cio, "Usage: %s [file] [[IP]]\n", argv[0]);
 		ret = -1;
@@ -90,6 +92,7 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 	gettimeofday(&tm_start, NULL);
 	left = fsize;
 	cur = 0;
+	schedbatch = 32;
 	while (left) {
 		dlen = min(left, TCP_MSS);
 
@@ -120,6 +123,12 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 		left -= dlen;
 		cur += dlen;
 		pbuf_free(pb);
+
+		--schedbatch;
+		if (!schedbatch) {
+			schedbatch = 32;
+			schedule();
+		}
 	}
 
 	if (pkts) {
@@ -132,8 +141,20 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
 		pps = (pkts * 1000000 + usecs / 2) / usecs; /* from pkt-gen */
 		bps = (cur * 1000000 + usecs / 2) / usecs;
-		fprintf(cio, "%s: Sent %lu bytes payload in %lu packets in %lu.%06u seconds to the stack (%lu pps, %lu B/s)\n",
-		        argv[1], cur, pkts, usecs / 1000000, usecs % 1000000, pps, bps);
+		fprintf(cio, "%s: Sent %lu bytes payload in %lu packets in %lu.%06u seconds to the stack (%lu pps, ",
+		        argv[1], cur, pkts, usecs / 1000000, usecs % 1000000, pps);
+		if (bps > 1000000000) {
+			bps /= 10000000;
+			fprintf(cio, "%lu.%02lu GB/s)\n", bps / 100, bps % 100);
+		} else if (bps > 1000000) {
+			bps /= 10000;
+			fprintf(cio, "%lu.%02lu MB/s)\n", bps / 100, bps % 100);
+		} else if (bps > 1000) {
+			bps /= 10;
+			fprintf(cio, "%lu.%02lu KB/s)\n", bps / 100, bps % 100);
+		} else {
+			fprintf(cio, "%lu B/s)\n", bps);
+		}
 	}
 
  free_upcb:
