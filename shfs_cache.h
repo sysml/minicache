@@ -14,6 +14,9 @@
 #define SHFS_CACHE_READAHEAD 0 /* how many chunks shall be read ahead (0 = disabled) */
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
                          * allocating more buffers on demand (via _xmalloc) */
+#define SHFS_CACHE_STOP_GROW_ENOMEM /* uncomment this line to stop the cache trying to grow 
+                                     * as soon as it hits ENOMEM for the first and as long
+                                     * no buffer got free'd to the heap */
 
 struct shfs_cache_entry {
 	struct mempool_obj *pobj;
@@ -51,6 +54,9 @@ struct shfs_cache {
 	                         * that increases the chaance to retry the I/O */
 	int _in_cb_retry;
 
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+	int stop_grow;
+#endif
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };

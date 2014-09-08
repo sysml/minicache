@@ -81,6 +81,9 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
     cc->cb_retry = cb_retry;
     cc->call_cb_retry = 0;
     cc->_in_cb_retry = 0;
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+    cc->stop_grow = 0;
+#endif
 
     shfs_vol.chunkcache = cc;
     return 0;
@@ -110,12 +113,22 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 #ifdef SHFS_CACHE_GROW
     }
 
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+    if (!shfs_vol.chunkcache->stop_grow) {
+#endif
     /* try to malloc a buffer from heap */
     buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
-    if (!buf)
+    if (!buf) {
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+	shfs_vol.chunkcache->stop_grow = 1;
+#endif
 	return NULL;
+    }
     cce = _xmalloc(sizeof(*cce), MIN_ALIGN);
     if (!cce) {
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+	shfs_vol.chunkcache->stop_grow = 1;
+#endif
 	xfree(buf);
 	return NULL;
     }
@@ -128,6 +141,9 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
     cce->aio_chain.last = NULL;
     dprintf("Cache increased by 1 chunk on heap\n");
     return cce;
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+    }
+#endif
 #else
     return NULL;
 #endif
@@ -136,6 +152,9 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 #ifdef SHFS_CACHE_GROW
 static inline void shfs_cache_put_cce(struct shfs_cache_entry *cce) {
 	if (!cce->pobj) {
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
+		shfs_vol.chunkcache->stop_grow = 0;
+#endif
 		xfree(cce->buffer);
 		xfree(cce);
 		dprintf("Cache decreased by 1 chunk on heap\n");
@@ -404,7 +423,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 
 /*
  * Fast version to release a cache buffer,
- * however, be sure that the I/O is finilized on the buffer
+ * however, be sure that the I/O is finalized on the buffer
  */
 void shfs_cache_release(struct shfs_cache_entry *cce)
 {
