@@ -43,8 +43,7 @@
 #define HTTPHDR_RESP_MAXNB_SLINES  8
 #define HTTPHDR_RESP_MAXNB_DLINES  8
 
-//#define HTTPREQ_MAXNB_BUFFERS     ((DIV_ROUND_UP((size_t) TCP_SND_BUF * 2, SHFS_MIN_CHUNKSIZE)))
-#define HTTPREQ_MAXNB_BUFFERS     ((DIV_ROUND_UP((size_t) TCP_WND * (1 << (TCP_RCV_SCALE + 1)), SHFS_MIN_CHUNKSIZE)))
+#define HTTPREQ_MAXNB_BUFFERS     (DIV_ROUND_UP((size_t) TCP_SND_BUF, SHFS_MIN_CHUNKSIZE))
 
 #ifndef min
 #define min(a, b) \
@@ -761,6 +760,7 @@ static err_t httpsess_poll(void *argp, struct tcp_pcb *tpcb)
 {
 	struct http_sess *hsess = argp;
 
+	dprintf("poll session %p\n", hsess);
 	if (unlikely(hsess->keepalive_timer == 0)) {
 		/* keepalive timeout: close connection */
 		if (hsess->sent_infly == 0) {
@@ -1389,7 +1389,6 @@ static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
 static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 {
 	struct http_req *hreq = (struct http_req *) cookie;
-	unsigned int idx = (unsigned int)(uintptr_t) argp;
 
 	BUG_ON(t != hreq->cce_t);
 	BUG_ON(hreq->state != HRS_RESPONDING_MSG);
@@ -1452,6 +1451,8 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 			/* Retry I/O later because we are out of memory currently */
 			dprintf("[idx=%u] could not perform I/O: append session to I/O retry chain...\n", idx, ret);
 			httpsess_register_ioretry(hreq->hsess);
+			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
+			                                we have no new data for now */
 			err = ERR_OK;
 			goto err_abort;
 		} else if (unlikely(ret < 0)) {
@@ -1464,6 +1465,8 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 			 * we need to wait. httpsess_response
 			 * will be recalled from within callback */
 			dprintf("[idx=%u] requested chunk is not ready yet\n", idx);
+			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
+			                                we have no new data for now */
 			goto out; /* we need to wait for completion */
 		}
 	}
@@ -1477,6 +1480,8 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	/* is the chunk to process ready now? */
 	if (unlikely(!shfs_aio_is_done(hreq->cce_t))) {
 		dprintf("[idx=%u] requested chunk is not ready yet\n", idx);
+		httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
+		                                we have no new data for now */
 		goto out;
 	}
 	/* is the chunk to process valid? (it might be invalid due to I/O erros) */
@@ -1502,17 +1507,10 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 	                      ((uint8_t *) (hreq->cce[idx]->buffer)) + chk_off,
 	                      &slen, TCP_WRITE_FLAG_MORE);
 	*sent += (size_t) slen;
-
-	/* TODO: Check why: */
-	/* The TCP server might still wait for acknowledgement
-	 * of the data that got sent out already. To enforce an ack,
-	 * we flush the connection here */
-	//if (avail -slen == 0)
-	//	httpsess_flush(hreq->hsess);
-
 	if (unlikely(err != ERR_OK)) {
 		dprintf("[idx=%u] sending failed, aborting this round\n", idx);
-		printk("S failed (slen=%d)\n", slen);
+		httpsess_flush(hreq->hsess); /* send buffer might be full:
+		                                we need to wait for ack */
 		goto out;
 	}
 	dprintf("[idx=%u] sent %u bytes (%lu-%lu, chunksize: %lu, left on this chunk: %lu, available on sndbuf: %u, sndqueuelen: %u, infly: %u)\n",
@@ -1839,6 +1837,8 @@ static int shcmd_http_stats(FILE *cio, int argc, char *argv[])
 {
 	uint32_t nb_sess, max_nb_sess;
 	uint32_t nb_reqs, max_nb_reqs;
+	unsigned long pver;
+	size_t bffrlen = 0;
 
 	if (!hs) {
 		fprintf(cio, "HTTP server is not online\n");
@@ -1851,10 +1851,23 @@ static int shcmd_http_stats(FILE *cio, int argc, char *argv[])
 	max_nb_sess = hs->max_nb_sess;
 	nb_reqs     = hs->nb_reqs;
 	max_nb_reqs = hs->max_nb_reqs;
+	pver        = http_parser_version();
 
-	fprintf(cio, " Listen port:         %8u\n", HTTP_LISTEN_PORT);
-	fprintf(cio, " Number of sessions: %4u/%4u\n", nb_sess, max_nb_sess);
-	fprintf(cio, " Number of requests: %4u/%4u\n", nb_reqs, max_nb_reqs);
+	if (shfs_mounted)
+		bffrlen = shfs_vol.chunksize * HTTPREQ_MAXNB_BUFFERS;
+
+	fprintf(cio, " Listen port:               %8u\n", HTTP_LISTEN_PORT);
+	fprintf(cio, " Number of sessions:       %4u/%4u\n", nb_sess, max_nb_sess);
+	fprintf(cio, " Number of requests:       %4u/%4u\n", nb_reqs, max_nb_reqs);
+	fprintf(cio, " Chunkbuffer chain length:  %8u", HTTPREQ_MAXNB_BUFFERS);
+	if (bffrlen)
+		fprintf(cio, " (%u KiB)\n", bffrlen / 1024);
+	else
+		fprintf(cio, "\n");
+	fprintf(cio, " HTTP parser version:         %2u.%u.%u\n",
+	        (pver >> 16) & 255, /* major */
+	        (pver >> 8) & 255, /* minor */
+	        (pver) & 255); /* patch */
 	return 0;
 }
 #endif
