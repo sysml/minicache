@@ -6,6 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include "shfs_defs.h"
 
@@ -20,7 +21,7 @@ extern int force;
 #define dief(...)		do { eprintf(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
 #define die()			do { fatal(); exit(EXIT_FAILURE); } while(0)
 #define dprintf(LEVEL, ...)	do { if (verbosity >= (LEVEL)) fprintf(stderr, __VA_ARGS__); } while(0)
-#define printvar(VAR, FMT)	do { if (verbosity >= (D_MAX)) fprintf(stderr, #VAR ": "#FMT"\n", (VAR)); } while(0)
+#define printvar(VAR, FMT)	do { if (verbosity >= (D_MAX)) fprintf(stderr, #VAR ": "FMT"\n", (VAR)); } while(0)
 
 #define D_L0		1
 #define D_L1		2

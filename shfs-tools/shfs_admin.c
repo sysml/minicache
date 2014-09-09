@@ -623,7 +623,7 @@ static int actn_addfile(struct job *j)
 		goto err_close_fd;
 	}
 	dprintf(D_L1, "Found appropriate container at chunk %lu\n", cchk);
-	dprintf(D_L1, "Reserving container...\n", cchk);
+	dprintf(D_L1, "Reserving container...\n");
 	shfs_alist_register(shfs_vol.al, cchk, csize);
 
 	/* allocate temporary buffer used for I/O */
@@ -635,7 +635,7 @@ static int actn_addfile(struct job *j)
 	}
 
 	/* calculate checksum */
-	dprintf(D_L0, "Calculating hash of file contents...\n", csize);
+	dprintf(D_L0, "Calculating hash of file contents...\n");
 	td = mhash_init(MHASH_SHA256);
 	if (td == MHASH_FAILED) {
 		eprintf("Could not initialize hash algorithm\n");
@@ -677,7 +677,7 @@ static int actn_addfile(struct job *j)
 
 	/* find place in hash list and add entry
 	 * (still in-memory, will be written to device on umount) */
-	dprintf(D_L0, "Trying to add a hash table entry...\n", csize);
+	dprintf(D_L0, "Trying to add a hash table entry...\n");
 	bentry = shfs_btable_lookup(shfs_vol.bt, fhash);
 	if (bentry) {
 		eprintf("An entry with the same hash already exists\n");
@@ -709,7 +709,7 @@ static int actn_addfile(struct job *j)
 	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
 	/* copy file */
-	dprintf(D_L0, "Copying file contents...\n", csize);
+	dprintf(D_L0, "Copying file contents...\n");
 	if (lseek(fd, 0, SEEK_SET) < 0) {
 		eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
 		ret = -1;
@@ -753,7 +753,7 @@ static int actn_addfile(struct job *j)
  err_free_tmp_chk:
 	free(tmp_chk);
  err_release_container:
-	dprintf(D_L1, "Discard container reservation...\n", cchk);
+	dprintf(D_L1, "Discard container reservation...\n");
 	shfs_alist_unregister(shfs_vol.al, cchk, csize);
  err_close_fd:
 	close(fd);
@@ -984,7 +984,7 @@ int main(int argc, char **argv)
 		}
 
 		if (ret < 0) {
-			eprintf("Error: %d\n", i, ret);
+			eprintf("Error: %d\n", ret);
 			failed++;
 		}
 		i++;

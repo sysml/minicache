@@ -413,16 +413,16 @@ int main(int argc, char **argv)
 	if (verbosity > 0) {
 		fprintf(stderr, "Verbosity increased to level %d.\n", verbosity);
 	}
-	printvar(args.nb_devs, "%u");
+	printvar(args.nb_devs, "%"PRIu8);
 	printvar(args.encoding, "%d");
 	printvar(args.volname, "%s");
-	printvar(args.stripesize, "%ld");
+	printvar(args.stripesize, "%"PRIu32);
 
-	printvar(args.hashfunc, "%d");
-	printvar(args.allocator, "%d");
-	printvar(args.hashlen, "%ld");
-	printvar(args.bucket_count, "%ld");
-	printvar(args.entries_per_bucket, "%ld");
+	printvar(args.hashfunc, "%"PRIu8);
+	printvar(args.allocator, "%"PRIu8);
+	printvar(args.hashlen, "%"PRIu32);
+	printvar(args.bucket_count, "%"PRIu32);
+	printvar(args.entries_per_bucket, "%"PRIu32);
 
 	/*
 	 * MAIN
