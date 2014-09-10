@@ -91,6 +91,11 @@ lsvbd
  Lists available virtual block devices.
 
 ```
+mallinfo
+```
+ Displays heap memory allocation information.
+
+```
 mount [VBD ID]...
 ```
  Mounts an SHFS volume. Multiple devices can be passed to the command.

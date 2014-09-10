@@ -160,6 +160,7 @@ static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #ifdef __MINIOS__
 static int shcmd_free(FILE *cio, int argc, char *argv[]);
 #endif
+static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
 #endif
@@ -234,6 +235,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
 #ifdef __MINIOS__
     shell_register_cmd("free",   shcmd_free);
 #endif
+    shell_register_cmd("mallinfo",shcmd_mallinfo);
 #ifdef HAVE_LWIP
     shell_register_cmd("ifconfig",shcmd_ifconfig);
 #endif
@@ -1219,6 +1221,24 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
     return -1;
 }
 #endif
+
+static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
+{
+    struct mallinfo minfo;
+    minfo = mallinfo();
+
+    fprintf(cio, " total space allocated from system:        %12lu\n", minfo.arena);
+    fprintf(cio, " number of non-inuse chunks:               %12lu\n", minfo.ordblks);
+    fprintf(cio, " number of mmapped regions:                %12lu\n", minfo.hblks);
+    fprintf(cio, " total space in mmapped regions:           %12lu\n", minfo.hblkhd);
+    fprintf(cio, " total allocated space:                    %12lu\n", minfo.uordblks);
+    fprintf(cio, " total non-inuse space:                    %12lu\n", minfo.fordblks);
+    fprintf(cio, " top-most, releasable space (malloc_trim): %12lu\n", minfo.keepcost);
+
+    fprintf(cio, " average size of non-inuse chunks:         %12lu\n", minfo.fordblks / minfo.ordblks);
+
+    return 0;
+}
 
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
