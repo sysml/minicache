@@ -263,7 +263,7 @@ static struct disk *checkopen_disk(const char *path, void *chk0)
 
 	d = open_disk(path, O_RDWR);
 	if (!d)
-		dief("Could not open %s\n", path);
+		exit(EXIT_FAILURE);
 
 	/* incompatible device? */
 	if (d->blksize < 512 || !POWER_OF_2(d->blksize))
