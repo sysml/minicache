@@ -595,8 +595,9 @@ static int actn_addfile(struct token *j)
 	int fd;
 	int ret;
 	size_t fsize;
-	size_t rlen;
+	size_t left;
 	chk_t csize;
+	size_t rlen;
 	hash512_t fhash;
 	chk_t cchk;
 	MHASH td;
@@ -716,19 +717,24 @@ static int actn_addfile(struct token *j)
 		strncpy(hentry->name, basename(j->path), sizeof(hentry->name));
 	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
-	/* copy file */
+	/* copy file contents */
 	dprintf(D_L0, "Copying file contents...\n");
 	if (lseek(fd, 0, SEEK_SET) < 0) {
 		eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
 		ret = -1;
 		goto err_free_tmp_chk;
 	}
-	for (c = 0; c < csize; c++) {
-		if (c == (csize - 1)) {
-			rlen = fsize % shfs_vol.chunksize;
-			memset(tmp_chk, 0, shfs_vol.chunksize);
-		} else {
+
+	left = fsize;
+	c = 0;
+	while (left) {
+		if (left > shfs_vol.chunksize) {
 			rlen = shfs_vol.chunksize;
+			left -= shfs_vol.chunksize;
+		} else {
+			rlen = left;
+			left = 0;
+			memset(tmp_chk, 0, shfs_vol.chunksize);
 		}
 
 		ret = read(fd, tmp_chk, rlen);
@@ -744,11 +750,12 @@ static int actn_addfile(struct token *j)
 			ret = -1;
 			goto err_free_tmp_chk;
 		}
-
 		if (cancel) {
 			ret = -2;
 			goto err_free_tmp_chk;
 		}
+
+		++c;
 	}
 
 	free(tmp_chk);
