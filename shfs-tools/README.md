@@ -44,7 +44,7 @@ Examples: Using SHFS Tools
 
 ### Adding Files to an SHFS Volume
 
-    shfs_admin --add-file /path/to/my_music.mp3 -m audio/mpeg shfs-demo.img
+    shfs_admin --add-obj /path/to/my_music.mp3 -m audio/mpeg3 shfs-demo.img
 
 ### Note
 
