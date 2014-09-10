@@ -429,8 +429,8 @@ int register_shfs_tools(struct ctldir *cd)
 	shell_register_cmd("flush", shcmd_shfs_flush_cache);
 	shell_register_cmd("prefetch", shcmd_shfs_prefetch_cache);
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
-#ifdef SHFS_CACHE_STATS_DISPLAY
-	shell_register_cmd("shfs-cache-stats", shcmd_shfs_cache_stats);
+#ifdef SHFS_CACHE_INFO
+	shell_register_cmd("cache-info", shcmd_shfs_cache_info);
 #endif
 
 	return 0;

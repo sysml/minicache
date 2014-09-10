@@ -14,9 +14,9 @@
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
                          * allocating more buffers on demand (via _xmalloc) */
-#define SHFS_CACHE_STOP_GROW_ENOMEM /* uncomment this line to stop the cache trying to grow 
-                                     * as soon as it hits ENOMEM for the first and as long
-                                     * no buffer got free'd to the heap */
+#define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* uncomment this line to stop the cache trying to grow 
+                                                * as soon as this limit for left free memory for malloc
+                                                * is exceeded */
 
 struct shfs_cache_entry {
 	struct mempool_obj *pobj;
@@ -46,7 +46,8 @@ struct shfs_cache {
 	struct mempool *pool;
 	uint32_t htlen;
 	uint32_t htmask;
-	uint32_t nb_ref_entries;
+	uint64_t nb_ref_entries;
+	uint64_t nb_entries;
 	void (*cb_retry)(void); /* callback that is called whenever it is
 	                         * worth to retry an AIO request that
 	                         * failed with EAGAIN */
@@ -54,14 +55,11 @@ struct shfs_cache {
 	                         * that increases the chaance to retry the I/O */
 	int _in_cb_retry;
 
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-	int stop_grow;
-#endif
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };
 
-int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void));
+int shfs_alloc_cache(void (*cb_retry)(void));
 void shfs_flush_cache(void); /* releases unreferenced buffers */
 void shfs_free_cache(void);
 #define shfs_cache_ref_count() \
@@ -138,9 +136,9 @@ static inline struct shfs_cache_entry *shfs_cache_read(chk_t addr)
 	return cce;
 }
 
-#ifdef SHFS_CACHE_STATS_DISPLAY
+#ifdef SHFS_CACHE_INFO
 #include "shell.h"
-int shcmd_shfs_cache_stats(FILE *cio, int argc, char *argv[]);
+int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[]);
 #endif
 
 #endif /* _SHFS_CACHE_ */

@@ -66,7 +66,7 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
 CFLAGS				+= -DSHFS_STATS
-CFLAGS				+= -DSHFS_CACHE_STATS_DISPLAY
+CFLAGS				+= -DSHFS_CACHE_INFO
 
 # Advanced statistics from HTTP
 #  This enables counting the number of successful downloads

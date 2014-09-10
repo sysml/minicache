@@ -12,6 +12,12 @@
 
 #define MIN_ALIGN 8
 
+#define shfs_cache_free_mem() \
+	({ struct mallinfo minfo = mallinfo(); \
+	((num_free_pages() * PAGE_SIZE) + /* free pages */ \
+	((heap_mapped - heap) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
+	 (minfo.fordblks / minfo.ordblks)); }) /* minimum possible allocation on current heap size */
+
 #define shfs_cache_notify_retry() \
 	do { \
 		if (unlikely(!shfs_vol.chunkcache->_in_cb_retry && \
@@ -39,7 +45,7 @@ static void _cce_pobj_init(struct mempool_obj *pobj, void *unused)
     cce->aio_chain.last = NULL;
 }
 
-int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
+int shfs_alloc_cache(void (*cb_retry)(void))
 {
     struct shfs_cache *cc;
     uint32_t htlen, i;
@@ -47,9 +53,8 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
     int ret;
 
     ASSERT(shfs_vol.chunkcache == NULL);
-    ASSERT(ht_order > 0 && ht_order < 32);
 
-    htlen = (1 << ht_order);
+    htlen = (1 << SHFS_CACHE_HTABLE_ORDER);
     cc_size = sizeof(*cc) + (htlen * sizeof(struct shfs_cache_htel));
     cc = _xmalloc(cc_size, MIN_ALIGN);
     if (!cc) {
@@ -57,10 +62,16 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
 	    goto err_out;
     }
 #ifdef SHFS_CACHE_GROW
-    if (nb_bffs) {
+    if (SHFS_CACHE_POOL_NB_BUFFERS) {
 #endif
-    cc->pool = alloc_mempool(nb_bffs, shfs_vol.chunksize, shfs_vol.ioalign, 0, 0,
-                             _cce_pobj_init, NULL, sizeof(struct shfs_cache_entry));
+    cc->pool = alloc_mempool(SHFS_CACHE_POOL_NB_BUFFERS,
+                             shfs_vol.chunksize,
+                             shfs_vol.ioalign,
+                             0,
+                             0,
+                             _cce_pobj_init,
+                             NULL,
+                             sizeof(struct shfs_cache_entry));
     if (!cc->pool) {
 	    ret = -ENOMEM;
 	    goto err_free_cc;
@@ -77,13 +88,11 @@ int shfs_alloc_cache(uint32_t nb_bffs, uint8_t ht_order, void (*cb_retry)(void))
     }
     cc->htlen = htlen;
     cc->htmask = htlen - 1;
+    cc->nb_entries = 0;
     cc->nb_ref_entries = 0;
     cc->cb_retry = cb_retry;
     cc->call_cb_retry = 0;
     cc->_in_cb_retry = 0;
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-    cc->stop_grow = 0;
-#endif
 
     shfs_vol.chunkcache = cc;
     return 0;
@@ -107,28 +116,24 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 #endif
     cce_obj = mempool_pick(shfs_vol.chunkcache->pool);
     if (cce_obj) {
-	/* got a new buffer: append it to alist */
+	/* got a new buffer */
+	++shfs_vol.chunkcache->nb_entries;
 	return (struct shfs_cache_entry *) cce_obj->private;
     }
 #ifdef SHFS_CACHE_GROW
     }
 
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-    if (!shfs_vol.chunkcache->stop_grow) {
+#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_GROW_THRESHOLD)
+    if (shfs_cache_free_mem() < SHFS_CACHE_GROW_THRESHOLD)
+	return NULL;
 #endif
     /* try to malloc a buffer from heap */
     buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
     if (!buf) {
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-	shfs_vol.chunkcache->stop_grow = 1;
-#endif
 	return NULL;
     }
     cce = _xmalloc(sizeof(*cce), MIN_ALIGN);
     if (!cce) {
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-	shfs_vol.chunkcache->stop_grow = 1;
-#endif
 	xfree(buf);
 	return NULL;
     }
@@ -139,11 +144,8 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
     cce->t = NULL;
     cce->aio_chain.first = NULL;
     cce->aio_chain.last = NULL;
-    dprintf("Cache increased by 1 chunk on heap\n");
+    ++shfs_vol.chunkcache->nb_entries;
     return cce;
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-    }
-#endif
 #else
     return NULL;
 #endif
@@ -152,18 +154,19 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 #ifdef SHFS_CACHE_GROW
 static inline void shfs_cache_put_cce(struct shfs_cache_entry *cce) {
 	if (!cce->pobj) {
-#if (defined SHFS_CACHE_GROW) && (defined SHFS_CACHE_STOP_GROW_ENOMEM)
-		shfs_vol.chunkcache->stop_grow = 0;
-#endif
 		xfree(cce->buffer);
 		xfree(cce);
-		dprintf("Cache decreased by 1 chunk on heap\n");
 	} else {
 		mempool_put(cce->pobj);
 	}
+	--shfs_vol.chunkcache->nb_entries;
 }
 #else
-#define shfs_cache_put_cce(cce) mempool_put((cce)->pobj)
+#define shfs_cache_put_cce(cce) \
+	do { \
+		mempool_put((cce)->pobj); \
+		--shfs_vol.chunkcache->nb_entries; \
+	} while(0)
 #endif
 
 static inline struct shfs_cache_entry *shfs_cache_find(chk_t addr)
@@ -515,18 +518,24 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 	shfs_cache_notify_retry();
 }
 
-#ifdef SHFS_CACHE_STATS_DISPLAY
-int shcmd_shfs_cache_stats(FILE *cio, int argc, char *argv[])
+#ifdef SHFS_CACHE_INFO
+int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 {
+#ifdef SHFS_CACHE_DEBUG
 	uint32_t i;
 	struct shfs_cache_entry *cce;
+#endif
+	uint32_t chunksize;
+	uint64_t nb_entries;
+	uint64_t nb_ref_entries;
+	uint32_t htlen;
 
 	if (!shfs_mounted) {
 		fprintf(cio, "Filesystem is not mounted\n");
 		return -1;
 	}
 
-	printk("Number of referenced cache buffers: %3u\n", shfs_vol.chunkcache->nb_ref_entries);
+#ifdef SHFS_CACHE_DEBUG
 	printk("Buffer states:\n");
 	for (i = 0; i < shfs_vol.chunkcache->htlen; ++i) {
 		dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
@@ -537,8 +546,24 @@ int shcmd_shfs_cache_stats(FILE *cio, int argc, char *argv[])
 			       cce->invalid ? "INVALID" : "valid");
 		}
 	}
+#endif
 
-	fprintf(cio, "Stats dumped to system output\n");
+	chunksize      = shfs_vol.chunksize;
+	nb_entries     = shfs_vol.chunkcache->nb_entries;
+	nb_ref_entries = shfs_vol.chunkcache->nb_ref_entries;
+	htlen          = shfs_vol.chunkcache->htlen;
+
+	fprintf(cio, " Number of cache buffers:            %12u (total: %lu KiB)\n",
+	        nb_entries,
+	        (nb_entries * chunksize) /1024);
+	fprintf(cio, " Number of referenced cache buffers: %12u\n",
+	        nb_ref_entries);
+	fprintf(cio, " Hash table size:                    %12u\n",
+	        htlen);
+
+#ifdef SHFS_CACHE_DEBUG
+	fprintf(cio, " Buffer states dumped to system output\n");
+#endif
 	return 0;
 }
 #endif

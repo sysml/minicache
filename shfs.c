@@ -498,9 +498,7 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	/* TODO/NOTE: For now the http server is the only service supporting the
 	 *            AIO retry callback. In case there will be more in the future,
 	 *            a callback registration service needs to be implemented */
-	ret = shfs_alloc_cache(SHFS_CACHE_POOL_NB_BUFFERS,
-	                       SHFS_CACHE_HTABLE_ORDER,
-	                       http_retry_aio_cb);
+	ret = shfs_alloc_cache(http_retry_aio_cb);
 	if (ret < 0)
 		goto err_free_remount_buffer;
 
