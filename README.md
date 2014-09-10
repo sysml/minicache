@@ -147,15 +147,18 @@ specify the kernel parameters:
 
 ### MiniCache Parameters
 
-    -s [sec]               Startup delay in seconds
+    -s [sec]               Startup delay in seconds (default is 0)
     -i [IPv4/Route prefix] Host IP address in CIDR notation
-                           (if not specified, DHCP is enabled)
+                           (if not specified, DHCP client is enabled)
     -g [IPv4]              Gateway IP address
     -d [IPv4]              Primary DNS server
     -e [IPv4]              Secondary DNS server
+    -a [hwaddr]/[IPv4]     Static ARP entry
+                           (multiple tokens possible)
     -b [VBD ID]            Automount filesystem from VBD ID
                            (multiple tokens possible;
                             disables vbd auto detection)
     -h                     Disable XenStore control trigger
                            (see: ctltrigger)
     -x [VBD ID]            Device for stats export
+    -c [num]               Max. number of simultaneous HTTP connections
