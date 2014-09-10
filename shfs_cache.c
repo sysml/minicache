@@ -332,6 +332,23 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
     return cce;
 }
 
+#if (SHFS_CACHE_READAHEAD > 0)
+static inline void shfs_cache_readahead(chk_t addr)
+{
+	struct shfs_cache_entry *cce;
+	chk_t i;
+
+	for (i = 1; i <= SHFS_CACHE_READAHEAD; ++i) {
+		cce = shfs_cache_find(addr + i);
+		if (!cce) {
+			cce = shfs_cache_add(addr + i);
+			if (!cce)
+				return; /* out of buffers */
+		}
+	}
+}
+#endif
+
 int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp, struct shfs_cache_entry **cce_out, SHFS_AIO_TOKEN **t_out)
 {
     struct shfs_cache_entry *cce;
@@ -351,7 +368,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
         goto err_out;
     }
 
-    /* check if we cahced already this request */
+    /* check if we cached already this request */
     cce = shfs_cache_find(addr);
     if (!cce) {
         /* no -> initiate a new I/O request */
@@ -371,6 +388,11 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 	++shfs_vol.chunkcache->nb_ref_entries;
     }
     ++cce->refcount;
+
+#if (SHFS_CACHE_READAHEAD > 0)
+    /* try to read ahead next addresses */
+    shfs_cache_readahead(addr);
+#endif
 
     /* I/O of element done already? */
     if (likely(shfs_aio_is_done(cce->t))) {
@@ -479,12 +501,12 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
     --cce->refcount;
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
-	if (likely(!cce->invalid)) {
-	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
-	} else {
-            dprintf("Destroy invalid cache of chunk %llu\n", cce->addr);
+	if (shfs_aio_is_done(cce->t) && cce->invalid) {
+	    dprintf("Destroy invalid cache of chunk %llu\n", cce->addr);
 	    shfs_cache_unlink(cce);
 	    shfs_cache_put_cce(cce);
+	} else {
+	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	}
     }
 

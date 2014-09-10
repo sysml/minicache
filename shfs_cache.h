@@ -9,9 +9,9 @@
 #include "mempool.h"
 
 #define SHFS_CACHE_HTABLE_ORDER 8 /* order of 2 for collision table size */
-#define SHFS_CACHE_POOL_NB_BUFFERS 16 /* defines minimum cache size,
+#define SHFS_CACHE_POOL_NB_BUFFERS 32 /* defines minimum cache size,
                                        * if 0, CACHE_GROW has to be enabled */
-#define SHFS_CACHE_READAHEAD 0 /* how many chunks shall be read ahead (0 = disabled) */
+#define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
                          * allocating more buffers on demand (via _xmalloc) */
 #define SHFS_CACHE_STOP_GROW_ENOMEM /* uncomment this line to stop the cache trying to grow 
