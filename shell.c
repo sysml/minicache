@@ -1227,15 +1227,14 @@ static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
     struct mallinfo minfo;
     minfo = mallinfo();
 
-    fprintf(cio, " total space allocated from system:        %12lu\n", minfo.arena);
-    fprintf(cio, " number of non-inuse chunks:               %12lu\n", minfo.ordblks);
-    fprintf(cio, " number of mmapped regions:                %12lu\n", minfo.hblks);
-    fprintf(cio, " total space in mmapped regions:           %12lu\n", minfo.hblkhd);
-    fprintf(cio, " total allocated space:                    %12lu\n", minfo.uordblks);
-    fprintf(cio, " total non-inuse space:                    %12lu\n", minfo.fordblks);
-    fprintf(cio, " top-most, releasable space (malloc_trim): %12lu\n", minfo.keepcost);
-
-    fprintf(cio, " average size of non-inuse chunks:         %12lu\n", minfo.fordblks / minfo.ordblks);
+    fprintf(cio, " Total space allocated from system:        %12lu B\n", minfo.arena);
+    fprintf(cio, " Number of non-inuse chunks:               %12lu\n", minfo.ordblks);
+    fprintf(cio, " Number of mmapped regions:                %12lu\n", minfo.hblks);
+    fprintf(cio, " Total space in mmapped regions:           %12lu B\n", minfo.hblkhd);
+    fprintf(cio, " Total allocated space:                    %12lu B\n", minfo.uordblks);
+    fprintf(cio, " Total non-inuse space:                    %12lu B\n", minfo.fordblks);
+    fprintf(cio, " Top-most, releasable space (malloc_trim): %12lu B\n", minfo.keepcost);
+    fprintf(cio, " Average size of non-inuse chunks:         %12lu B\n", minfo.fordblks / minfo.ordblks);
 
     return 0;
 }
