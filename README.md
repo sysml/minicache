@@ -86,20 +86,13 @@ You can configure your build by enabling/disabling features in MiniCache's
 Makefile. For instance, a netmap frontend (via nmwrap) is activated by setting
 the following symbols:
 
-    CONFIG_NETMAP_XENBUS = y
-    CONFIG_NETMAP = y
-    CONFIG_NETMAP_API = 4
-    CONFIG_NETFRONT = n
-    CONFIG_NETFRONT_NETMAP2 = n
-    CONFIG_NMWRAP = y
+    ## vif
+    CONFIG_NETMAP                   = y
 
 Mini-OS's standard netfront (vif) is enabled with the following settings:
 
-    CONFIG_NETMAP_XENBUS = n
-    CONFIG_NETMAP = n
-    CONFIG_NETFRONT = y
-    CONFIG_NETFRONT_NETMAP2 = n
-    CONFIG_NMWRAP = n
+    ## vif
+    CONFIG_NETMAP                   = n
 
 #### Build
 
@@ -120,7 +113,7 @@ following example as a basis:
     kernel        = './build/minicache_x86_64.gz'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '256'
+    memory        = '64'
 
     name          = 'minicache'
 
