@@ -193,6 +193,11 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 
 	buflen = shfs_vol.chunksize;
 	buf = _xmalloc(shfs_vol.chunksize, 8);
+	if (!buf) {
+		fprintf(cio, "Out of memory\n");
+		ret = -1;
+		goto out_close_f;
+	}
 
 	left = fsize;
 	cur = 0;
@@ -235,6 +240,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "(%lu B/s)\n", bps);
 		}
 	}
+ out_close_f:
 	shfs_fio_close(f);
  out:
 	return ret;
