@@ -1397,7 +1397,7 @@ static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	hreq->cce_t = NULL;
 
 	/* continue sending */
-	dprintf("** [cce_idx=%u] request done, calling httpsess_respond()\n", idx);
+	dprintf("** [cce] request done, calling httpsess_respond()\n");
 	httpsess_respond(hreq->hsess);
 }
 
@@ -1411,7 +1411,7 @@ static inline int _httpreq_shfs_aioreq(struct http_req *hreq, chk_t addr, unsign
 	ret = shfs_cache_aread(addr,
 	                       _httpreq_shfs_aiocb,
 	                       hreq,
-	                       (void *)(uintptr_t) cce_idx,
+	                       NULL,
 	                       &hreq->cce[cce_idx],
 	                       &hreq->cce_t);
 	if (unlikely(ret < 0)) {

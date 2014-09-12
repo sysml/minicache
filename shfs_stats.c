@@ -88,7 +88,7 @@ static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, st
 		                "%b %e, %g %H:%M", stats->laccess);
 #ifdef SHFS_STATS_HTTP
 		fprintf(cio, "%c%s %c%c %6u [ %6u | ",
-		        SFHS_HASH_INDICATOR_PREFIX,
+		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        available ? 'I' : ' ',
 		        available ? 'N' : ' ',

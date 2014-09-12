@@ -99,23 +99,30 @@ SHFS_FD shfs_fio_open(const char *path)
 		errno = ENODEV;
 		return NULL;
 	}
-	if (strlen(path) == 0) {
-		errno = ENOENT;
-		return NULL;
-	}
 
 	/* lookup bentry (either by name or hash) */
-	if (path[0] == SFHS_HASH_INDICATOR_PREFIX) {
+	if ((path[0] == SHFS_HASH_INDICATOR_PREFIX) &&
+	    (path[1] != '\0')) {
 		bentry = _shfs_lookup_bentry_by_hash(path + 1);
 	} else {
-#ifdef SHFS_OPENBYNAME
-		bentry = _shfs_lookup_bentry_by_name(path);
-#else
-		bentry = NULL;
+		if ((path[0] == '\0') ||
+		    (path[0] == SHFS_HASH_INDICATOR_PREFIX && path[1] == '\0')) {
+			/* empty filename -> use default file */
+			bentry = shfs_vol.def_bentry;
 #ifdef SHFS_STATS
-		++shfs_vol.mstats.i;
+			if (!bentry)
+				++shfs_vol.mstats.i;
+#endif
+		} else {
+#ifdef SHFS_OPENBYNAME
+			bentry = _shfs_lookup_bentry_by_name(path);
+#else
+			bentry = NULL;
+#ifdef SHFS_STATS
+			++shfs_vol.mstats.i;
 #endif
 #endif
+		}
 	}
 	if (!bentry) {
 		errno = ENOENT;

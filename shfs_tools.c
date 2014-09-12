@@ -43,7 +43,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
 		fprintf(cio, "%c%s %12lu %12lu %-24s %-16s %s\n",
-		        SFHS_HASH_INDICATOR_PREFIX,
+		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        hentry->chunk,
 		        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
@@ -74,7 +74,7 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 		if (bentry->refcount > 0) {
 			hash_unparse(*el->h, shfs_vol.hlen, str_hash);
 			fprintf(cio, "%c%s %12lu\n",
-			        SFHS_HASH_INDICATOR_PREFIX,
+			        SHFS_HASH_INDICATOR_PREFIX,
 			        str_hash,
 			        bentry->refcount);
 		}

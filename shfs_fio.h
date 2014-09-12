@@ -7,7 +7,7 @@
 #include "shfs_cache.h"
 #include "likely.h"
 
-#define SFHS_HASH_INDICATOR_PREFIX '?'
+#define SHFS_HASH_INDICATOR_PREFIX '?'
 
 typedef struct shfs_bentry *SHFS_FD;
 
