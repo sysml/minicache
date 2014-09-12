@@ -402,6 +402,8 @@ static int load_vol_htable(void)
 	}
 
 	/* feed bucket table */
+	shfs_vol.def_bentry = NULL;
+
 	dprintf("Feeding hash table...\n");
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
 		c = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
@@ -419,6 +421,8 @@ static int load_vol_htable(void)
 #ifdef SHFS_STATS
 		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
 #endif
+		if (SHFS_HENTRY_ISDEFAULT(hentry))
+			shfs_vol.def_bentry = bentry;
 	}
 
 	return 0;
@@ -637,7 +641,8 @@ static int reload_vol_htable(void) {
 				chash_is_zero = hash_is_zero(chentry->hash, shfs_vol.hlen);
 				nhash_is_zero = hash_is_zero(nhentry->hash, shfs_vol.hlen);
 
-				if (!chash_is_zero || !nhash_is_zero) {
+				if (!chash_is_zero || !nhash_is_zero) { /* process only if at least one hash
+				                                         * digest is non-zero */
 					dprintf("Chunk %lu, entry %lu has been updated\n", c ,e);
 					/* Update hash of entry
 					 * Note: Any open file should not be affected, because
@@ -681,16 +686,28 @@ static int reload_vol_htable(void) {
 					/* unlock entry */
 					up(&bentry->updatelock);
 					bentry->update = 0;
+
+					/* update default entry reference */
+ 					if (shfs_vol.def_bentry == bentry &&
+					    !SHFS_HENTRY_ISDEFAULT(nhentry))
+						shfs_vol.def_bentry = NULL;
+					else if (SHFS_HENTRY_ISDEFAULT(nhentry))
+						shfs_vol.def_bentry = bentry;
 				}
 			} else if (chentry->chunk  != nhentry->chunk  ||
 			           chentry->offset != nhentry->offset ||
-			           chentry->len    != nhentry->len) {
-				/* in this case, just the file location has been moved
+			           chentry->len    != nhentry->len    ||
+				   chentry->flags  != nhentry->flags) {
+				/* in this case, at most the file location has been moved
 				 *
 				 * Note: This is usually a bad thing but happens
 				 * if the tools were misused
 				 * Note: Since the hash digest did not change,
 				 * the stats keep the same */
+				bentry = shfs_btable_feed(shfs_vol.bt,
+				                          (c * shfs_vol.htable_nb_entries_per_chunk) + e,
+				                          nhentry->hash);
+
 				/* lock entry */
 				bentry->update = 1; /* forbid further open() */
 				down(&bentry->updatelock); /* wait until files is closed */
@@ -702,15 +719,24 @@ static int reload_vol_htable(void) {
 				/* unlock entry */
 				up(&bentry->updatelock);
 				bentry->update = 0;
+
+				/* update default entry reference */
+				if (shfs_vol.def_bentry == bentry &&
+				    !SHFS_HENTRY_ISDEFAULT(nhentry))
+					shfs_vol.def_bentry = NULL;
+				else if (SHFS_HENTRY_ISDEFAULT(nhentry))
+					shfs_vol.def_bentry = bentry;
 			} else {
-				/* at least update name, mime type and creation timestamp
-				 * (just in case if these values have been changed)
+				/* at least update name, mime type, enconding and
+				 * creation timestamp (just in case if these values have
+				 * been changed)
 				 * These fields are completely independent to the file
 				 * contents and should be read at once without yielding
 				 * the CPU (e.g., snprintf, strncpy).
 				 * Because of this, no locking is required */
-				memcpy(chentry->name, nhentry->name, sizeof(chentry->name));
-				memcpy(chentry->mime, nhentry->mime, sizeof(chentry->mime));
+				memcpy(chentry->name,     nhentry->name,     sizeof(chentry->name));
+				memcpy(chentry->mime,     nhentry->mime,     sizeof(chentry->mime));
+				memcpy(chentry->encoding, nhentry->encoding, sizeof(chentry->encoding));
 				chentry->ts_creation = nhentry->ts_creation;
 			}
 		}

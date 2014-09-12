@@ -23,20 +23,22 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:r:c:m:n:li";
+const char *short_opts = "h?vVfa:r:c:d:Cm:n:li";
 
 static struct option long_opts[] = {
-	{"help",	no_argument,		NULL,	'h'},
-	{"version",	no_argument,		NULL,	'V'},
-	{"verbose",	no_argument,		NULL,	'v'},
-	{"force",	no_argument,		NULL,	'f'},
-	{"add-file",	required_argument,	NULL,	'a'},
-	{"rm-file",	required_argument,	NULL,	'r'},
-	{"cat-file",	required_argument,	NULL,	'c'},
-	{"mime",	required_argument,	NULL,	'm'},
-	{"name",	required_argument,	NULL,	'n'},
-	{"ls",	        no_argument,            NULL,	'l'},
-	{"info",	no_argument,            NULL,	'i'},
+	{"help",		no_argument,		NULL,	'h'},
+	{"version",		no_argument,		NULL,	'V'},
+	{"verbose",		no_argument,		NULL,	'v'},
+	{"force",		no_argument,		NULL,	'f'},
+	{"add-obj",		required_argument,	NULL,	'a'},
+	{"rm-obj",		required_argument,	NULL,	'r'},
+	{"cat-obj",		required_argument,	NULL,	'c'},
+	{"set-default",		required_argument,	NULL,	'd'},
+	{"clear-default",	no_argument,		NULL,	'C'},
+	{"mime",		required_argument,	NULL,	'm'},
+	{"name",		required_argument,	NULL,	'n'},
+	{"ls",			no_argument,            NULL,	'l'},
+	{"info",		no_argument,            NULL,	'i'},
 	{NULL, 0, NULL, 0} /* end of list */
 };
 
@@ -55,14 +57,16 @@ static void print_usage(char *argv0)
 	printf("  -V, --version                displays program version and exit\n");
 	printf("  -v, --verbose                increases verbosity level (max. %d times)\n", D_MAX);
 	printf("  -f, --force                  suppresses warnings and user questions\n");
-	printf("  -a, --add-obj [FILE]         add FILE as object to the volume\n");
+	printf("  -a, --add-obj [FILE]         adds FILE as object to the volume\n");
 	printf("  For each add-obj token:\n");
 	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	printf("    -n, --name [NAME]          sets an additional name for the object\n");
 	//printf("    -D, --digest [HASH]        sets the HASH digest for the object (availability depends on volume format)\n");
 	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
-	printf("  -r, --rm-obj [HASH]         removes an object from the volume\n");
-	printf("  -c, --cat-obj [HASH]        exports an object to stdout\n");
+	printf("  -r, --rm-obj [HASH]          removes an object from the volume\n");
+	printf("  -c, --cat-obj [HASH]         exports an object to stdout\n");
+	printf("  -d, --set-default [HASH]     sets the object with HASH as default\n");
+	printf("  -C, --clear-default          clears reference to default object\n");
 	printf("  -l, --ls                     lists the volume contents\n");
 	printf("  -i, --info                   shows volume information\n");
 	printf("\n");
@@ -163,21 +167,9 @@ static int parse_args(int argc, char **argv, struct args *args)
 		case 'f': /* force */
 			force = 1;
 			break;
-		case 'a': /* add-file */
+		case 'a': /* add-obj */
 			ctoken = args_add_token(ctoken, args);
 			ctoken->action = ADDOBJ;
-			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
-				die();
-			break;
-		case 'r': /* rm-file */
-			ctoken = args_add_token(ctoken, args);
-			ctoken->action = RMOBJ;
-			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
-				die();
-			break;
-		case 'c': /* cat-file */
-			ctoken = args_add_token(ctoken, args);
-			ctoken->action = CATOBJ;
 			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
 				die();
 			break;
@@ -196,6 +188,28 @@ static int parse_args(int argc, char **argv, struct args *args)
 			}
 			if (parse_args_setval_str(&ctoken->optstr1, optarg) < 0)
 				die();
+			break;
+		case 'r': /* rm-obj */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = RMOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
+		case 'c': /* cat-obj */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = CATOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
+		case 'd': /* set-default */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = SETDEFOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
+		case 'C': /* clear-default */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = CLEARDEFOBJ;
 			break;
 		case 'l': /* ls */
 			ctoken = args_add_token(ctoken, args);
@@ -476,6 +490,9 @@ static void load_vol_htable(void)
 		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
+
+		if (SHFS_HENTRY_ISDEFAULT(hentry))
+			shfs_vol.def_bentry = bentry;
 	}
 }
 
@@ -707,8 +724,10 @@ static int actn_addfile(struct token *j)
 	hentry->offset = 0;
 	hentry->len = (uint64_t) fsize;
 	hentry->ts_creation = gettimestamp_s();
+	hentry->flags = 0;
 	memset(hentry->mime, 0, sizeof(hentry->mime));
 	memset(hentry->name, 0, sizeof(hentry->name));
+	memset(hentry->encoding, 0, sizeof(hentry->encoding));
 	if (j->optstr0) /* mime */
 		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
 	if (j->optstr1) /* filename */
@@ -894,6 +913,77 @@ static int actn_catfile(struct token *token)
 	return ret;
 }
 
+static inline void bentry_setflags(struct shfs_bentry *bentry, uint8_t flags)
+{
+	struct shfs_hentry *hentry;
+	char str_hash[2 * shfs_vol.hlen + 1];
+
+	hentry = (struct shfs_hentry *)
+		 ((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		  + bentry->hentry_htoffset);
+	hash_unparse(hentry->hash, shfs_vol.hlen, str_hash);
+	dprintf(D_L0, "Set flags 0x%02x on object %s\n", flags, str_hash);
+	hentry->flags |= flags;
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
+}
+
+static inline void bentry_clearflags(struct shfs_bentry *bentry, uint8_t flags)
+{
+	struct shfs_hentry *hentry;
+	char str_hash[2 * shfs_vol.hlen + 1];
+
+	hentry = (struct shfs_hentry *)
+		 ((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		  + bentry->hentry_htoffset);
+	hash_unparse(hentry->hash, shfs_vol.hlen, str_hash);
+	dprintf(D_L0, "Clear flags 0x%02x on object %s\n", flags, str_hash);
+	hentry->flags &= ~(flags);
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
+}
+
+static inline int actn_cleardefault(struct token *token __attribute__((unused)))
+{
+	if (!shfs_vol.def_bentry)
+		goto out;
+
+	bentry_clearflags(shfs_vol.def_bentry, SHFS_EFLAG_DEFAULT);
+	shfs_vol.def_bentry = NULL;
+
+ out:
+	return 0;
+}
+
+static int actn_setdefault(struct token *token)
+{
+	struct shfs_bentry *bentry;
+	hash512_t h;
+	int ret = 0;
+
+	/* parse hash string */
+	dprintf(D_L0, "Looking for hash table entry of object %s...\n", token->path);
+	ret = hash_parse(token->path, h, shfs_vol.hlen);
+	if (ret < 0) {
+		eprintf("Could not parse hash value\n");
+		ret = -1;
+		goto out;
+	}
+	/* find htable entry */
+	bentry = shfs_btable_lookup(shfs_vol.bt, h);
+	if (!bentry) {
+		eprintf("No such entry found\n");
+		ret = -1;
+		goto out;
+	}
+
+	/* clear default flag of previous object and set flag on current one */
+	actn_cleardefault(NULL);
+	bentry_setflags(bentry, SHFS_EFLAG_DEFAULT);
+	shfs_vol.def_bentry = bentry;
+
+ out:
+	return ret;
+}
+
 static int actn_ls(struct token *token)
 {
 	struct htable_el *el;
@@ -909,18 +999,20 @@ static int actn_ls(struct token *token)
 	str_date[0] = '\0';
 
 	if (shfs_vol.hlen <= 32)
-		printf("%-64s %12s %12s %-24s %-16s %s\n",
+		printf("%-64s %12s %12s %5s %-24s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
 		       "Size (chk)",
+		       "Flags",
 		       "MIME",
 		       "Added",
 		       "Name");
 	else
-		printf("%-128s %12s %12s %-24s %-16s %s\n",
+		printf("%-128s %12s %12s %5s %-24s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
 		       "Size (chk)",
+		       "Flags",
 		       "MIME",
 		       "Added",
 		       "Name");
@@ -935,18 +1027,26 @@ static int actn_ls(struct token *token)
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
 		if (shfs_vol.hlen <= 32)
-			printf("%-64s %12lu %12lu %-24s %-16s %s\n",
+			printf("%-64s %12lu %12lu  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
 			       hentry->chunk,
 			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+			       '-', /* reserved for future use */
+			       '-', /* reserved for future use */
+			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
 			       str_mime,
 			       str_date,
 			       str_name);
 		else
-			printf("%-128s %12lu %12lu %-24s %-16s %s\n",
+			printf("%-128s %12lu %12lu  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
 			       hentry->chunk,
 			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+			       '-', /* reserved for future use */
+			       '-', /* reserved for future use */
+			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
 			       str_mime,
 			       str_date,
 			       str_name);
@@ -1048,17 +1148,23 @@ int main(int argc, char **argv)
 		switch (ctoken->action) {
 		case ADDOBJ:
 			dprintf(D_L0, "*** Token %u: add-obj\n", i);
-			printf("Adding %s...\n", ctoken->path);
 			ret = actn_addfile(ctoken);
 			break;
 		case RMOBJ:
 			dprintf(D_L0, "*** Token %u: rm-obj\n", i);
-			printf("Deleting %s...\n", ctoken->path);
 			ret = actn_rmfile(ctoken);
 			break;
 		case CATOBJ:
 			dprintf(D_L0, "*** Token %u: cat-obj\n", i);
 			ret = actn_catfile(ctoken);
+			break;
+		case SETDEFOBJ:
+			dprintf(D_L0, "*** Token %u: set-default\n", i);
+			ret = actn_setdefault(ctoken);
+			break;
+		case CLEARDEFOBJ:
+			dprintf(D_L0, "*** Token %u: clear-default\n", i);
+			ret = actn_cleardefault(ctoken);
 			break;
 		case LSOBJS:
 			dprintf(D_L0, "*** Token %u: ls\n", i);

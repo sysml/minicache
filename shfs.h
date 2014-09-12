@@ -54,6 +54,8 @@ struct vol_info {
 	uint32_t htable_nb_entries_per_chunk;
 	uint8_t hlen;
 
+	struct shfs_bentry *def_bentry;
+
 	struct mempool *aiotoken_pool; /* token for async I/O */
 	struct shfs_cache *chunkcache; /* chunkcache */
 

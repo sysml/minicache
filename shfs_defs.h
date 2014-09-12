@@ -34,13 +34,13 @@ typedef uint8_t uuid_t[16];
 #define SENC_UNSPECIFIED 0
 
 /* allocator */
-#define SALLOC_FIRSTFIT   0
+#define SALLOC_FIRSTFIT  0
 #define SALLOC_BESTFIT   1
 
 /* hash function */
-#define SHFUNC_SHA       0
-#define SHFUNC_MD5       1
-
+#define SHFUNC_MANUAL    1
+#define SHFUNC_SHA       2
+#define SHFUNC_MD5       3
 
 /*
  * Helper
@@ -79,7 +79,11 @@ typedef uint8_t uuid_t[16];
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
 #define SHFSv1_VERSION1 0x01
-#define SHFSv1_VERSION0 0x04
+#define SHFSv1_VERSION0 0x05
+
+/* member_stripemode */
+#define SHFS_SM_INDEPENDENT 0x0
+#define SHFS_SM_COMBINED    0x1
 
 struct shfs_hdr_common {
 	uint8_t            magic[4];
@@ -99,8 +103,6 @@ struct shfs_hdr_common {
 	}                  member[SHFS_MAX_NB_MEMBERS];
 } __attribute__((packed));
 
-#define SHFS_SM_INDEPENDENT 0x0
-#define SHFS_SM_COMBINED    0x1
 
 /**
  * SHFS configuration header
@@ -120,6 +122,10 @@ struct shfs_hdr_config {
  * SHFS entry (container description)
  * Note: character strings fields are not necessarily null-terminated
  */
+/* hentry flags */
+#define SHFS_EFLAG_HIDDEN    0x1
+#define SHFS_EFLAG_DEFAULT   0x8
+
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */
 	chk_t              chunk;
@@ -127,7 +133,9 @@ struct shfs_hentry {
 	uint64_t           len; /* length (bytes) */
 	char               mime[64]; /* internet media type */
 	uint64_t           ts_creation;
+	uint8_t            flags;
 	char               name[64];
+	char               encoding[16]; /* set on pre-encoded */
 } __attribute__((packed));
 
 #define SHFS_MIN_CHUNKSIZE 4096
@@ -151,6 +159,10 @@ struct shfs_hentry {
 #define SHFS_HTABLE_ENTRY_OFFSET(hentry_no, hentries_per_chunk) \
 	(((hentry_no) % (hentries_per_chunk)) * SHFS_HENTRY_SIZE)
 
+#define SHFS_HENTRY_ISHIDDEN(hentry) \
+	((hentry)->flags & (SHFS_EFLAG_HIDDEN))
+#define SHFS_HENTRY_ISDEFAULT(hentry) \
+	((hentry)->flags & (SHFS_EFLAG_DEFAULT))
 
 #ifdef __MINIOS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)
