@@ -342,6 +342,8 @@ static inline void shfs_cache_readahead(chk_t addr)
 	chk_t i;
 
 	for (i = 1; i <= SHFS_CACHE_READAHEAD; ++i) {
+		if (unlikely((addr + i) >= shfs_vol.volsize))
+			return; /* end of volume */
 		cce = shfs_cache_find(addr + i);
 		if (!cce) {
 			cce = shfs_cache_add(addr + i);
