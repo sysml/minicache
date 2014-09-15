@@ -1,0 +1,158 @@
+#!/bin/bash
+WWWDIR="$1"
+SHFSIMG="$2"
+IFSORIG=$IFS
+NL=$'\n'
+CSIZE=4096
+NB_BKTS=1024
+E_PER_BKT=16
+ESIZE=256
+MKFS="../shfs-tools/shfs_mkfs"
+ADMIN="../shfs-tools/shfs_admin"
+
+function usage() {
+    echo "Usage: $0 [WWWDIR] [SHFSOUT]"
+}
+
+function get_hash() {
+    # 128 bits hash of passed string
+    printf "%s" "$1" | sha1sum | awk '{ print $1 }'
+}
+
+function get_mime() {
+    local TMP="$( file -i "$1" | awk '{ print $2 }' )"
+    printf "%s" "${TMP::-1}"
+}
+
+function get_size() {
+    stat --printf='%s' "$1"
+}
+
+function mksparse() {
+    local FNAME="$1"
+    local SIZE="$2"
+
+    dd if=/dev/zero of="${FNAME}" count=0 bs=1 seek="${SIZE}"
+}
+
+function isindex() {
+    local BNAME="$( basename "$1" )"
+    if [ "$BNAME" = "index.htm" -o "$BNAME" = "index.html" ]; then
+	return 0
+    fi
+    return 1
+}
+
+
+
+if [ -z "$WWWDIR" -o -z "$SHFSIMG" ]; then
+    usage
+    exit 1
+fi
+if [ ! -d "$WWWDIR" ]; then
+    echo "${WWWDIR} is not a directory" 1>&2
+    usage
+    exit 1
+fi
+if [ -e "$SHFSIMG" -a ! -b "$SHFSIMG" ]; then
+    echo "${SHFSIMG} exists already and is not a block device" 1>&2
+    usage
+    exit 1
+fi
+
+BASE=$( pwd )
+cd "$WWWDIR"
+FILES="$( find ./ -not \( -path ./.git -prune \) -not \( -path ./.gitignore -prune \) -not \( -path ./.DS_Store \) )"
+I=0
+DEF_I=-1
+FILE=()
+NAME=()
+MIME=()
+HASH=()
+SIZE=()
+TSIZE=0
+CHUNKS=()
+TCHUNKS=0
+
+echo "* Collecting file information..."
+IFS=$NL
+for F in $FILES; do
+    IFS=$IFSORIG
+    F="${F:2}" # cuts leading './'
+    if [ -z "$F" -o ! -f "$F" ]; then
+	continue
+    fi
+
+    # build up array
+    echo "  ${F}"
+    FILE[$I]="$( pwd )/${F}"
+    NAME[$I]="${F}"
+    HASH[$I]="$( get_hash "${NAME[$I]}" )" # hash of target filename
+    MIME[$I]="$( get_mime "${F}" )"
+    SIZE[$I]="$( get_size "${F}" )"
+    CHUNKS[$I]=$(( (SIZE[$I] + CSIZE - 1) / CSIZE ))
+
+    (( TSIZE += SIZE[$I] ))
+    (( TCHUNKS += CHUNKS[$I] ))
+
+    isindex "${FILE[$I]}"
+    if [ $? -eq 0 ]; then
+	# file is an index file
+	if [ "$( dirname "${NAME[$I]}" )" != "." ]; then
+	    # WORKARAOUND add a copy of the file with just having the dirname
+	    FILE[$(( I + 1 ))]="${FILE[$I]}"
+	    NAME[$(( I + 1 ))]="$( dirname "${NAME[$I]}" )"
+	    HASH[$(( I + 1 ))]="$( get_hash "${NAME[$(( I + 1 ))]}" )"
+	    MIME[$(( I + 1 ))]="${MIME[$I]}"
+	    SIZE[$(( I + 1 ))]="${SIZE[$I]}"
+	    CHUNKS[$(( I + 1 ))]="${CHUNKS[$I]}"
+
+	    FILE[$(( I + 2 ))]="${FILE[$I]}"
+	    NAME[$(( I + 2 ))]="$( dirname "${NAME[$I]}" )/"
+	    HASH[$(( I + 2 ))]="$( get_hash "${NAME[$(( I + 2 ))]}" )"
+	    MIME[$(( I + 2 ))]="${MIME[$I]}"
+	    SIZE[$(( I + 2 ))]="${SIZE[$I]}"
+	    CHUNKS[$(( I + 1 ))]="${CHUNKS[$I]}"
+
+	    (( TSIZE += 2 * SIZE[$I] ))
+	    (( TCHUNKS += 2 * CHUNKS[$I] ))
+	    (( I += 2 ))
+	else
+	    # index file in base dir -> set default flag
+	    DEF_I=$I
+	fi
+    fi
+
+    (( I++ ))
+    IFS=$NL
+done
+IFS=$IFSORIG
+cd "${BASE}"
+NB_FILES=$I
+
+echo "* Summary:"
+echo "  ${NB_FILES} files"
+echo "  ${TCHUNKS} chunks ($(( TSIZE / 1024 )) KiB)"
+
+if [ ! -b "${SHFSIMG}" ]; then
+    SHFSIMG_SIZE=$(( (TCHUNKS + 3 + ((NB_BKTS * E_PER_BKT * ESIZE) / CSIZE)) * CSIZE ))
+    echo "* Creating sparse image file with size of $(( SHFSIMG_SIZE / 1024 )) KiB"
+    mksparse "${SHFSIMG}" "${SHFSIMG_SIZE}"
+fi
+
+echo "* Formatting"
+$MKFS -f -n "mkwebfs" -F manual -l 20 -b "${NB_BKTS}" -e "${E_PER_BKT}" -s "${CSIZE}" "${SHFSIMG}"
+
+echo "* Adding files"
+for (( I=0; I<${NB_FILES}; I++ )); do
+    echo "  ${NAME[$I]}"
+    $ADMIN -a "${FILE[$I]}" -D "${HASH[$I]}" -n "${NAME[$I]}" -m "${MIME[$I]}" "${SHFSIMG}"
+done
+
+if [ "$DEF_I" != "-1" ]; then
+    echo "* Marking index file (${NAME[$DEF_I]}, ${HASH[$DEF_I]})"
+    $ADMIN -d "${HASH[$DEF_I]}" "${SHFSIMG}"
+fi
+
+echo "* Done"
+$ADMIN -l "${SHFSIMG}"
