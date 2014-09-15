@@ -40,7 +40,9 @@ typedef uint8_t uuid_t[16];
 /* hash function */
 #define SHFUNC_MANUAL    1
 #define SHFUNC_SHA       2
-#define SHFUNC_MD5       3
+#define SHFUNC_CRC       3
+#define SHFUNC_MD5       4
+#define SHFUNC_HAVAL     5
 
 /*
  * Helper
@@ -79,7 +81,7 @@ typedef uint8_t uuid_t[16];
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
 #define SHFSv1_VERSION1 0x01
-#define SHFSv1_VERSION0 0x05
+#define SHFSv1_VERSION0 0x06
 
 /* member_stripemode */
 #define SHFS_SM_INDEPENDENT 0x0

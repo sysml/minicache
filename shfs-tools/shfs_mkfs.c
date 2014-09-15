@@ -17,7 +17,7 @@ int force = 0;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfn:s:cb:e:x";
+const char *short_opts = "h?vVfn:s:cb:e:xF:l:";
 
 static struct option long_opts[] = {
 	{"help",		no_argument,		NULL,	'h'},
@@ -30,6 +30,8 @@ static struct option long_opts[] = {
 	{"bucket-count",	required_argument,	NULL,	'b'},
 	{"entries-per-bucket",	required_argument,	NULL,	'e'},
 	{"erase",		no_argument,		NULL,	'x'},
+	{"hash-function",	required_argument,	NULL,	'F'},
+	{"hash-length",		required_argument,	NULL,	'l'},
 	{NULL, 0, NULL, 0} /* end of list */
 };
 
@@ -50,7 +52,7 @@ static void print_usage(char *argv0)
 	printf("  -V, --version                    displays program version and exit\n");
 	printf("  -v, --verbose                    increases verbosity level (max. %d times)\n", D_MAX);
 	printf("  -f, --force                      suppresses user questions\n");
-	printf("  -x, --erase                      erase/discard(trim) volume area (full format)\n");
+	printf("  -x, --erase                      erase volume area (full format)\n");
 	printf("\n");
 	printf(" Volume settings:\n");
 	printf("  -n, --name [NAME]                sets volume name to NAME\n");
@@ -60,6 +62,10 @@ static void print_usage(char *argv0)
 	printf(" Hash table related configuration:\n");
 	printf("  -b, --bucket-count [COUNT]       sets the total number of buckets\n");
 	printf("  -e, --entries-per-bucket [COUNT] sets the number of entries for each bucket\n");
+	printf("  -F, --hash-function [FUNCTION]   sets the object hashing function:\n");
+	printf("                                    sha (default), crc, md5, haval, manual\n");
+	printf("  -l, --hash-length [BYTES]        sets the the hash digest length in bytes\n");
+	printf("                                    at least 1 (8 Bits), at most 64 (512 Bits)\n");
 }
 
 static inline void release_args(struct args *args)
@@ -105,7 +111,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->combined_striping = 0;
 
 	args->hashfunc = SHFUNC_SHA;
-	args->hashlen = 32; /* 256 bits */
+	args->hashlen = 0; /* set to default after parsing */
 
 	/*
 	 * Parse options
@@ -167,10 +173,98 @@ static int parse_args(int argc, char **argv, struct args *args)
 		case 'c': /* combined striping */
 			args->combined_striping = 1;
 			break;
+		case 'F': /* hash function */
+			if        (strcmp("sha", optarg) == 0) {
+				args->hashfunc = SHFUNC_SHA;
+			} else if (strcmp("crc", optarg) == 0) {
+				args->hashfunc = SHFUNC_CRC;
+			} else if (strcmp("md5", optarg) == 0) {
+				args->hashfunc = SHFUNC_MD5;
+			} else if (strcmp("haval", optarg) == 0) {
+				args->hashfunc = SHFUNC_HAVAL;
+			} else if (strcmp("manual", optarg) == 0) {
+				args->hashfunc = SHFUNC_MANUAL;
+			} else {
+				eprintf("Unknown hash function specified\n");
+				return -EINVAL;
+			}
+			break;
+		case 'l': /* hash length */
+			ret = parse_args_setval_int(&tmp, optarg);
+			if (ret < 0 || tmp < 1 || tmp > 64) {
+				eprintf("Invalid hash digest length (min. 1, max. 64)\n");
+				return -EINVAL;
+			}
+			args->hashlen = (uint8_t) tmp;
+			break;
 		default:
 			/* unknown option */
 			return -EINVAL;
 		}
+	}
+
+	/* set default hash length if it was not set yet */
+	if (!args->hashlen) {
+		switch(args->hashfunc) {
+		case SHFUNC_SHA:
+			args->hashlen = 32; /* 256 bits */
+			break;
+		case SHFUNC_CRC:
+			args->hashlen =  4; /* 32 bits */
+			break;
+		case SHFUNC_MD5:
+			args->hashlen = 16; /* 128 bits */
+			break;
+		case SHFUNC_HAVAL:
+			args->hashlen = 32; /* 256 bits */
+			break;
+		case SHFUNC_MANUAL:
+		default:
+			args->hashlen = 16; /* 128 bits */
+		}
+	}
+
+	/* hash length check */
+	switch(args->hashfunc) {
+	case SHFUNC_SHA:
+		if (args->hashlen != 20 && /* 160 bits */
+		    args->hashlen != 28 && /* 224 bits */
+		    args->hashlen != 32 && /* 256 bits */
+		    args->hashlen != 48 && /* 384 bits */
+		    args->hashlen != 64) { /* 512 bits */
+			printf("SHA supports only the following hash digest lengths: "
+			       "20, 28, 32, 48, 64\n");
+			return -EINVAL;
+		}
+		break;
+	case SHFUNC_CRC:
+		if (args->hashlen !=  4) { /* 32 bits */
+			printf("CRC supports only the following hash digest lengths: "
+			       "4\n");
+			return -EINVAL;
+		}
+		break;
+	case SHFUNC_MD5:
+		if (args->hashlen != 16) { /* 128 bits */
+			printf("MD5 supports only the following hash digest lengths: "
+			       "16\n");
+			return -EINVAL;
+		}
+		break;
+	case SHFUNC_HAVAL:
+		if (args->hashlen != 16 && /* 128 bits */
+		    args->hashlen != 20 && /* 160 bits */
+		    args->hashlen != 24 && /* 192 bits */
+		    args->hashlen != 28 && /* 224 bits */
+		    args->hashlen != 32) { /* 256 bits */
+			printf("HAVAL supports only the following hash digest lengths: "
+			       "16, 20, 24, 28, 32, 48, 64\n");
+			return -EINVAL;
+		}
+		break;
+	case SHFUNC_MANUAL:
+	default:
+		break;
 	}
 
 	/* bucket/entry overflow check */
@@ -240,7 +334,7 @@ static void mkfs(struct storage *s, struct args *args)
 #elif __BYTE_ORDER == __BIG_ENDIAN
 	hdr_common->vol_byteorder = SBO_BIGENDIAN;
 #else
-#warning "Could not detect byte-order"
+#error "Could not detect byte-order"
 #endif
 	hdr_common->vol_encoding = SENC_UNSPECIFIED;
 	hdr_common->vol_ts_creation = gettimestamp_s();

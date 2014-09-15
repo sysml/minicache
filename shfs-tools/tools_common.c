@@ -243,7 +243,11 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	       (chunksize * hdr_common->vol_size) / 1024);
 
 	printf("Hash function:      %s (%"PRIu32" bits)\n",
-	       (hdr_config->hfunc == SHFUNC_SHA ? "SHA" : "Unknown"),
+	       (hdr_config->hfunc == SHFUNC_SHA ? "SHA" :
+	        (hdr_config->hfunc == SHFUNC_CRC ? "CRC" :
+	         (hdr_config->hfunc == SHFUNC_MD5 ? "MD5" :
+	          (hdr_config->hfunc == SHFUNC_HAVAL ? "HAVAL" :
+	           (hdr_config->hfunc == SHFUNC_MANUAL ? "Manual" : "Unknown"))))),
 	       hdr_config->hlen * 8);
 	printf("Hash table:         %"PRIu32" entries in %"PRIu32" buckets\n" \
 	       "                    %"PRIu64" chunks (%"PRIu64" KiB)\n" \

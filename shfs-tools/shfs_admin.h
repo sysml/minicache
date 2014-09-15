@@ -30,7 +30,6 @@ struct token {
 	char *optstr0;
 	char *optstr1;
 	char *optstr2;
-	char *optstr3;
 };
 
 struct args {
@@ -59,6 +58,7 @@ struct vol_info {
 	uint32_t htable_nb_entries;
 	uint32_t htable_nb_entries_per_bucket;
 	uint32_t htable_nb_entries_per_chunk;
+	uint8_t hfunc;
 	uint8_t hlen;
 
 	struct shfs_bentry *def_bentry;

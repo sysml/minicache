@@ -23,7 +23,7 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:r:c:d:Cm:n:li";
+const char *short_opts = "h?vVfa:r:c:d:Cm:n:D:li";
 
 static struct option long_opts[] = {
 	{"help",		no_argument,		NULL,	'h'},
@@ -37,6 +37,7 @@ static struct option long_opts[] = {
 	{"clear-default",	no_argument,		NULL,	'C'},
 	{"mime",		required_argument,	NULL,	'm'},
 	{"name",		required_argument,	NULL,	'n'},
+	{"digest",		required_argument,	NULL,	'D'},
 	{"ls",			no_argument,            NULL,	'l'},
 	{"info",		no_argument,            NULL,	'i'},
 	{NULL, 0, NULL, 0} /* end of list */
@@ -61,7 +62,9 @@ static void print_usage(char *argv0)
 	printf("  For each add-obj token:\n");
 	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	printf("    -n, --name [NAME]          sets an additional name for the object\n");
-	//printf("    -D, --digest [HASH]        sets the HASH digest for the object (availability depends on volume format)\n");
+	printf("    -D, --digest [HASH]        sets the HASH digest for the object\n");
+	printf("                                (only available when volume is formatted with "
+	                                        "hash function 'Manual')\n");
 	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
 	printf("  -r, --rm-obj [HASH]          removes an object from the volume\n");
 	printf("  -c, --cat-obj [HASH]         exports an object to stdout\n");
@@ -187,6 +190,14 @@ static int parse_args(int argc, char **argv, struct args *args)
 				return -EINVAL;
 			}
 			if (parse_args_setval_str(&ctoken->optstr1, optarg) < 0)
+				die();
+			break;
+		case 'D': /* digest */
+			if (!ctoken || ctoken->action != ADDOBJ) {
+				eprintf("Please set digest after an add-obj token\n");
+				return -EINVAL;
+			}
+			if (parse_args_setval_str(&ctoken->optstr2, optarg) < 0)
 				die();
 			break;
 		case 'r': /* rm-obj */
@@ -426,6 +437,7 @@ static void load_vol_hconf(void)
 	shfs_vol.htable_nb_entries            = SHFS_HTABLE_NB_ENTRIES(hdr_config);
 	shfs_vol.htable_nb_entries_per_chunk  = SHFS_HENTRIES_PER_CHUNK(shfs_vol.chunksize);
 	shfs_vol.htable_len                   = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, shfs_vol.chunksize);
+	shfs_vol.hfunc                        = hdr_config->hfunc;
 	shfs_vol.hlen                         = hdr_config->hlen;
 	shfs_vol.allocator                    = hdr_config->allocator;
 
@@ -602,6 +614,77 @@ void umount_shfs(void) {
  * ACTIONS                                                                    *
  ******************************************************************************/
 
+/* ugly function that converts SHFS hash settings to mhash */
+static inline hashid shfs_mhash_type(uint8_t hfunc, uint8_t hlen) {
+	hashid type;
+
+	switch(hfunc) {
+	case SHFUNC_SHA:
+		switch (hlen) {
+		case 20:
+			type = MHASH_SHA1;
+			break;
+		case 28:
+			type = MHASH_SHA224;
+			break;
+		case 32:
+			type = MHASH_SHA256;
+			break;
+		case 48:
+			type = MHASH_SHA384;
+			break;
+		case 64:
+			type = MHASH_SHA512;
+			break;
+		default:
+			dief("Unsupported digest length for SHA\n");
+		}
+		break;
+	case SHFUNC_CRC:
+		switch (hlen) {
+		case 4:
+			type = MHASH_CRC32;
+			break;
+		default:
+			dief("Unsupported digest length for CRC\n");
+		}
+		break;
+	case SHFUNC_MD5:
+		switch (hlen) {
+		case 16:
+			type = MHASH_MD5;
+			break;
+		default:
+			dief("Unsupported digest length for MD5\n");
+		}
+		break;
+	case SHFUNC_HAVAL:
+		switch (hlen) {
+		case 16:
+			type = MHASH_HAVAL128;
+			break;
+		case 20:
+			type = MHASH_HAVAL160;
+			break;
+		case 24:
+			type = MHASH_HAVAL192;
+			break;
+		case 28:
+			type = MHASH_HAVAL224;
+			break;
+		case 32:
+			type = MHASH_HAVAL256;
+			break;
+		default:
+			dief("Unsupported digest length for HAVAL\n");
+		}
+		break;
+	default:
+		dief("Unsupported hash function\n");
+	}
+	return type;
+}
+
 static int actn_addfile(struct token *j)
 {
 	struct shfs_bentry *bentry;
@@ -660,46 +743,58 @@ static int actn_addfile(struct token *j)
 		goto err_release_container;
 	}
 
-	/* calculate checksum */
-	dprintf(D_L0, "Calculating hash of file contents...\n");
-	td = mhash_init(MHASH_SHA256);
-	if (td == MHASH_FAILED) {
-		eprintf("Could not initialize hash algorithm\n");
-		ret = -1;
-		goto err_free_tmp_chk;
-	}
-	if (lseek(fd, 0, SEEK_SET) < 0) {
-		eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
-		ret = -1;
-		goto err_free_tmp_chk;
-	}
-	for (c = 0; c < csize; c++) {
-		if (c == (csize - 1))
-			rlen = fsize % shfs_vol.chunksize;
-		else
-			rlen = shfs_vol.chunksize;
-
-		ret = read(fd, tmp_chk, rlen);
-		if (ret < 0) {
-			eprintf("Could not read from %s: %s\n", j->path, strerror(errno));
+	/* calculate hash */
+	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
+		dprintf(D_L0, "Calculating hash of file contents...\n");
+		td = mhash_init(shfs_mhash_type(shfs_vol.hfunc, shfs_vol.hlen));
+		if (td == MHASH_FAILED) {
+			eprintf("Could not initialize hash algorithm\n");
 			ret = -1;
-			goto err_mhash_deinit;
+			goto err_free_tmp_chk;
 		}
-		if (cancel) {
-			ret = -2;
-			goto err_mhash_deinit;
+		if (lseek(fd, 0, SEEK_SET) < 0) {
+			eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
+			ret = -1;
+			goto err_free_tmp_chk;
 		}
-		mhash(td, tmp_chk, rlen); /* hash chunk */
+		for (c = 0; c < csize; c++) {
+			if (c == (csize - 1))
+				rlen = fsize % shfs_vol.chunksize;
+			else
+				rlen = shfs_vol.chunksize;
+
+			ret = read(fd, tmp_chk, rlen);
+			if (ret < 0) {
+				eprintf("Could not read from %s: %s\n", j->path, strerror(errno));
+				ret = -1;
+				goto err_mhash_deinit;
+			}
+			if (cancel) {
+				ret = -2;
+				goto err_mhash_deinit;
+			}
+			mhash(td, tmp_chk, rlen); /* hash chunk */
+		}
+		mhash_deinit(td, &fhash);
+	} else {
+		if (!j->optstr2) {
+			eprintf("Missing required hash digest for %s\n", j->path);
+			ret = -1;
+			goto err_free_tmp_chk;
+		}
+		if (hash_parse(j->optstr2, fhash, shfs_vol.hlen) != 0) {
+			eprintf("Could not parse specified hash digest %s for %s\n", j->optstr2, j->path);
+			ret = -1;
+			goto err_free_tmp_chk;
+		}
 	}
-	mhash_deinit(td, &fhash);
 	if (verbosity >= D_L0) {
 		str_hash[(shfs_vol.hlen * 2)] = '\0';
 		hash_unparse(fhash, shfs_vol.hlen, str_hash);
-		printf("Hash of %s is: %s\n",
+		printf("Hash for %s is: %s\n",
 		       j->path,
 		       str_hash);
 	}
-
 
 	/* find place in hash list and add entry
 	 * (still in-memory, will be written to device on umount) */
