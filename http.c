@@ -37,11 +37,12 @@
 #define HTTP_TCPKEEPALIVE_TIMEOUT 90 /* = x sec */
 #define HTTP_TCPKEEPALIVE_IDLE    30 /* = x sec */
 
-#define HTTPHDR_URL_MAXLEN        67 /* '/' + ':' + 512 bits hash + '\0' */
+#define HTTPHDR_URL_MAXLEN        99 /* MAX: '/' + '?' + 512 bits hash + '\0' */
 #define HTTPHDR_BUFFER_MAXLEN     64
-#define HTTPHDR_REQ_MAXNB_LINES   16
+#define HTTPHDR_REQ_MAXNB_LINES   12
 #define HTTPHDR_RESP_MAXNB_SLINES  8
 #define HTTPHDR_RESP_MAXNB_DLINES  8
+#define HTTPURL_ARGS_INDICATOR   '?'
 
 #define HTTPREQ_MAXNB_BUFFERS     (DIV_ROUND_UP((size_t) TCP_SND_BUF, SHFS_MIN_CHUNKSIZE))
 
@@ -179,6 +180,7 @@ struct http_req {
 		int keepalive;
 		char url[HTTPHDR_URL_MAXLEN];
 		size_t url_len;
+		char *argp;
 		int url_overflow;
 		struct _hdr_line line[HTTPHDR_REQ_MAXNB_LINES];
 		uint32_t nb_lines;
@@ -440,6 +442,7 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 	hreq->request_hdr.nb_lines = 0;
 	hreq->request_hdr.url_len = 0;
 	hreq->request_hdr.url_overflow = 0;
+	hreq->request_hdr.argp = NULL;
 	hreq->request_hdr.last_was_value = 1;
 	hreq->request_hdr.lines_overflow = 0;
 	hreq->response_hdr.total_len = 0;
@@ -871,7 +874,7 @@ static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t 
 {
 	struct http_sess *hsess = container_of(parser, struct http_sess, parser);
 	struct http_req *hreq = hsess->cpreq;
-	register size_t curpos, maxlen;
+	register size_t i, curpos, maxlen;
 
 	curpos = hreq->request_hdr.url_len;
 	maxlen = sizeof(hreq->request_hdr.url) - 1 - curpos;
@@ -879,7 +882,24 @@ static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t 
 		hreq->request_hdr.url_overflow = 1; /* Out of memory */
 		len = maxlen;
 	}
-	MEMCPY(&hreq->request_hdr.url[curpos], buf, len);
+
+	if (!hreq->request_hdr.argp) {
+		for (i = 0; i < len; ++i) {
+			hreq->request_hdr.url[curpos + i] = buf[i];
+
+			if (buf[i] == HTTPURL_ARGS_INDICATOR) {
+				hreq->request_hdr.argp = &hreq->request_hdr.url[curpos + i];
+				hreq->request_hdr.url_len += i;
+				len    -= i;
+				buf    += i;
+				curpos += i;
+				goto memcpy;
+			}
+		}
+	} else {
+	memcpy:
+		MEMCPY(&hreq->request_hdr.url[curpos], buf, len);
+	}
 	hreq->request_hdr.url_len += len;
 	return 0;
 }
@@ -1058,8 +1078,16 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	/* eliminate leading '/'s */
 	while (hreq->request_hdr.url[url_offset] == '/')
 		++url_offset;
+
+#ifdef HTTP_URL_CUTARGS
+	/* remove args from URL when there was a filename passed (-> "open by filename") */
+	if (hreq->request_hdr.argp &&
+	    &(hreq->request_hdr.url[url_offset]) != hreq->request_hdr.argp)
+		*(hreq->request_hdr.argp) = '\0';
+#endif
+
 #ifdef HTTP_TESTFILE
-	if ((hreq->request_hdr.url[url_offset] == SFHS_HASH_INDICATOR_PREFIX) &&
+	if ((hreq->request_hdr.url[url_offset] == HTTPURL_ARGS_INDICATOR) &&
 	    (hash_parse(&hreq->request_hdr.url[url_offset + 1], h, shfs_vol.hlen) == 0) &&
 	    hash_is_zero(h, shfs_vol.hlen))
 		goto testfile_hdr;

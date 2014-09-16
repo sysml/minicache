@@ -7,7 +7,7 @@
 #include "shfs_cache.h"
 #include "likely.h"
 
-#define SHFS_HASH_INDICATOR_PREFIX '?'
+#define SHFS_HASH_INDICATOR_PREFIX '?' /* has to be the same as HTTPURL_ARGS_INDICATOR_PREFIX in http.c */
 
 typedef struct shfs_bentry *SHFS_FD;
 

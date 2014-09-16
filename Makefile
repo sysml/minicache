@@ -94,6 +94,7 @@ CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 CFLAGS				+= -DHTTP_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
 //CFLAGS			+= -DHTTP_TESTFILE
 CFLAGS				+= -DHTTP_STATS_DISPLAY
+CFLAGS				+= -DHTTP_URL_CUTARGS
 
 ######################################
 ## ctldir options
