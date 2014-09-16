@@ -19,9 +19,153 @@ function get_hash() {
     printf "%s" "$1" | sha1sum | awk '{ print $1 }'
 }
 
+function str_tolower()
+{
+	local STR=$1
+	printf "%s" "${STR,,}"
+}
+
+function str_fileext()
+{
+    # contains string an file extension part?
+    local STR=$1
+    local LEN=${#STR}
+    local I=
+
+    for (( I=LEN-1; I>0; I-- )); do
+	if [ "${STR:$I:1}" = "." ]; then
+	    # yes -> cut / give me the last extension
+	    local P=$(( I + 1 ))
+	    local L=$(( LEN - P ))
+	    printf "%s" "${STR:$P:$L}"
+	    return
+	fi
+    done
+    printf "%s" ""
+}
+
 function get_mime() {
-    local TMP="$( file -i "$1" | awk '{ print $2 }' )"
-    printf "%s" "${TMP::-1}"
+    local FEXT="$( str_tolower "$( str_fileext "$1" )" )"
+    local MIME=
+
+    case "$FEXT" in
+	"shtml"|"html"|"htm")
+	    MIME="text/html"
+	    ;;
+	"js")
+	    MIME="text/javascript"
+	    ;;
+	"css")
+	    MIME="text/css"
+	    ;;
+	"xml")
+	    MIME="text/xml"
+	    ;;
+	"text"|"txt"|"md"|"asc")
+	    MIME="text/plain"
+	    ;;
+	"rtf")
+	    MIME="text/rtf"
+	    ;;
+	"odg")
+	    MIME="application/vnd.oasis.opendocument.graphics"
+	    ;;
+	"pdf")
+	    MIME="application/pdf"
+	    ;;
+	"ps"|"eps"|"ai")
+	    MIME="application/postscript"
+	    ;;
+
+	"jpeg"|"jpg"|"jpe")
+	    MIME="image/jpeg"
+	    ;;
+	"gif")
+	    MIME="image/gif"
+	    ;;
+	"png")
+	    MIME="image/png"
+	    ;;
+	"tiff"|"tif")
+	    MIME="image/tiff"
+	    ;;
+	"ico")
+	    MIME="image/x-icon"
+	    ;;
+	"bmp"|"bm")
+	    MIME="image/x-bmp"
+	    ;;
+	"svg")
+	    MIME="image/svg+xml"
+	    ;;
+
+	"ttf")
+	    MIME="application/x-font-ttf"
+	    ;;
+	"otf")
+	    MIME="application/vnd.ms-opentype"
+	    ;;
+	"eot")
+	    MIME="application/vnd.ms-fontobject"
+	    ;;
+	"woff")
+	    MIME="application/x-font-woff"
+	    ;;
+
+	"mka")
+	    MIME="audio/x-matroska"
+	    ;;
+	"mpga"|"mpa"|"mp3"|"mp2")
+	    MIME="audio/mpeg"
+	    ;;
+	"oga"|"ogg"|"spx")
+	    MIME="audio/ogg"
+	    ;;
+	"flac")
+	    MIME="audio/flac"
+	    ;;
+	"wav")
+	    MIME="audio/wav"
+	    ;;
+
+	"mpeg"|"mpg"|"mpe")
+	    MIME="video/mpeg"
+	    ;;
+	"ogv")
+	    MIME="video/ogg"
+	    ;;
+	"flv"|"f4v")
+	    MIME="video/x-flv"
+	    ;;
+	"mp4")
+	    MIME="video/mpeg"
+	    ;;
+	"mk3d"|"mkv"|"mks")
+	    MIME="video/x-matroska"
+	    ;;
+	"mov"|"qt")
+	    MIME="video/quicktime"
+	    ;;
+	"avi")
+	    MIME="video/avi"
+	    ;;
+
+	"tar")
+	    MIME="application/x-tar"
+	    ;;
+	"tgz"|"gz")
+	    MIME="application/x-gzip"
+	    ;;
+	"zip")
+	    MIME="application/zip"
+	    ;;
+
+	# default type
+	*)
+	    MIME="application/octet-stream"
+	    ;;
+    esac
+    printf "%s" "$MIME"
 }
 
 function get_size() {
