@@ -59,7 +59,7 @@ function get_mime() {
 	    MIME="text/css"
 	    ;;
 	"xml")
-	    MIME="text/xml"
+	    MIME="application/xml"
 	    ;;
 	"text"|"txt"|"md"|"asc")
 	    MIME="text/plain"
@@ -100,7 +100,7 @@ function get_mime() {
 	    ;;
 
 	"ttf")
-	    MIME="application/x-font-ttf"
+	    MIME="application/font-ttf"
 	    ;;
 	"otf")
 	    MIME="application/vnd.ms-opentype"
@@ -109,7 +109,7 @@ function get_mime() {
 	    MIME="application/vnd.ms-fontobject"
 	    ;;
 	"woff")
-	    MIME="application/x-font-woff"
+	    MIME="application/font-woff"
 	    ;;
 
 	"mka")
