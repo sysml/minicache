@@ -745,6 +745,9 @@ static int actn_addfile(struct token *j)
 
 	/* calculate hash */
 	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
+		if (j->optstr2)
+			eprintf("Volume does not support manual hash digests. Ignoring specified digest for %s\n", j->path);
+
 		dprintf(D_L0, "Calculating hash of file contents...\n");
 		td = mhash_init(shfs_mhash_type(shfs_vol.hfunc, shfs_vol.hlen));
 		if (td == MHASH_FAILED) {
