@@ -1227,6 +1227,24 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	dprintf(" Header length: %lu\n", hreq->response_hdr.total_len);
 	dprintf(" Body length:   %lu\n", hreq->rlen + _http_sep_len);
 #endif
+#ifdef HTTP_DEBUG_PRINTACCESS
+#ifdef HTTP_URL_CUTARGS
+	if (hreq->request_hdr.argp &&
+	    &(hreq->request_hdr.url[url_offset]) != hreq->request_hdr.argp) {
+		printk("[%03u] %s%c%s\n",
+		       hreq->response_hdr.code,
+		       hreq->request_hdr.url,
+		       HTTPURL_ARGS_INDICATOR,
+		       hreq->request_hdr.argp + 1);
+	} else {
+#endif
+	printk("[%03u] %s\n",
+	       hreq->response_hdr.code,
+	       hreq->request_hdr.url);
+#ifdef HTTP_URL_CUTARGS
+	}
+#endif
+#endif
 	return;
 
 	/**
