@@ -40,7 +40,7 @@ def ctltrigger(domid, action, args=[], scope="minicache"):
         if e.errno == os.errno.ENOENT:
             try:
                 # try again with CMDB
-                pargs = [CMDB_CTLTRIGGER, domid, scope, action]
+                pargs = [CMDB_CTLTRIGGER, domid, scope, "--", action]
                 pargs.extend(args)
                 p = subprocess.Popen(pargs, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
             except OSError as e:
@@ -58,7 +58,10 @@ def ctltrigger(domid, action, args=[], scope="minicache"):
 def usage():
     sys.stderr.write("Usage: %s [OPTION]... [DEVICE]...\n" % sys.argv[0])
     sys.stderr.write("  -d, --dom [DOMID]          triggers remount on Domain DOMID after completion\n");
-    sys.stderr.write("  -r, --rm-file [HASH]       removes a file from the volume\n");
+    sys.stderr.write("  -a, --add-obj [FILE]       adds a file to the volume\n");
+    sys.stderr.write("  For each add-obj token:\n");
+    sys.stderr.write("    -m, --mime [MIME]        sets the MIME type for the file\n");
+    sys.stderr.write("    -n, --name [NAME]        sets an additional name for the file\n");
     exit(1)
 
 ##---------------------------------------------------------------
@@ -67,13 +70,14 @@ def usage():
 
 # check arguments
 try:
-    opts, rem_args = getopt.getopt(sys.argv[1:], "d:r:h", ["dom=", "rm-file=", "help"])
+    opts, rem_args = getopt.getopt(sys.argv[1:], "d:a:m:n:h", ["dom=", "add-obj=", "mime=", "name=", "help"])
 except getopt.GetoptError as err:
     sys.stderr.write(str(err))
     usage()
 
 dom = []
-rm = []
+add = []
+i = -1
 for o, a in opts:
     if o in ("-d", "--dom"):
         try:
@@ -84,8 +88,19 @@ for o, a in opts:
         except ValueError as e:
             sys.stderr.write("'%s' is an invalid domain ID\n" % a)
             exit(1)
-    elif o in ("-r", "--rm-file"):
-        rm.append(a)
+    elif o in ("-a", "--add-obj"):
+        add.append([a, "", ""])
+        i = len(add) - 1
+    elif o in ("-n", "--name"):
+        if i < 0:
+            sys.stderr.write("Please set name after an add-obj token\n")
+            exit(1)
+        add[i][1] = a
+    elif o in ("-m", "--mime"):
+        if i < 0:
+            sys.stderr.write("Please set mime after an add-obj token\n")
+            exit(1)
+        add[i][2] = a
     elif o in ("-h", "--help"):
         usage()
         exit(0)
@@ -99,8 +114,12 @@ if len(sys.argv) < 3:
 
 # run shfs_admin
 args = []
-for r in rm:
-    args.extend(['-r', r])
+for a in add:
+    args.extend(['-a', a[0]])
+    if len(a[1]) > 0 and not a[1].isspace():
+        args.extend(['-n', a[1]])
+    if len(a[2]) > 0 and not a[2].isspace():
+        args.extend(['-m', a[2]])
 args.extend(rem_args)
 shfsadmin(args=args)
 

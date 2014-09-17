@@ -1,10 +1,15 @@
 /*
  *
  */
+#include <mini-os/os.h>
+#include <mini-os/types.h>
+#include <mini-os/xmalloc.h>
+
 #include "likely.h"
 #include "shfs_fio.h"
 #include "shfs.h"
 #include "shfs_btable.h"
+#include "shfs_cache.h"
 
 #ifdef SHFS_STATS
 #include "shfs_stats.h"
@@ -94,23 +99,30 @@ SHFS_FD shfs_fio_open(const char *path)
 		errno = ENODEV;
 		return NULL;
 	}
-	if (strlen(path) == 0) {
-		errno = ENOENT;
-		return NULL;
-	}
 
 	/* lookup bentry (either by name or hash) */
-	if (path[0] == SFHS_HASH_INDICATOR_PREFIX) {
+	if ((path[0] == SHFS_HASH_INDICATOR_PREFIX) &&
+	    (path[1] != '\0')) {
 		bentry = _shfs_lookup_bentry_by_hash(path + 1);
 	} else {
-#ifdef SHFS_OPENBYNAME
-		bentry = _shfs_lookup_bentry_by_name(path);
-#else
-		bentry = NULL;
+		if ((path[0] == '\0') ||
+		    (path[0] == SHFS_HASH_INDICATOR_PREFIX && path[1] == '\0')) {
+			/* empty filename -> use default file */
+			bentry = shfs_vol.def_bentry;
 #ifdef SHFS_STATS
-		++shfs_vol.mstats.i;
+			if (!bentry)
+				++shfs_vol.mstats.i;
+#endif
+		} else {
+#ifdef SHFS_OPENBYNAME
+			bentry = _shfs_lookup_bentry_by_name(path);
+#else
+			bentry = NULL;
+#ifdef SHFS_STATS
+			++shfs_vol.mstats.i;
 #endif
 #endif
+		}
 	}
 	if (!bentry) {
 		errno = ENOENT;
@@ -189,13 +201,13 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out)
 
 /*
  * Slow sync I/O file read function
- * Warning: It is using busy-waiting
+ * Warning: This function is using busy-waiting
  */
 int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 {
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 	struct shfs_hentry *hentry = bentry->hentry;
-	struct mempool_obj *cobj;
+	void     *chk_buf;
 	chk_t    chk_off;
 	uint64_t byt_off;
 	uint64_t buf_off;
@@ -209,8 +221,8 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 		return -EINVAL;
 
 	/* pick chunk I/O buffer from pool */
-	cobj = mempool_pick(shfs_vol.chunkpool);
-	if (!cobj)
+	chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+	if (!chk_buf)
 		return -ENOMEM;
 
 	/* perform the I/O chunk-wise */
@@ -220,13 +232,13 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	buf_off = 0;
 
 	while (left) {
-		ret = shfs_read_chunk(chk_off, 1, cobj->data);
+		ret = shfs_read_chunk(chk_off, 1, chk_buf);
 		if (ret < 0)
 			goto out;
 
 		rlen = min(shfs_vol.chunksize - byt_off, left);
 		memcpy((uint8_t *) buf + buf_off,
-		       (uint8_t *) cobj->data + byt_off,
+		       (uint8_t *) chk_buf + byt_off,
 		       rlen);
 		left -= rlen;
 
@@ -236,6 +248,57 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	}
 
  out:
-	mempool_put(cobj);
+	xfree(chk_buf);
+	return ret;
+}
+
+/*
+ * Slow sync I/O file read function but using cache
+ * Warning: This function is using busy-waiting
+ */
+int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
+{
+	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
+	struct shfs_hentry *hentry = bentry->hentry;
+	struct shfs_cache_entry *cce;
+	chk_t    chk_off;
+	uint64_t byt_off;
+	uint64_t buf_off;
+	uint64_t left;
+	uint64_t rlen;
+	int ret = 0;
+
+	/* check boundaries */
+	if ((offset > hentry->len) ||
+	    ((offset + len) > hentry->len))
+		return -EINVAL;
+
+	/* perform the I/O chunk-wise */
+	chk_off = shfs_volchk_foff(f, offset);
+	byt_off = shfs_volchkoff_foff(f, offset);
+	left = len;
+	buf_off = 0;
+
+	while (left) {
+		cce = shfs_cache_read(chk_off);
+		if (!cce) {
+			ret = -errno;
+			goto out;
+		}
+
+		rlen = min(shfs_vol.chunksize - byt_off, left);
+		memcpy((uint8_t *) buf + buf_off,
+		       (uint8_t *) cce->buffer + byt_off,
+		       rlen);
+		left -= rlen;
+
+		shfs_cache_release(cce);
+
+		++chk_off;   /* go to next chunk */
+		byt_off = 0; /* byte offset is set on the first chunk only */
+		buf_off += rlen;
+	}
+
+ out:
 	return ret;
 }

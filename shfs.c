@@ -9,13 +9,13 @@
 #include <mini-os/types.h>
 #include <stdint.h>
 #include <errno.h>
-#include <mempool.h>
 
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
 #include "shfs_btable.h"
 #include "shfs_tools.h"
+#include "shfs_cache.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
 #include "shfs_stats.h"
@@ -25,6 +25,8 @@
 #define ENABLE_DEBUG
 #endif
 #include "debug.h"
+
+#include "http.h"
 
 #ifndef CACHELINE_SIZE
 #define CACHELINE_SIZE 64
@@ -37,9 +39,13 @@ struct vol_info shfs_vol;
 
 int init_shfs(void) {
 	init_SEMAPHORE(&shfs_mount_lock, 1);
-
 	return 0;
 }
+
+void exit_shfs(void) {
+	BUG_ON(shfs_mounted);
+}
+
 
 /**
  * This function tries to open a blkdev and checks if it has a valid SHFS label
@@ -202,7 +208,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 		shfs_vol.member[i].sfactor = shfs_vol.stripesize / blkdev_ssize(shfs_vol.member[i].bd);
 		if (shfs_vol.member[i].sfactor == 0) {
 			dprintf("Stripe size invalid on volume '%s'\n",
-			       shfs_vol.volname);
+			        shfs_vol.volname);
 			ret = -ENOENT;
 			goto err_close_bds;
 		}
@@ -396,6 +402,8 @@ static int load_vol_htable(void)
 	}
 
 	/* feed bucket table */
+	shfs_vol.def_bentry = NULL;
+
 	dprintf("Feeding hash table...\n");
 	for (i = 0; i < shfs_vol.htable_nb_entries; ++i) {
 		c = SHFS_HTABLE_CHUNK_NO(i, shfs_vol.htable_nb_entries_per_chunk);
@@ -413,6 +421,8 @@ static int load_vol_htable(void)
 #ifdef SHFS_STATS
 		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
 #endif
+		if (SHFS_HENTRY_ISDEFAULT(hentry))
+			shfs_vol.def_bentry = bentry;
 	}
 
 	return 0;
@@ -436,6 +446,8 @@ static int load_vol_htable(void)
  err_out:
 	return ret;
 }
+
+static void _aiotoken_pool_objinit(struct mempool_obj *, void *);
 
 /**
  * Mount a SHFS volume
@@ -463,8 +475,9 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	if (ret < 0)
 		goto err_out;
 
-	/* a memory pool required for async I/O requests */
-	shfs_vol.aiotoken_pool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _shfs_aio_token));
+	/* a memory pool required for async I/O requests (even on cache) */
+	shfs_vol.aiotoken_pool = alloc_mempool(NB_AIOTOKEN, sizeof(struct _shfs_aio_token),
+	                                       0, 0, 0, _aiotoken_pool_objinit, NULL, 0);
 	if (!shfs_vol.aiotoken_pool)
 		goto err_close_members;
 	shfs_mounted = 1; /* required by next function calls */
@@ -481,16 +494,17 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	if (ret < 0)
 		goto err_close_members;
 
-	/* a memory pool that is used by shfs_io for
-	 * doing I/O */
-	shfs_vol.chunkpool = alloc_mempool(CHUNKPOOL_NB_BUFFERS,
-	                                   shfs_vol.chunksize,
-	                                   shfs_vol.ioalign,
-	                                   0, 0, NULL, NULL, 0);
-	if (!shfs_vol.chunkpool) {
-		shfs_mounted = 0;
+	shfs_vol.remount_chunk_buffer = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+	if (!shfs_vol.remount_chunk_buffer)
 		goto err_free_htable;
-	}
+
+	/* chunk buffer cache for I/O */
+	/* TODO/NOTE: For now the http server is the only service supporting the
+	 *            AIO retry callback. In case there will be more in the future,
+	 *            a callback registration service needs to be implemented */
+	ret = shfs_alloc_cache(http_retry_aio_cb);
+	if (ret < 0)
+		goto err_free_remount_buffer;
 
 #ifdef SHFS_STATS
 	ret = shfs_init_mstats(shfs_vol.htable_nb_buckets,
@@ -498,7 +512,7 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	                       shfs_vol.hlen);
 	if (!ret < 0) {
 		shfs_mounted = 0;
-		goto  err_free_chunkpool;
+		goto  err_free_chunkcache;
 	}
 #endif
 
@@ -506,8 +520,10 @@ int mount_shfs(unsigned int vbd_id[], unsigned int count)
 	up(&shfs_mount_lock);
 	return 0;
 
- err_free_chunkpool:
-	free_mempool(shfs_vol.chunkpool);
+ err_free_chunkcache:
+	shfs_free_cache();
+ err_free_remount_buffer:
+	xfree(shfs_vol.remount_chunk_buffer);
  err_free_htable:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
 		if (shfs_vol.htable_chunk_cache[i])
@@ -541,15 +557,15 @@ int umount_shfs(int force) {
 	if (shfs_mounted) {
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
-		    mempool_free_count(shfs_vol.chunkpool) < CHUNKPOOL_NB_BUFFERS) {
+		    shfs_cache_ref_count()) {
 			/* there are still open files and/or async I/O is happening */
 			dprintf("Could not umount: SHFS is busy:\n");
-			dprintf(" Open files:          %u\n",
+			dprintf(" Open files:               %u\n",
 			        shfs_nb_open);
-			dprintf(" Infly AIO tokens:    %u\n",
+			dprintf(" Infly AIO tokens:         %u\n",
 			        MAX_REQUESTS - mempool_free_count(shfs_vol.aiotoken_pool));
-			dprintf(" Infly chunk buffers: %u\n",
-			        CHUNKPOOL_NB_BUFFERS - mempool_free_count(shfs_vol.chunkpool));
+			dprintf(" Referenced chunk buffers: %u\n",
+			        shfs_cache_ref_count());
 
 			if (!force) {
 				up(&shfs_mount_lock);
@@ -563,9 +579,10 @@ int umount_shfs(int force) {
 				down(&bentry->updatelock); /* wait until file is closed */
 			}
 		}
-		shfs_mounted = 0;
+		shfs_free_cache();
 
-		free_mempool(shfs_vol.chunkpool);
+		shfs_mounted = 0;
+		xfree(shfs_vol.remount_chunk_buffer);
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
 			if (shfs_vol.htable_chunk_cache[i])
 				xfree(shfs_vol.htable_chunk_cache[i]);
@@ -597,20 +614,12 @@ static int reload_vol_htable(void) {
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *chentry;
 	struct shfs_hentry *nhentry;
-	struct mempool_obj *nchk_buf_obj;
 	void *cchk_buf;
-	void *nchk_buf;
+	void *nchk_buf = shfs_vol.remount_chunk_buffer;
 	int chash_is_zero, nhash_is_zero;
 	register chk_t c;
 	register unsigned int e;
 	int ret;
-
-	nchk_buf_obj = mempool_pick(shfs_vol.chunkpool);
-	if (!nchk_buf_obj) {
-		ret = -errno;
-		goto out;
-	}
-	nchk_buf = nchk_buf_obj->data;
 
 	dprintf("Re-reading hash table...\n");
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
@@ -618,7 +627,7 @@ static int reload_vol_htable(void) {
 		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf);
 		if (ret < 0) {
 			ret = -EIO;
-			goto out_free_nchk_buf;
+			goto out;
 		}
 		cchk_buf = shfs_vol.htable_chunk_cache[c];
 
@@ -632,7 +641,8 @@ static int reload_vol_htable(void) {
 				chash_is_zero = hash_is_zero(chentry->hash, shfs_vol.hlen);
 				nhash_is_zero = hash_is_zero(nhentry->hash, shfs_vol.hlen);
 
-				if (!chash_is_zero || !nhash_is_zero) {
+				if (!chash_is_zero || !nhash_is_zero) { /* process only if at least one hash
+				                                         * digest is non-zero */
 					dprintf("Chunk %lu, entry %lu has been updated\n", c ,e);
 					/* Update hash of entry
 					 * Note: Any open file should not be affected, because
@@ -671,44 +681,67 @@ static int reload_vol_htable(void) {
 #endif
 					memcpy(chentry, nhentry, sizeof(*chentry));
 
+					shfs_flush_cache();
+
 					/* unlock entry */
 					up(&bentry->updatelock);
 					bentry->update = 0;
+
+					/* update default entry reference */
+ 					if (shfs_vol.def_bentry == bentry &&
+					    !SHFS_HENTRY_ISDEFAULT(nhentry))
+						shfs_vol.def_bentry = NULL;
+					else if (SHFS_HENTRY_ISDEFAULT(nhentry))
+						shfs_vol.def_bentry = bentry;
 				}
 			} else if (chentry->chunk  != nhentry->chunk  ||
 			           chentry->offset != nhentry->offset ||
-			           chentry->len    != nhentry->len) {
-				/* in this case, just the file location has been moved
+			           chentry->len    != nhentry->len    ||
+				   chentry->flags  != nhentry->flags) {
+				/* in this case, at most the file location has been moved
 				 *
 				 * Note: This is usually a bad thing but happens
 				 * if the tools were misused
 				 * Note: Since the hash digest did not change,
 				 * the stats keep the same */
+				bentry = shfs_btable_feed(shfs_vol.bt,
+				                          (c * shfs_vol.htable_nb_entries_per_chunk) + e,
+				                          nhentry->hash);
+
 				/* lock entry */
 				bentry->update = 1; /* forbid further open() */
 				down(&bentry->updatelock); /* wait until files is closed */
 
 				memcpy(chentry, nhentry, sizeof(*chentry));
 
+				shfs_flush_cache();
+
 				/* unlock entry */
 				up(&bentry->updatelock);
 				bentry->update = 0;
+
+				/* update default entry reference */
+				if (shfs_vol.def_bentry == bentry &&
+				    !SHFS_HENTRY_ISDEFAULT(nhentry))
+					shfs_vol.def_bentry = NULL;
+				else if (SHFS_HENTRY_ISDEFAULT(nhentry))
+					shfs_vol.def_bentry = bentry;
 			} else {
-				/* at least update name, mime type and creation timestamp
-				 * (just in case if these values have been changed)
+				/* at least update name, mime type, enconding and
+				 * creation timestamp (just in case if these values have
+				 * been changed)
 				 * These fields are completely independent to the file
 				 * contents and should be read at once without yielding
 				 * the CPU (e.g., snprintf, strncpy).
 				 * Because of this, no locking is required */
-				memcpy(chentry->name, nhentry->name, sizeof(chentry->name));
-				memcpy(chentry->mime, nhentry->mime, sizeof(chentry->mime));
+				memcpy(chentry->name,     nhentry->name,     sizeof(chentry->name));
+				memcpy(chentry->mime,     nhentry->mime,     sizeof(chentry->mime));
+				memcpy(chentry->encoding, nhentry->encoding, sizeof(chentry->encoding));
 				chentry->ts_creation = nhentry->ts_creation;
 			}
 		}
 	}
 
- out_free_nchk_buf:
-	mempool_put(nchk_buf_obj);
  out:
 	return ret;
 }
@@ -737,11 +770,24 @@ int remount_shfs(void) {
 }
 
 /*
- * Note: Async I/O token data access is atomic since none of these functions can
- * be interrupted or yield the CPU. Even blkfront calls the callbacks outside
+ * Note: Async I/O token data access is atomic since none of these functions are
+ * interrupted or can yield the CPU. Even blkfront calls the callbacks outside
  * of the interrupt context via blkdev_poll_req() and there is only the
- * cooperative scheduler.
+ * cooperative scheduler...
  */
+static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
+{
+	SHFS_AIO_TOKEN *t;
+
+	t = t_obj->data;
+	t->p_obj = t_obj;
+	t->ret = 0;
+	t->infly = 0;
+	t->cb = NULL;
+	t->cb_argp = NULL;
+	t->cb_cookie = NULL;
+}
+
 static void _shfs_aio_cb(int ret, void *argp) {
 	SHFS_AIO_TOKEN *t = argp;
 
@@ -749,7 +795,7 @@ static void _shfs_aio_cb(int ret, void *argp) {
 		t->ret = ret;
 	--t->infly;
 
-	if (unlikely(t->infly == 0)) {
+	if (t->infly == 0) {
 		/* call user's callback */
 		if (t->cb)
 			t->cb(t, t->cb_cookie, t->cb_argp);
@@ -764,7 +810,6 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	sector_t start_sec;
 	unsigned int m;
 	uint8_t *ptr = buffer;
-	struct mempool_obj *t_obj;
 	SHFS_AIO_TOKEN *t;
 	strp_t start_s;
 	strp_t end_s;
@@ -798,18 +843,14 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	}
 
 	/* pick token */
-	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
-	if (!t_obj) {
+	t = shfs_aio_pick_token();
+	if (!t) {
 		errno = EAGAIN;
 		goto err_out;
 	}
-	t = t_obj->data;
-	t->p_obj = t_obj;
-	t->ret = 0;
-	t->infly = 0;
 	t->cb = cb;
-	t->cb_cookie = cb_cookie;
 	t->cb_argp = cb_argp;
+	t->cb_cookie = cb_cookie;
 
 	/* setup requests */
 	for (strp = start_s; strp < end_s; ++strp) {
@@ -836,11 +877,7 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	return t;
 
  err_free_token:
-	mempool_put(t_obj);
+	shfs_aio_put_token(t);
  err_out:
 	return NULL;
-}
-
-void exit_shfs(void) {
-	BUG_ON(shfs_mounted);
 }

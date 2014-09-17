@@ -10,7 +10,7 @@
 #include <mini-os/types.h>
 #include <stdint.h>
 #include <semaphore.h>
-#include <mempool.h>
+#include "mempool.h"
 #include "blkdev.h"
 
 #include "shfs_defs.h"
@@ -19,7 +19,9 @@
 #endif
 
 #define MAX_NB_TRY_BLKDEVS 64
-#define CHUNKPOOL_NB_BUFFERS 128
+#define NB_AIOTOKEN 750 /* should be at least MAX_REQUESTS */
+
+struct shfs_cache;
 
 struct vol_member {
 	struct blkdev *bd;
@@ -42,6 +44,7 @@ struct vol_info {
 
 	struct htable *bt; /* SHFS bucket entry table */
 	void **htable_chunk_cache;
+	void *remount_chunk_buffer;
 	chk_t htable_ref;
 	chk_t htable_bak_ref;
 	chk_t htable_len;
@@ -51,8 +54,10 @@ struct vol_info {
 	uint32_t htable_nb_entries_per_chunk;
 	uint8_t hlen;
 
-	struct mempool *aiotoken_pool; /* async io tokens */
-	struct mempool *chunkpool; /* buffers for chunk I/O */
+	struct shfs_bentry *def_bentry;
+
+	struct mempool *aiotoken_pool; /* token for async I/O */
+	struct shfs_cache *chunkcache; /* chunkcache */
 
 #ifdef SHFS_STATS
 	struct shfs_mstats mstats;
@@ -100,6 +105,9 @@ struct _shfs_aio_token {
 	shfs_aiocb_t *cb;
 	void *cb_cookie;
 	void *cb_argp;
+
+	struct _shfs_aio_token *_prev; /* token chains (used by shfs_cache) */
+	struct _shfs_aio_token *_next;
 };
 
 /*
@@ -117,6 +125,20 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	shfs_aio_chunk((start), (len), 0, (buffer), (cb), (cb_cookie), (cb_argp))
 #define shfs_awrite_chunk(start, len, buffer, cb, cb_cookie, cb_argp) \
 	shfs_aio_chunk((start), (len), 1, (buffer), (cb), (cb_cookie), (cb_argp))
+
+/*
+ * Internal AIO token management (do not use this functions directly!)
+ */
+static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
+{
+	struct mempool_obj *t_obj;
+	t_obj = mempool_pick(shfs_vol.aiotoken_pool);
+	if (!t_obj)
+		return NULL;
+	return (SHFS_AIO_TOKEN *) t_obj->data;
+}
+#define shfs_aio_put_token(t) \
+	mempool_put(t->p_obj)
 
 /*
  * Returns 1 if the I/O operation has finished, 0 otherwise
@@ -149,7 +171,7 @@ static inline int shfs_aio_finalize(SHFS_AIO_TOKEN *t)
 
 	BUG_ON(t->infly != 0);
 	ret = t->ret;
-	mempool_put(t->p_obj);
+	shfs_aio_put_token(t);
 
 	return ret;
 }

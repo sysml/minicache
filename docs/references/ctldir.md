@@ -19,6 +19,11 @@ mount [VBD ID]...
  volumes shall be mounted.
 
 ```
+prefetch [FILE]
+```
+ Prefetches FILE into the disk block cache.
+
+```
 remount
 ```
  Re-mounts the currently mounted SHFS volume.
@@ -27,3 +32,8 @@ remount
 umount
 ```
  Un-mounts the currently mounted SHFS volume.
+
+```
+flush
+```
+ Flushes the disk block cache.

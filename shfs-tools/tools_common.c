@@ -49,7 +49,7 @@ struct disk *open_disk(const char *path, int mode)
 		if (err) {
 			unsigned long size32;
 
-			dprintf(D_L0, "BLKGETSIZE64 failed. Trying BLKGETSIZE\n", path);
+			dprintf(D_L0, "BLKGETSIZE64 failed. Trying BLKGETSIZE\n");
 			err = ioctl(d->fd, BLKGETSIZE, &size32);
 			if (err) {
 				eprintf("Could not query device size from %s\n", path);
@@ -60,11 +60,11 @@ struct disk *open_disk(const char *path, int mode)
 	} else {
 		d->size = (uint64_t) fd_stat.st_size;
 	}
-	dprintf(D_L0, "%s has a size of %lld bytes\n", path, d->size);
+	dprintf(D_L0, "%s has a size of %"PRIu64" bytes\n", path, d->size);
 
 	/* get prefered block size in bytes */
 	d->blksize = fd_stat.st_blksize;
-	dprintf(D_L0, "%s has a block size of %lld bytes\n", path, d->blksize);
+	dprintf(D_L0, "%s has a block size of %"PRIu32" bytes\n", path, d->blksize);
 
 	/* diable discard(trim) support */
 	/* Note: We disable it here since it is not iplemented yet */
@@ -237,29 +237,33 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	strftimestamp_s(str_date, sizeof(str_date),
 	                "%b %e, %g %H:%M", hdr_common->vol_ts_creation);
 	printf("Creation date:      %s\n", str_date);
-	printf("Chunksize:          %lu KiB\n",
+	printf("Chunksize:          %"PRIu64" KiB\n",
 	       chunksize / 1024);
-	printf("Volume size:        %lu KiB\n",
+	printf("Volume size:        %"PRIu64" KiB\n",
 	       (chunksize * hdr_common->vol_size) / 1024);
 
-	printf("Hash function:      %s (%ld bits)\n",
-	       (hdr_config->hfunc == SHFUNC_SHA ? "SHA" : "Unknown"),
+	printf("Hash function:      %s (%"PRIu32" bits)\n",
+	       (hdr_config->hfunc == SHFUNC_SHA ? "SHA" :
+	        (hdr_config->hfunc == SHFUNC_CRC ? "CRC" :
+	         (hdr_config->hfunc == SHFUNC_MD5 ? "MD5" :
+	          (hdr_config->hfunc == SHFUNC_HAVAL ? "HAVAL" :
+	           (hdr_config->hfunc == SHFUNC_MANUAL ? "Manual" : "Unknown"))))),
 	       hdr_config->hlen * 8);
-	printf("Hash table:         %lu entries in %ld buckets\n" \
-	       "                    %lu chunks (%ld KiB)\n" \
+	printf("Hash table:         %"PRIu32" entries in %"PRIu32" buckets\n" \
+	       "                    %"PRIu64" chunks (%"PRIu64" KiB)\n" \
 	       "                    %s\n",
 	       htable_total_entries, hdr_config->htable_bucket_count,
 	       htable_size_chks, htable_size / 1024,
 	       hdr_config->htable_bak_ref ? "2nd copy enabled" : "No copy");
-	printf("Entry size:         %lu Bytes (raw: %ld Bytes)\n", hentry_size, sizeof(struct shfs_hentry));
-	printf("Metadata total:     %lu chunks\n", metadata_size(hdr_common, hdr_config));
-	printf("Available space:    %lu chunks\n", avail_space(hdr_common, hdr_config));
+	printf("Entry size:         %"PRIu64" Bytes (raw: %ld Bytes)\n", hentry_size, sizeof(struct shfs_hentry));
+	printf("Metadata total:     %"PRIu64" chunks\n", metadata_size(hdr_common, hdr_config));
+	printf("Available space:    %"PRIu64" chunks\n", avail_space(hdr_common, hdr_config));
 
 	printf("\n");
-	printf("Member stripe size: %u KiB\n", hdr_common->member_stripesize / 1024);
+	printf("Member stripe size: %"PRIu32" KiB\n", hdr_common->member_stripesize / 1024);
 	printf("Member stripe mode: %s\n", (hdr_common->member_stripemode == SHFS_SM_COMBINED ?
 	                                    "Combined" : "Independent" ));
-	printf("Volume members:     %u device(s)\n", hdr_common->member_count);
+	printf("Volume members:     %"PRIu8" device(s)\n", hdr_common->member_count);
 	for (m = 0; m < hdr_common->member_count; m++) {
 		uuid_unparse(hdr_common->member[m].uuid, str_uuid);
 		printf("  Member %2d UUID:   %s\n", m, str_uuid);

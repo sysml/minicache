@@ -23,19 +23,23 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:r:m:n:li";
+const char *short_opts = "h?vVfa:r:c:d:Cm:n:D:li";
 
 static struct option long_opts[] = {
-	{"help",	no_argument,		NULL,	'h'},
-	{"version",	no_argument,		NULL,	'V'},
-	{"verbose",	no_argument,		NULL,	'v'},
-	{"force",	no_argument,		NULL,	'f'},
-	{"add-file",	required_argument,	NULL,	'a'},
-	{"rm-file",	required_argument,	NULL,	'r'},
-	{"mime",	required_argument,	NULL,	'm'},
-	{"name",	required_argument,	NULL,	'n'},
-	{"ls",	        no_argument,            NULL,	'l'},
-	{"info",	no_argument,            NULL,	'i'},
+	{"help",		no_argument,		NULL,	'h'},
+	{"version",		no_argument,		NULL,	'V'},
+	{"verbose",		no_argument,		NULL,	'v'},
+	{"force",		no_argument,		NULL,	'f'},
+	{"add-obj",		required_argument,	NULL,	'a'},
+	{"rm-obj",		required_argument,	NULL,	'r'},
+	{"cat-obj",		required_argument,	NULL,	'c'},
+	{"set-default",		required_argument,	NULL,	'd'},
+	{"clear-default",	no_argument,		NULL,	'C'},
+	{"mime",		required_argument,	NULL,	'm'},
+	{"name",		required_argument,	NULL,	'n'},
+	{"digest",		required_argument,	NULL,	'D'},
+	{"ls",			no_argument,            NULL,	'l'},
+	{"info",		no_argument,            NULL,	'i'},
 	{NULL, 0, NULL, 0} /* end of list */
 };
 
@@ -50,67 +54,72 @@ static void print_usage(char *argv0)
 	printf("Administration of an SHFS volume.\n");
 	printf("\n");
 	printf("Mandatory arguments to long options are mandatory for short options too.\n");
-	printf("  -h, --help                 displays this help and exit\n");
-	printf("  -V, --version              displays program version and exit\n");
-	printf("  -v, --verbose              increases verbosity level (max. %d times)\n", D_MAX);
-	printf("  -f, --force                suppresses warnings and user questions\n");
-	printf("  -a, --add-file [FILE]      add a file to the volume\n");
-	printf("  For each add-file token:\n");
-	printf("    -m, --mime [MIME]        sets the MIME type for the file\n");
-	printf("    -n, --name [NAME]        sets an additional name for the file\n");
-	printf("  -r, --rm-file [HASH]       removes a file from the volume\n");
-	printf("  -l, --ls                   lists the volume contents\n");
-	printf("  -i, --info                 shows volume information\n");
-	/* printf("  -r, --rm-file [HASH]       Remove a file from the volume\n"); */
+	printf("  -h, --help                   displays this help and exit\n");
+	printf("  -V, --version                displays program version and exit\n");
+	printf("  -v, --verbose                increases verbosity level (max. %d times)\n", D_MAX);
+	printf("  -f, --force                  suppresses warnings and user questions\n");
+	printf("  -a, --add-obj [FILE]         adds FILE as object to the volume\n");
+	printf("  For each add-obj token:\n");
+	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
+	printf("    -n, --name [NAME]          sets an additional name for the object\n");
+	printf("    -D, --digest [HASH]        sets the HASH digest for the object\n");
+	printf("                                (only available when volume is formatted with "
+	                                        "hash function 'Manual')\n");
+	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
+	printf("  -r, --rm-obj [HASH]          removes an object from the volume\n");
+	printf("  -c, --cat-obj [HASH]         exports an object to stdout\n");
+	printf("  -d, --set-default [HASH]     sets the object with HASH as default\n");
+	printf("  -C, --clear-default          clears reference to default object\n");
+	printf("  -l, --ls                     lists the volume contents\n");
+	printf("  -i, --info                   shows volume information\n");
 	printf("\n");
 	printf("Example (adding a file):\n");
-	printf(" %s --add-file song.mp4 /dev/ram14 /dev/ram15\n", argv0);
-
+	printf(" %s --add-obj song.mp3 -m audio/mpeg3 /dev/ram15\n", argv0);
 }
 
 static void release_args(struct args *args)
 {
-	struct job *cjob;
-	struct job *njob;
+	struct token *ctoken;
+	struct token *ntoken;
 
-	cjob = args->jobs;
+	ctoken = args->tokens;
 
-	/* release job list */
-	while (cjob) {
-		if (cjob->path)
-			free(cjob->path);
-		if (cjob->optstr0)
-			free(cjob->optstr0);
-		if (cjob->optstr1)
-			free(cjob->optstr1);
-		njob = cjob->next;
-		free(cjob);
-		cjob = njob;
+	/* release token list */
+	while (ctoken) {
+		if (ctoken->path)
+			free(ctoken->path);
+		if (ctoken->optstr0)
+			free(ctoken->optstr0);
+		if (ctoken->optstr1)
+			free(ctoken->optstr1);
+		ntoken = ctoken->next;
+		free(ctoken);
+		ctoken = ntoken;
 	}
 	memset(args, 0, sizeof(*args));
 }
 
 /**
- * Adds a job to args job list
+ * Adds a token to args token list
  *
- * ljob: Current last job of the list
+ * ltoken: Current last token of the list
  *       If it is NULL, it is assumed that there is no list currently
  *       -> this function creates the first element and adds it to args
  */
-static inline struct job *args_add_job(struct job *ljob, struct args *args)
+static inline struct token *args_add_token(struct token *ltoken, struct args *args)
 {
-	struct job *njob;
+	struct token *ntoken;
 
-	njob = calloc(1, sizeof(*njob));
-	if (!njob)
+	ntoken = calloc(1, sizeof(*ntoken));
+	if (!ntoken)
 		die();
 
-	if (ljob)
-		ljob->next = njob;
+	if (ltoken)
+		ltoken->next = ntoken;
 	else
-		args->jobs = njob;
+		args->tokens = ntoken;
 
-	return njob;
+	return ntoken;
 }
 
 static int parse_args(int argc, char **argv, struct args *args)
@@ -129,13 +138,13 @@ static int parse_args(int argc, char **argv, struct args *args)
  */
 {
 	int opt, opt_index = 0;
-	struct job *cjob;
+	struct token *ctoken;
 	/*
 	 * set default values
 	 */
 	args->nb_devs = 0;
-	args->jobs = NULL;
-	cjob = args->jobs;
+	args->tokens = NULL;
+	ctoken = args->tokens;
 
 	/*
 	 * Parse options
@@ -161,41 +170,65 @@ static int parse_args(int argc, char **argv, struct args *args)
 		case 'f': /* force */
 			force = 1;
 			break;
-		case 'a': /* add-file */
-			cjob = args_add_job(cjob, args);
-			cjob->action = ADDFILE;
-			if (parse_args_setval_str(&cjob->path, optarg) < 0)
-				die();
-			break;
-		case 'r': /* rm-file */
-			cjob = args_add_job(cjob, args);
-			cjob->action = RMFILE;
-			if (parse_args_setval_str(&cjob->path, optarg) < 0)
+		case 'a': /* add-obj */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = ADDOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
 				die();
 			break;
 		case 'm': /* mime */
-			if (!cjob || cjob->action != ADDFILE) {
-				eprintf("Please set mime after an add-file token\n");
+			if (!ctoken || ctoken->action != ADDOBJ) {
+				eprintf("Please set mime after an add-obj token\n");
 				return -EINVAL;
 			}
-			if (parse_args_setval_str(&cjob->optstr0, optarg) < 0)
+			if (parse_args_setval_str(&ctoken->optstr0, optarg) < 0)
 				die();
 			break;
 		case 'n': /* name */
-			if (!cjob || cjob->action != ADDFILE) {
-				eprintf("Please set name after an add-file token\n");
+			if (!ctoken || ctoken->action != ADDOBJ) {
+				eprintf("Please set name after an add-obj token\n");
 				return -EINVAL;
 			}
-			if (parse_args_setval_str(&cjob->optstr1, optarg) < 0)
+			if (parse_args_setval_str(&ctoken->optstr1, optarg) < 0)
 				die();
 			break;
+		case 'D': /* digest */
+			if (!ctoken || ctoken->action != ADDOBJ) {
+				eprintf("Please set digest after an add-obj token\n");
+				return -EINVAL;
+			}
+			if (parse_args_setval_str(&ctoken->optstr2, optarg) < 0)
+				die();
+			break;
+		case 'r': /* rm-obj */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = RMOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
+		case 'c': /* cat-obj */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = CATOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
+		case 'd': /* set-default */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = SETDEFOBJ;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
+		case 'C': /* clear-default */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = CLEARDEFOBJ;
+			break;
 		case 'l': /* ls */
-			cjob = args_add_job(cjob, args);
-			cjob->action = LSFILES;
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = LSOBJS;
 			break;
 		case 'i': /* info */
-			cjob = args_add_job(cjob, args);
-			cjob->action = SHOWINFO;
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = SHOWINFO;
 			break;
 		default:
 			/* unknown option */
@@ -211,14 +244,14 @@ static int parse_args(int argc, char **argv, struct args *args)
 	args->devpath = &argv[optind];
 	args->nb_devs = argc - optind;
 
-	/* check job list, if mandatory argements were given */
-	for (cjob = args->jobs; cjob != NULL; cjob = cjob->next) {
-		switch(cjob->action) {
-		case ADDFILE:
+	/* check token list, if mandatory argements were given */
+	for (ctoken = args->tokens; ctoken != NULL; ctoken = ctoken->next) {
+		switch(ctoken->action) {
+		case ADDOBJ:
 			/* nothing to check (mime is optional) */
 			break;
 		default:
-			break; /* unsupported job but should never happen */
+			break; /* unsupported token but should never happen */
 		}
 	}
 
@@ -255,7 +288,7 @@ static struct disk *checkopen_disk(const char *path, void *chk0)
 
 	d = open_disk(path, O_RDWR);
 	if (!d)
-		dief("Could not open %s\n", path);
+		exit(EXIT_FAILURE);
 
 	/* incompatible device? */
 	if (d->blksize < 512 || !POWER_OF_2(d->blksize))
@@ -404,6 +437,7 @@ static void load_vol_hconf(void)
 	shfs_vol.htable_nb_entries            = SHFS_HTABLE_NB_ENTRIES(hdr_config);
 	shfs_vol.htable_nb_entries_per_chunk  = SHFS_HENTRIES_PER_CHUNK(shfs_vol.chunksize);
 	shfs_vol.htable_len                   = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, shfs_vol.chunksize);
+	shfs_vol.hfunc                        = hdr_config->hfunc;
 	shfs_vol.hlen                         = hdr_config->hlen;
 	shfs_vol.allocator                    = hdr_config->allocator;
 
@@ -468,6 +502,9 @@ static void load_vol_htable(void)
 		bentry = shfs_btable_feed(shfs_vol.bt, i, hentry->hash);
 		bentry->hentry_htchunk  = cur_htchk;
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
+
+		if (SHFS_HENTRY_ISDEFAULT(hentry))
+			shfs_vol.def_bentry = bentry;
 	}
 }
 
@@ -577,7 +614,78 @@ void umount_shfs(void) {
  * ACTIONS                                                                    *
  ******************************************************************************/
 
-static int actn_addfile(struct job *j)
+/* ugly function that converts SHFS hash settings to mhash */
+static inline hashid shfs_mhash_type(uint8_t hfunc, uint8_t hlen) {
+	hashid type;
+
+	switch(hfunc) {
+	case SHFUNC_SHA:
+		switch (hlen) {
+		case 20:
+			type = MHASH_SHA1;
+			break;
+		case 28:
+			type = MHASH_SHA224;
+			break;
+		case 32:
+			type = MHASH_SHA256;
+			break;
+		case 48:
+			type = MHASH_SHA384;
+			break;
+		case 64:
+			type = MHASH_SHA512;
+			break;
+		default:
+			dief("Unsupported digest length for SHA\n");
+		}
+		break;
+	case SHFUNC_CRC:
+		switch (hlen) {
+		case 4:
+			type = MHASH_CRC32;
+			break;
+		default:
+			dief("Unsupported digest length for CRC\n");
+		}
+		break;
+	case SHFUNC_MD5:
+		switch (hlen) {
+		case 16:
+			type = MHASH_MD5;
+			break;
+		default:
+			dief("Unsupported digest length for MD5\n");
+		}
+		break;
+	case SHFUNC_HAVAL:
+		switch (hlen) {
+		case 16:
+			type = MHASH_HAVAL128;
+			break;
+		case 20:
+			type = MHASH_HAVAL160;
+			break;
+		case 24:
+			type = MHASH_HAVAL192;
+			break;
+		case 28:
+			type = MHASH_HAVAL224;
+			break;
+		case 32:
+			type = MHASH_HAVAL256;
+			break;
+		default:
+			dief("Unsupported digest length for HAVAL\n");
+		}
+		break;
+	default:
+		dief("Unsupported hash function\n");
+	}
+	return type;
+}
+
+static int actn_addfile(struct token *j)
 {
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
@@ -587,8 +695,9 @@ static int actn_addfile(struct job *j)
 	int fd;
 	int ret;
 	size_t fsize;
-	size_t rlen;
+	size_t left;
 	chk_t csize;
+	size_t rlen;
 	hash512_t fhash;
 	chk_t cchk;
 	MHASH td;
@@ -623,7 +732,7 @@ static int actn_addfile(struct job *j)
 		goto err_close_fd;
 	}
 	dprintf(D_L1, "Found appropriate container at chunk %lu\n", cchk);
-	dprintf(D_L1, "Reserving container...\n", cchk);
+	dprintf(D_L1, "Reserving container...\n");
 	shfs_alist_register(shfs_vol.al, cchk, csize);
 
 	/* allocate temporary buffer used for I/O */
@@ -634,50 +743,65 @@ static int actn_addfile(struct job *j)
 		goto err_release_container;
 	}
 
-	/* calculate checksum */
-	dprintf(D_L0, "Calculating hash of file contents...\n", csize);
-	td = mhash_init(MHASH_SHA256);
-	if (td == MHASH_FAILED) {
-		eprintf("Could not initialize hash algorithm\n");
-		ret = -1;
-		goto err_free_tmp_chk;
-	}
-	if (lseek(fd, 0, SEEK_SET) < 0) {
-		eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
-		ret = -1;
-		goto err_free_tmp_chk;
-	}
-	for (c = 0; c < csize; c++) {
-		if (c == (csize - 1))
-			rlen = fsize % shfs_vol.chunksize;
-		else
-			rlen = shfs_vol.chunksize;
+	/* calculate hash */
+	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
+		if (j->optstr2)
+			eprintf("Volume does not support manual hash digests. Ignoring specified digest for %s\n", j->path);
 
-		ret = read(fd, tmp_chk, rlen);
-		if (ret < 0) {
-			eprintf("Could not read from %s: %s\n", j->path, strerror(errno));
+		dprintf(D_L0, "Calculating hash of file contents...\n");
+		td = mhash_init(shfs_mhash_type(shfs_vol.hfunc, shfs_vol.hlen));
+		if (td == MHASH_FAILED) {
+			eprintf("Could not initialize hash algorithm\n");
 			ret = -1;
-			goto err_mhash_deinit;
+			goto err_free_tmp_chk;
 		}
-		if (cancel) {
-			ret = -2;
-			goto err_mhash_deinit;
+		if (lseek(fd, 0, SEEK_SET) < 0) {
+			eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
+			ret = -1;
+			goto err_free_tmp_chk;
 		}
-		mhash(td, tmp_chk, rlen); /* hash chunk */
+		for (c = 0; c < csize; c++) {
+			if (c == (csize - 1))
+				rlen = fsize % shfs_vol.chunksize;
+			else
+				rlen = shfs_vol.chunksize;
+
+			ret = read(fd, tmp_chk, rlen);
+			if (ret < 0) {
+				eprintf("Could not read from %s: %s\n", j->path, strerror(errno));
+				ret = -1;
+				goto err_mhash_deinit;
+			}
+			if (cancel) {
+				ret = -2;
+				goto err_mhash_deinit;
+			}
+			mhash(td, tmp_chk, rlen); /* hash chunk */
+		}
+		mhash_deinit(td, &fhash);
+	} else {
+		if (!j->optstr2) {
+			eprintf("Missing required hash digest for %s\n", j->path);
+			ret = -1;
+			goto err_free_tmp_chk;
+		}
+		if (hash_parse(j->optstr2, fhash, shfs_vol.hlen) != 0) {
+			eprintf("Could not parse specified hash digest %s for %s\n", j->optstr2, j->path);
+			ret = -1;
+			goto err_free_tmp_chk;
+		}
 	}
-	mhash_deinit(td, &fhash);
 	if (verbosity >= D_L0) {
 		str_hash[(shfs_vol.hlen * 2)] = '\0';
 		hash_unparse(fhash, shfs_vol.hlen, str_hash);
-		printf("Hash of %s is: %s\n",
+		printf("Hash for %s is: %s\n",
 		       j->path,
 		       str_hash);
 	}
 
-
 	/* find place in hash list and add entry
 	 * (still in-memory, will be written to device on umount) */
-	dprintf(D_L0, "Trying to add a hash table entry...\n", csize);
+	dprintf(D_L0, "Trying to add a hash table entry...\n");
 	bentry = shfs_btable_lookup(shfs_vol.bt, fhash);
 	if (bentry) {
 		eprintf("An entry with the same hash already exists\n");
@@ -698,8 +822,10 @@ static int actn_addfile(struct job *j)
 	hentry->offset = 0;
 	hentry->len = (uint64_t) fsize;
 	hentry->ts_creation = gettimestamp_s();
+	hentry->flags = 0;
 	memset(hentry->mime, 0, sizeof(hentry->mime));
 	memset(hentry->name, 0, sizeof(hentry->name));
+	memset(hentry->encoding, 0, sizeof(hentry->encoding));
 	if (j->optstr0) /* mime */
 		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
 	if (j->optstr1) /* filename */
@@ -708,19 +834,24 @@ static int actn_addfile(struct job *j)
 		strncpy(hentry->name, basename(j->path), sizeof(hentry->name));
 	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
 
-	/* copy file */
-	dprintf(D_L0, "Copying file contents...\n", csize);
+	/* copy file contents */
+	dprintf(D_L0, "Copying file contents...\n");
 	if (lseek(fd, 0, SEEK_SET) < 0) {
 		eprintf("Could not seek on %s: %s\n", j->path, strerror(errno));
 		ret = -1;
 		goto err_free_tmp_chk;
 	}
-	for (c = 0; c < csize; c++) {
-		if (c == (csize - 1)) {
-			rlen = fsize % shfs_vol.chunksize;
-			memset(tmp_chk, 0, shfs_vol.chunksize);
-		} else {
+
+	left = fsize;
+	c = 0;
+	while (left) {
+		if (left > shfs_vol.chunksize) {
 			rlen = shfs_vol.chunksize;
+			left -= shfs_vol.chunksize;
+		} else {
+			rlen = left;
+			left = 0;
+			memset(tmp_chk, 0, shfs_vol.chunksize);
 		}
 
 		ret = read(fd, tmp_chk, rlen);
@@ -736,11 +867,12 @@ static int actn_addfile(struct job *j)
 			ret = -1;
 			goto err_free_tmp_chk;
 		}
-
 		if (cancel) {
 			ret = -2;
 			goto err_free_tmp_chk;
 		}
+
+		++c;
 	}
 
 	free(tmp_chk);
@@ -753,7 +885,7 @@ static int actn_addfile(struct job *j)
  err_free_tmp_chk:
 	free(tmp_chk);
  err_release_container:
-	dprintf(D_L1, "Discard container reservation...\n", cchk);
+	dprintf(D_L1, "Discard container reservation...\n");
 	shfs_alist_unregister(shfs_vol.al, cchk, csize);
  err_close_fd:
 	close(fd);
@@ -761,7 +893,7 @@ static int actn_addfile(struct job *j)
 	return ret;
 }
 
-static int actn_rmfile(struct job *job)
+static int actn_rmfile(struct token *token)
 {
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
@@ -769,8 +901,8 @@ static int actn_rmfile(struct job *job)
 	int ret = 0;
 
 	/* parse hash string */
-	dprintf(D_L0, "Finding hash table entry of file %s...\n", job->path);
-	ret = hash_parse(job->path, h, shfs_vol.hlen);
+	dprintf(D_L0, "Finding hash table entry of file %s...\n", token->path);
+	ret = hash_parse(token->path, h, shfs_vol.hlen);
 	if (ret < 0) {
 		eprintf("Could not parse hash value\n");
 		ret = -1;
@@ -808,7 +940,149 @@ static int actn_rmfile(struct job *job)
 	return ret;
 }
 
-static int actn_ls(struct job *job)
+static int actn_catfile(struct token *token)
+{
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	void *buf;
+	hash512_t h;
+	chk_t    c;
+	uint64_t off;
+	uint64_t left;
+	uint64_t rlen;
+	int ret = 0;
+
+	buf = malloc(shfs_vol.chunksize);
+	if (!buf) {
+		fatal();
+		ret = -1;
+		goto out;
+	}
+
+	/* parse hash string */
+	dprintf(D_L0, "Finding hash table entry of file %s...\n", token->path);
+	ret = hash_parse(token->path, h, shfs_vol.hlen);
+	if (ret < 0) {
+		eprintf("Could not parse hash value\n");
+		ret = -1;
+		goto out_free_buf;
+	}
+	/* find htable entry */
+	bentry = shfs_btable_lookup(shfs_vol.bt, h);
+	if (!bentry) {
+		eprintf("No such entry found\n");
+		ret = -1;
+		goto out_free_buf;
+	}
+	hentry = (struct shfs_hentry *)
+		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		 + bentry->hentry_htoffset);
+
+	fflush(stdout);
+	c = hentry->chunk;
+	off = hentry->offset;
+	left = hentry->len;
+
+	while (left) {
+		ret = sync_read_chunk(&shfs_vol.s, c, 1, buf);
+		if (ret < 0) {
+			eprintf("Could not read from volume '%s': %s\n",
+			        shfs_vol.volname, strerror(errno));
+			ret = -1;
+			goto out_free_buf;
+		}
+		rlen = min(shfs_vol.chunksize - off, left);
+
+		if (write(STDOUT_FILENO, buf + off, rlen) < 0) {
+			eprintf("Could not write to stdout: %s\n",
+			        strerror(errno));
+			ret =-1;
+			goto out_free_buf;
+		}
+
+		left -= rlen;
+		++c;
+		off = 0;
+	}
+
+ out_free_buf:
+	free(buf);
+ out:
+	return ret;
+}
+
+static inline void bentry_setflags(struct shfs_bentry *bentry, uint8_t flags)
+{
+	struct shfs_hentry *hentry;
+	char str_hash[2 * shfs_vol.hlen + 1];
+
+	hentry = (struct shfs_hentry *)
+		 ((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		  + bentry->hentry_htoffset);
+	hash_unparse(hentry->hash, shfs_vol.hlen, str_hash);
+	dprintf(D_L0, "Set flags 0x%02x on object %s\n", flags, str_hash);
+	hentry->flags |= flags;
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
+}
+
+static inline void bentry_clearflags(struct shfs_bentry *bentry, uint8_t flags)
+{
+	struct shfs_hentry *hentry;
+	char str_hash[2 * shfs_vol.hlen + 1];
+
+	hentry = (struct shfs_hentry *)
+		 ((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		  + bentry->hentry_htoffset);
+	hash_unparse(hentry->hash, shfs_vol.hlen, str_hash);
+	dprintf(D_L0, "Clear flags 0x%02x on object %s\n", flags, str_hash);
+	hentry->flags &= ~(flags);
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
+}
+
+static inline int actn_cleardefault(struct token *token __attribute__((unused)))
+{
+	if (!shfs_vol.def_bentry)
+		goto out;
+
+	bentry_clearflags(shfs_vol.def_bentry, SHFS_EFLAG_DEFAULT);
+	shfs_vol.def_bentry = NULL;
+
+ out:
+	return 0;
+}
+
+static int actn_setdefault(struct token *token)
+{
+	struct shfs_bentry *bentry;
+	hash512_t h;
+	int ret = 0;
+
+	/* parse hash string */
+	dprintf(D_L0, "Looking for hash table entry of object %s...\n", token->path);
+	ret = hash_parse(token->path, h, shfs_vol.hlen);
+	if (ret < 0) {
+		eprintf("Could not parse hash value\n");
+		ret = -1;
+		goto out;
+	}
+	/* find htable entry */
+	bentry = shfs_btable_lookup(shfs_vol.bt, h);
+	if (!bentry) {
+		eprintf("No such entry found\n");
+		ret = -1;
+		goto out;
+	}
+
+	/* clear default flag of previous object and set flag on current one */
+	actn_cleardefault(NULL);
+	bentry_setflags(bentry, SHFS_EFLAG_DEFAULT);
+	shfs_vol.def_bentry = bentry;
+
+ out:
+	return ret;
+}
+
+static int actn_ls(struct token *token)
 {
 	struct htable_el *el;
 	struct shfs_bentry *bentry;
@@ -823,18 +1097,20 @@ static int actn_ls(struct job *job)
 	str_date[0] = '\0';
 
 	if (shfs_vol.hlen <= 32)
-		printf("%-64s %12s %12s %-24s %-16s %s\n",
+		printf("%-64s %12s %12s %5s %-24s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
 		       "Size (chk)",
+		       "Flags",
 		       "MIME",
 		       "Added",
 		       "Name");
 	else
-		printf("%-128s %12s %12s %-24s %-16s %s\n",
+		printf("%-128s %12s %12s %5s %-24s %-16s %s\n",
 		       "Hash",
 		       "At (chk)",
 		       "Size (chk)",
+		       "Flags",
 		       "MIME",
 		       "Added",
 		       "Name");
@@ -849,18 +1125,26 @@ static int actn_ls(struct job *job)
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
 		if (shfs_vol.hlen <= 32)
-			printf("%-64s %12lu %12lu %-24s %-16s %s\n",
+			printf("%-64s %12lu %12lu  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
 			       hentry->chunk,
 			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+			       '-', /* reserved for future use */
+			       '-', /* reserved for future use */
+			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
 			       str_mime,
 			       str_date,
 			       str_name);
 		else
-			printf("%-128s %12lu %12lu %-24s %-16s %s\n",
+			printf("%-128s %12lu %12lu  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
 			       hentry->chunk,
 			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+			       '-', /* reserved for future use */
+			       '-', /* reserved for future use */
+			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
 			       str_mime,
 			       str_date,
 			       str_name);
@@ -868,7 +1152,7 @@ static int actn_ls(struct job *job)
 	return 0;
 }
 
-static int actn_info(struct job *job)
+static int actn_info(struct token *token)
 {
 	void *chk0;
 	void *chk1;
@@ -929,7 +1213,7 @@ static int actn_info(struct job *job)
 int main(int argc, char **argv)
 {
 	struct args args;
-	struct job *cjob;
+	struct token *ctoken;
 	unsigned int i;
 	unsigned int failed;
 	int ret;
@@ -955,41 +1239,51 @@ int main(int argc, char **argv)
 	mount_shfs(args.devpath, args.nb_devs);
 	failed = 0;
 	i = 0;
-	for (cjob = args.jobs; cjob != NULL; cjob = cjob->next) {
+	for (ctoken = args.tokens; ctoken != NULL; ctoken = ctoken->next) {
 		if (cancel)
 			break;
 
-		switch (cjob->action) {
-		case ADDFILE:
-			dprintf(D_L0, "*** Job %u: add-file\n", i);
-			printf("Adding %s...\n", cjob->path);
-			ret = actn_addfile(cjob);
+		switch (ctoken->action) {
+		case ADDOBJ:
+			dprintf(D_L0, "*** Token %u: add-obj\n", i);
+			ret = actn_addfile(ctoken);
 			break;
-		case RMFILE:
-			dprintf(D_L0, "*** Job %u: rm-file\n", i);
-			printf("Deleting %s...\n", cjob->path);
-			ret = actn_rmfile(cjob);
+		case RMOBJ:
+			dprintf(D_L0, "*** Token %u: rm-obj\n", i);
+			ret = actn_rmfile(ctoken);
 			break;
-		case LSFILES:
-			dprintf(D_L0, "*** Job %u: ls\n", i);
-			ret = actn_ls(cjob);
+		case CATOBJ:
+			dprintf(D_L0, "*** Token %u: cat-obj\n", i);
+			ret = actn_catfile(ctoken);
+			break;
+		case SETDEFOBJ:
+			dprintf(D_L0, "*** Token %u: set-default\n", i);
+			ret = actn_setdefault(ctoken);
+			break;
+		case CLEARDEFOBJ:
+			dprintf(D_L0, "*** Token %u: clear-default\n", i);
+			ret = actn_cleardefault(ctoken);
+			break;
+		case LSOBJS:
+			dprintf(D_L0, "*** Token %u: ls\n", i);
+			ret = actn_ls(ctoken);
 			break;
 		case SHOWINFO:
-			dprintf(D_L0, "*** Job %u: info\n", i);
-			ret = actn_info(cjob);
+			dprintf(D_L0, "*** Token %u: info\n", i);
+			ret = actn_info(ctoken);
 			break;
 		default:
 			ret = 0;
-			break; /* unsupported job but should never happen */
+			break; /* unsupported token but should never happen */
 		}
 
 		if (ret < 0) {
-			eprintf("Error: %d\n", i, ret);
+			eprintf("Error: %d\n", ret);
 			failed++;
 		}
 		i++;
 	}
-	dprintf(D_L1, "*** %u jobs executed on volume '%s'\n", i, shfs_vol.volname);
+	dprintf(D_L1, "*** %u tokens executed on volume '%s'\n", i, shfs_vol.volname);
 	umount_shfs();
 
 	if (cancel)

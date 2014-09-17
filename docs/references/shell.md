@@ -40,14 +40,19 @@ export-stats
  Exports collected access statistics to the configured stats device.
 
 ```
-free [[-k|-m|-g|-p|-u]]
-```
- Displays current memory usage.
-
-```
 file [FILE]...
 ```
  Displays MIME-type and size of FILE.
+
+```
+flush
+```
+ Flushes the disk block cache.
+
+```
+free [[-k|-m|-g|-p|-u]]
+```
+ Displays current memory usage.
 
 ```
 halt
@@ -86,12 +91,22 @@ lsvbd
  Lists available virtual block devices.
 
 ```
+mallinfo
+```
+ Displays heap memory allocation information.
+
+```
 mount [VBD ID]...
 ```
  Mounts an SHFS volume. Multiple devices can be passed to the command.
  In this case, mount will search for SHFS volumes an all devices
  and will mount the first valid one. This is also required when multi-member
  volumes shall be mounted.
+
+```
+prefetch [FILE]
+```
+ Prefetches FILE into the disk block cache.
 
 ```
 reboot

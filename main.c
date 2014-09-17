@@ -8,7 +8,6 @@
 #include <kernel.h>
 #include <sched.h>
 #include <pkt_copy.h>
-#include <mempool.h>
 #include <semaphore.h>
 
 #include <lwip/ip_addr.h>
@@ -30,6 +29,7 @@
 #include <lwip-netfront.h>
 #endif
 
+#include "mempool.h"
 #include "http.h"
 #include "shell.h"
 #include "shfs.h"
@@ -37,6 +37,9 @@
 #include "ctldir.h"
 #ifdef SHFS_STATS
 #include "shfs_stats.h"
+#endif
+#ifdef TESTSUITE
+#include "testsuite.h"
 #endif
 
 #include "debug.h"
@@ -107,6 +110,8 @@ static inline void minder_print(void)
 }
 #endif /* CONFIG_MINDER_PRINT */
 
+#define MAX_NB_STATIC_ARP_ENTRIES 6
+
 /**
  * ARGUMENT PARSING
  */
@@ -129,7 +134,38 @@ static struct _args {
     int             no_ctldir;
 
     unsigned int    startup_delay;
+
+    /* static arp entries can only be added if DHCP is disabled */
+    struct {
+	    struct ip_addr  ip;
+	    struct eth_addr mac;
+    } sarp_entry[MAX_NB_STATIC_ARP_ENTRIES];
+    unsigned int    nb_sarp_entries;
 } args;
+
+static int parse_args_setval_cut(char delimiter, char **out_presnip, char **out_postsnip,
+                                 const char *buf)
+{
+	size_t len = strlen(buf);
+	size_t p;
+
+	for (p = 0; p < len; ++p) {
+		if (buf[p] == delimiter) {
+			*out_presnip = strndup(buf, p);
+			*out_postsnip = strdup(&buf[p+1]);
+			if (!*out_presnip || !*out_postsnip) {
+				if (out_postsnip)
+					free(*out_postsnip);
+				if (out_presnip)
+					free(*out_presnip);
+				return -ENOMEM;
+			}
+			return 0;
+		}
+	}
+
+	return -1; /* delimiter not found */
+}
 
 static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
 {
@@ -177,6 +213,24 @@ static int parse_args_setval_ipv4(struct ip_addr *out, const char *buf)
 	return 0;
 }
 
+static int parse_args_setval_hwaddr(struct eth_addr *out, const char *buf)
+{
+	uint8_t hwaddr[6];
+
+	if (sscanf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+	           &hwaddr[0], &hwaddr[1], &hwaddr[2],
+	           &hwaddr[3], &hwaddr[4], &hwaddr[5]) != 6)
+		return -1;
+
+	out->addr[0] = hwaddr[0];
+	out->addr[1] = hwaddr[1];
+	out->addr[2] = hwaddr[2];
+	out->addr[3] = hwaddr[3];
+	out->addr[4] = hwaddr[4];
+	out->addr[5] = hwaddr[5];
+	return 0;
+}
+
 static int parse_args_setval_int(int *out, const char *buf)
 {
 	if (sscanf(buf, "%d", out) != 1)
@@ -186,6 +240,8 @@ static int parse_args_setval_int(int *out, const char *buf)
 
 static int parse_args(int argc, char *argv[])
 {
+    char *presnip;
+    char *postsnip;
     int opt;
     int ret;
     int ival;
@@ -207,11 +263,11 @@ static int parse_args(int argc, char *argv[])
 #if ((100 + 4) > MEMP_NUM_TCP_PCB)
     #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
 #endif
-
-     while ((opt = getopt(argc, argv,
-                          "s:i:g:d:b:hc:"
+    args.nb_sarp_entries = 0;
+    while ((opt = getopt(argc, argv,
+                         "s:i:g:d:b:hc:a:"
 #ifdef SHFS_STATS
-                          "x:"
+                         "x:"
 #endif
                           )) != -1) {
          switch(opt) {
@@ -251,6 +307,38 @@ static int parse_args(int argc, char *argv[])
 	           printk("invalid secondary DNS IP specified (e.g., 192.168.0.1)\n");
 	           return -1;
               }
+              break;
+         case 'a': /* static arp entry */
+	      if (args.nb_sarp_entries == (MAX_NB_STATIC_ARP_ENTRIES - 1)) {
+		   printk("At most %d static ARP entries can be specified\n",
+		          MAX_NB_STATIC_ARP_ENTRIES);
+		   return -1;
+	      }
+	      ret = parse_args_setval_cut('/', &presnip, &postsnip, optarg);
+	      if (ret < 0) {
+		   if (ret == -ENOMEM)
+			printk("static ARP parsing error: Out of memory\n");
+		   else
+			printk("invalid static ARP entry specified (e.g., 01:23:45:67:89:AB/192.168.0.1)\n");
+	           return -1;
+              }
+	      ret = parse_args_setval_hwaddr(&args.sarp_entry[args.nb_sarp_entries].mac, presnip);
+	      if (ret < 0) {
+	           printk("invalid static ARP entry specified (e.g., 01:23:45:67:89:AB/192.168.0.1)\n");
+	           free(postsnip);
+	           free(presnip);
+	           return -1;
+              }
+	      ret = parse_args_setval_ipv4(&args.sarp_entry[args.nb_sarp_entries].ip, postsnip);
+	      if (ret < 0) {
+	           printk("invalid static ARP entry specified (e.g., 01:23:45:67:89:AB/192.168.0.1)\n");
+	           free(postsnip);
+	           free(presnip);
+	           return -1;
+              }
+	      free(postsnip);
+	      free(presnip);
+	      args.nb_sarp_entries++;
               break;
          case 'b': /* virtual block device (specified manually to skip detection) */
 	      ret = parse_args_setval_int(&ival, optarg);
@@ -387,66 +475,11 @@ static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
 {
 	stats_display();
+	fprintf(cio, "Stats dumped to system output\n");
 	return 0;
 }
 #endif
 
-static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
-{
-	struct netif *netif;
-	int is_up;
-	uint8_t flags;
-
-	for (netif = netif_list; netif != NULL; netif = netif->next) {
-		is_up = netif_is_up(netif);
-		flags = netif->flags;
-
-		/* name + mac */
-		fprintf(cio, "%c%c%c%c      ",
-		        (netif->name[0] ? netif->name[0] : ' '),
-		        (netif->name[1] ? netif->name[1] : ' '),
-		        (netif->name[2] ? netif->name[2] : ' '),
-		        (netif == netif_default ? '*' : ' '));
-		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
-		        netif->hwaddr[0], netif->hwaddr[1],
-		        netif->hwaddr[2], netif->hwaddr[3],
-		        netif->hwaddr[4], netif->hwaddr[5]);
-		/* flags + mtu */
-		fprintf(cio, "          ");
-		if (flags & NETIF_FLAG_UP)
-			fprintf(cio, "UP ");
-		if (flags & NETIF_FLAG_BROADCAST)
-			fprintf(cio, "BROADCAST ");
-		if (flags & NETIF_FLAG_POINTTOPOINT)
-			fprintf(cio, "P2P ");
-		if (flags & NETIF_FLAG_DHCP)
-			fprintf(cio, "DHCP ");
-		if (flags & NETIF_FLAG_ETHARP)
-			fprintf(cio, "ARP ");
-		if (flags & NETIF_FLAG_ETHERNET)
-			fprintf(cio, "ETHERNET ");
-		fprintf(cio, "MTU:%u\n", netif->mtu);
-	        /* ip addr */
-		if (is_up) {
-			fprintf(cio, "          inet addr:%u.%u.%u.%u",
-			        ip4_addr1(&netif->ip_addr),
-			        ip4_addr2(&netif->ip_addr),
-			        ip4_addr3(&netif->ip_addr),
-			        ip4_addr4(&netif->ip_addr));
-			fprintf(cio, " Mask:%u.%u.%u.%u",
-			        ip4_addr1(&netif->netmask),
-			        ip4_addr2(&netif->netmask),
-			        ip4_addr3(&netif->netmask),
-			        ip4_addr4(&netif->netmask));
-			fprintf(cio, " Gw:%u.%u.%u.%u\n",
-			        ip4_addr1(&netif->gw),
-			        ip4_addr2(&netif->gw),
-			        ip4_addr3(&netif->gw),
-			        ip4_addr4(&netif->gw));
-		}
-	}
-	return 0;
-}
 
 /**
  * MAIN
@@ -472,6 +505,8 @@ int main(int argc, char *argv[])
     struct netif *niret;
     struct ctldir *cd = NULL;
     int ret;
+    err_t err;
+    unsigned int i;
 #if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
     uint64_t now;
 #endif
@@ -651,6 +686,20 @@ int main(int argc, char *argv[])
     if (args.dhclient) {
 	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
+    } else {
+	for (i = 0; i < args.nb_sarp_entries; ++i) {
+	    err = etharp_add_static_entry(&args.sarp_entry[i].ip, &args.sarp_entry[i].mac);
+	    if (err != ERR_OK) {
+	        printk("Could not add static ARP entry: %02x:%02x:%02x:%02x:%02x:%02x\n",
+	               args.sarp_entry[i].mac.addr[0],
+	               args.sarp_entry[i].mac.addr[1],
+	               args.sarp_entry[i].mac.addr[2],
+	               args.sarp_entry[i].mac.addr[3],
+	               args.sarp_entry[i].mac.addr[4],
+	               args.sarp_entry[i].mac.addr[5],
+	               args.sarp_entry[i].mac.addr[6]);
+	    }
+	}
     }
 
     /* -----------------------------------
@@ -668,7 +717,6 @@ int main(int argc, char *argv[])
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
     shell_register_cmd("lsvbd", shcmd_lsvbd);
-    shell_register_cmd("ifconfig", shcmd_ifconfig);
 #if LWIP_STATS_DISPLAY
     shell_register_cmd("lwip-stats", shcmd_lwipstats);
 #endif
@@ -690,6 +738,9 @@ int main(int argc, char *argv[])
     }
 
     register_shfs_stats_tools(cd);
+#endif
+#ifdef TESTSUITE
+    register_testsuite(cd);
 #endif
 
     /* -----------------------------------

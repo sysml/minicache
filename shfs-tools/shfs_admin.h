@@ -7,32 +7,36 @@
 #include "tools_common.h"
 #include "shfs_defs.h"
 
-#define STR_VERSION "Simon's HashFS Tools: Admin v1.02"
+#define STR_VERSION "Simple Hash FS (SHFS) Tools: Admin v1.03"
 
 #define MAX_NB_TRY_BLKDEVS SHFS_MAX_NB_MEMBERS
 
 enum action {
 	NONE = 0,
-	ADDFILE,
-	RMFILE,
-	LSFILES,
+	ADDOBJ,
+	RMOBJ,
+	CATOBJ,
+	SETDEFOBJ,
+	CLEARDEFOBJ,
+	LSOBJS,
 	SHOWINFO
 };
 
-struct job {
-	struct job *next;
+struct token {
+	struct token *next;
 
 	enum action action;
 	char *path;
 	char *optstr0;
 	char *optstr1;
+	char *optstr2;
 };
 
 struct args {
 	char **devpath;
 	unsigned int nb_devs;
 
-	struct job *jobs; /* list of jobs */
+	struct token *tokens; /* list of tokens */
 };
 
 struct vol_info {
@@ -54,7 +58,10 @@ struct vol_info {
 	uint32_t htable_nb_entries;
 	uint32_t htable_nb_entries_per_bucket;
 	uint32_t htable_nb_entries_per_chunk;
+	uint8_t hfunc;
 	uint8_t hlen;
+
+	struct shfs_bentry *def_bentry;
 
 	/* allocator */
 	uint8_t allocator;

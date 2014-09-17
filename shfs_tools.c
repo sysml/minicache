@@ -10,6 +10,7 @@
 #include "shfs.h"
 #include "shfs_btable.h"
 #include "shfs_tools.h"
+#include "shfs_cache.h"
 #include "shfs_fio.h"
 #include "shell.h"
 #include "ctldir.h"
@@ -42,7 +43,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
 		fprintf(cio, "%c%s %12lu %12lu %-24s %-16s %s\n",
-		        SFHS_HASH_INDICATOR_PREFIX,
+		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        hentry->chunk,
 		        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
@@ -73,7 +74,7 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 		if (bentry->refcount > 0) {
 			hash_unparse(*el->h, shfs_vol.hlen, str_hash);
 			fprintf(cio, "%c%s %12lu\n",
-			        SFHS_HASH_INDICATOR_PREFIX,
+			        SHFS_HASH_INDICATOR_PREFIX,
 			        str_hash,
 			        bentry->refcount);
 		}
@@ -144,7 +145,7 @@ static int shcmd_shfs_cat(FILE *cio, int argc, char *argv[])
 		while (left) {
 			dlen = min(left, sizeof(buf) - 1);
 
-			ret = shfs_fio_read(f, cur, buf, dlen);
+			ret = shfs_fio_cache_read(f, cur, buf, dlen);
 			if (ret < 0) {
 				fprintf(cio, "%s: Read error: %s\n", argv[i], strerror(-ret));
 				shfs_fio_close(f);
@@ -195,7 +196,7 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 	cur = 0;
 	while (left) {
 		dlen = min(left, sizeof(buf));
-		ret = shfs_fio_read(f, cur, buf, dlen);
+		ret = shfs_fio_cache_read(f, cur, buf, dlen);
 		if (ret < 0) {
 			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
 			goto out;
@@ -294,6 +295,63 @@ static int shcmd_shfs_remount(FILE *cio, int argc, char *argv[])
     return ret;
 }
 
+static int shcmd_shfs_flush_cache(FILE *cio, int argc, char *argv[])
+{
+    if (!shfs_mounted) {
+	    fprintf(cio, "No SHFS filesystem is mounted\n");
+	    return -1;
+    }
+
+    shfs_flush_cache();
+    return 0;
+}
+
+static int shcmd_shfs_prefetch_cache(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	uint64_t fsize, left, cur, dlen;
+	char buf[SHFS_MIN_CHUNKSIZE];
+	int ret = 0;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [file]\n", argv[0]);
+		ret = -1;
+		goto out;
+	}
+	if (!shfs_mounted) {
+		fprintf(cio, "No SHFS filesystem is mounted\n");
+		return -1;
+	}
+
+	f = shfs_fio_open(argv[1]);
+	if (!f) {
+		fprintf(cio, "Could not open %s: %s\n", argv[1], strerror(errno));
+		ret = -1;
+		goto out;
+	}
+	shfs_fio_size(f, &fsize);
+
+	left = fsize;
+	dlen = min(left, sizeof(buf));
+	cur = fsize - dlen;
+	while (left) {
+		ret = shfs_fio_cache_read(f, cur, buf, dlen);
+		if (unlikely(ret < 0)) {
+			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+			goto close_f;
+		}
+
+		left -= dlen;
+		dlen = min(left, sizeof(buf));
+		cur -= dlen;
+	}
+
+ close_f:
+	shfs_fio_close(f);
+ out:
+	return ret;
+}
+
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
 	unsigned int m;
@@ -355,6 +413,8 @@ int register_shfs_tools(struct ctldir *cd)
 		ctldir_register_shcmd(cd, "mount", shcmd_shfs_mount);
 		ctldir_register_shcmd(cd, "umount", shcmd_shfs_umount);
 		ctldir_register_shcmd(cd, "remount", shcmd_shfs_remount);
+		ctldir_register_shcmd(cd, "flush", shcmd_shfs_flush_cache);
+		ctldir_register_shcmd(cd, "prefetch", shcmd_shfs_prefetch_cache);
 	}
 
 	/* shell commands (ignore errors) */
@@ -366,7 +426,12 @@ int register_shfs_tools(struct ctldir *cd)
 	shell_register_cmd("file", shcmd_shfs_file);
 	shell_register_cmd("df", shcmd_shfs_dumpfile);
 	shell_register_cmd("cat", shcmd_shfs_cat);
+	shell_register_cmd("flush", shcmd_shfs_flush_cache);
+	shell_register_cmd("prefetch", shcmd_shfs_prefetch_cache);
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
+#ifdef SHFS_CACHE_INFO
+	shell_register_cmd("cache-info", shcmd_shfs_cache_info);
+#endif
 
 	return 0;
 }

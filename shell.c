@@ -59,6 +59,19 @@
 #define SHELL_PROMPT "µsh#"
 #endif
 
+#define SH_TELNET_IAC             (0xFF)
+#define SH_TELNET_CMD_WILL        (0xFB)
+#define SH_TELNET_CMD_DONT        (0xFE)
+#define SH_TELNET_CMD_DO          (0xFD)
+#define SH_TELNET_CMD_WONT        (0xFC)
+#define SH_TELNET_OPT_BINARY      (0x00)
+#define SH_TELNET_OPT_ECHO        (0x01)
+#define SH_TELNET_OPT_SUPPRGAHEAD (0x03)
+#define SH_TELNET_OPT_STATUS      (0x05)
+#define SH_TELNET_OPT_TTYPE       (0x18)
+
+#define SH_TELNET_SB              (0xFA)
+#define SH_TELNET_SE              (0xF0)
 
 #ifndef min
 #define min(a, b) \
@@ -116,7 +129,6 @@ struct shell_sess {
     struct thread *thread;
 
     /* console i/o */
-    char argb[ARGB_LEN]; /* argument buffer */
     FILE *cio; /* stdin/stdout of session */
 
     int cons_fd; /* serial console on SSS_LOCAL */
@@ -147,6 +159,10 @@ static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #endif
 #ifdef __MINIOS__
 static int shcmd_free(FILE *cio, int argc, char *argv[]);
+#endif
+static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
+#ifdef HAVE_LWIP
+static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
 #endif
 
 static err_t shlsess_accept(void);
@@ -218,6 +234,10 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("date",   shcmd_date);
 #ifdef __MINIOS__
     shell_register_cmd("free",   shcmd_free);
+#endif
+    shell_register_cmd("mallinfo",shcmd_mallinfo);
+#ifdef HAVE_LWIP
+    shell_register_cmd("ifconfig",shcmd_ifconfig);
 #endif
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
@@ -331,7 +351,7 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
 	return -1;
     }
     sh->cmd_func[i] = func;
-    dprintf("shell: Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
+    dprintf("Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
 
@@ -346,8 +366,13 @@ void shell_unregister_cmd(const char *cmd)
         free(sh->cmd_str[i]);
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
-        dprintf("shell: Command %i ('%s') unregistered\n", i, cmd);
+        dprintf("Command %i ('%s') unregistered\n", i, cmd);
     }
+}
+
+static void sh_telnet_negotiation(FILE *cio, uint8_t cmd, uint8_t arg, struct shell_sess *sess)
+{
+	dprintf("Negotiation commands are unsupported for now, ignoring...\n");
 }
 
 static int sh_exec(FILE *cio, char *argb, size_t argb_len)
@@ -408,15 +433,24 @@ static int sh_exec(FILE *cio, char *argb, size_t argb_len)
 static void sh_session(void *argp)
 {
     struct shell_sess *sess = argp;
+    char argb[ARGB_LEN]; /* argument buffer */
+    uint8_t tsnb[2]; /* telnet session negotiation buffer */
     size_t argb_p;
+    size_t tsnb_p;
     int ret;
+    int in_tsn;
+    int in_tsn_sb;
 
 respawn:
+    argb_p = 0;
+    tsnb_p = 0;
+    in_tsn = 0;
+    in_tsn_sb = 0;
+
     if (sh->welcome)
         fprintf(sess->cio, "\n%s\n", sh->welcome);
 
-    while (1)
-    {
+    for (;;) {
         /* print prompt */
         if (sess->prompt)
             fprintf(sess->cio, "%s ", sess->prompt);
@@ -424,24 +458,63 @@ respawn:
 
         /* read sess->argb from cio */
         argb_p = 0;
-        while (argb_p < sizeof(sess->argb) - 1) {
+        while (argb_p < sizeof(argb) - 1) {
             if (sess->state == SSS_CLOSING ||
                 sess->state == SSS_KILLING)
                 goto terminate;
             ret = fgetc(sess->cio);
             if (ret == EOF)
 	        goto terminate;
-            sess->argb[argb_p] = (char) ret;
+            argb[argb_p] = (char) ret;
             if (sess->state == SSS_CLOSING ||
                 sess->state == SSS_KILLING)
                 goto terminate;
 
-            switch (sess->argb[argb_p]) {
+            /* telnet negotiation command */
+            if ((unsigned char) argb[argb_p] == SH_TELNET_IAC) {
+	        if (in_tsn && tsnb_p == 0) {
+		    /* doubled 0xFF means a single 0xFF data byte */
+		    in_tsn = 0;
+		    goto parse;
+	        } else if (!in_tsn) {
+		    /* start of IAC */
+		    in_tsn = 1;
+		    tsnb_p = 0;
+		    continue;
+	        }
+            }
+
+            if (in_tsn) {
+	        if (in_tsn_sb) {
+		    /* wait for subsequence end */
+		    if ((unsigned char) argb[argb_p] == SH_TELNET_SE) {
+			/* we don't support subnegotiations: ignore */
+			in_tsn = 0;
+			in_tsn_sb = 0;
+			dprintf("Ignored telnet subnegotiation\n");
+		    }
+		    continue; /* ignore subnegotiation characters */
+	        }
+
+	        tsnb[tsnb_p++] = (uint8_t) argb[argb_p];
+	        if (tsnb_p == 1 && tsnb[1] == SH_TELNET_SB) {
+		    in_tsn_sb = 1;
+	        } else if (tsnb_p == 2) { /* command completed */
+		    in_tsn = 0;
+		    dprintf("Received telnet negotiation command: %02X %02X\n",
+		           tsnb[0], tsnb[1]);
+		    sh_telnet_negotiation(sess->cio, tsnb[0], tsnb[1], sess);
+	        }
+	        continue;
+            }
+
+        parse:
+            switch ((unsigned char) argb[argb_p]) {
             case 0x0a: /* new line \n */
             case 0x0d: /* enter \r */
                 goto exec_cmd;
             case 0x7f: /* delete */
-                sess->argb[argb_p] = '\0';
+                argb[argb_p] = '\0';
                 if (argb_p > 0) {
                     argb_p--;
                     /* print destructive backspace */
@@ -453,13 +526,15 @@ respawn:
                 break;
             case 0x20 ... 0x7e: /* ASCII chars */
                 if (sess->echo) {
-                    fprintf(sess->cio, "%c", sess->argb[argb_p]);
+                    fprintf(sess->cio, "%c", argb[argb_p]);
                     fflush(sess->cio);
                 }
                 argb_p++;
                 break;
             default:
-                break; /* ignore rest of characters */
+	        dprintf("Ignoring non-ASCII/control character: %02x\n",
+	                (unsigned char) argb[argb_p]);
+	        break;
             }
         }
 
@@ -467,7 +542,7 @@ respawn:
         if (sess->echo)
             fprintf(sess->cio, "\n");
 
-        ret = sh_exec(sess->cio, sess->argb, argb_p + 1);
+        ret = sh_exec(sess->cio, argb, argb_p + 1);
         fflush(sess->cio);
         if (ret == SH_CLOSE) {
 	    sess->state = SSS_CLOSING;
@@ -539,7 +614,7 @@ static err_t shlsess_accept(void)
     }
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-    dprintf("shell: Local session opened (%s)\n", sess->name);
+    dprintf("Local session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
@@ -565,7 +640,7 @@ static void shlsess_close(struct shell_sess *sess)
     /* close console descriptor */
     fclose(sess->cio);
 
-    dprintf("shell: Local session closed (%s)\n", sess->name);
+    dprintf("Local session closed (%s)\n", sess->name);
     xfree(sess);
 }
 
@@ -599,7 +674,7 @@ retry:
     }
     /*
 #ifdef SHELL_DEBUG
-    dprintf("shell: Received %u bytes from client: '", avail);
+    dprintf("Received %u bytes from client: '", avail);
     for (i = 0; i < avail; i++)
 	    dprintf("%02x:", (unsigned char) buf[i]);
     dprintf("'\n");
@@ -616,7 +691,7 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
     uint16_t avail, sendlen;
     /*
 #ifdef SHELL_DEBUG
-    dprintf("shell: Sending %u bytes to client: '", len);
+    dprintf("Sending %u bytes to client: '", len);
     for (i = 0; i < len; i++)
 	dprintf("%c", buf[i]);
     dprintf("'\n");
@@ -721,7 +796,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-    dprintf("shell: Remote session opened (%s)\n", sess->name);
+    dprintf("Remote session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
@@ -763,7 +838,7 @@ static void shrsess_close(struct shell_sess *sess)
     } /* on SSS_KILLING tpcb is not touched */
 
     /* release memory */
-    dprintf("shell: Remote session closed (%s)\n", sess->name);
+    dprintf("Remote session closed (%s)\n", sess->name);
     xfree(sess);
 }
 
@@ -1144,5 +1219,82 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
  usage:
     fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
     return -1;
+}
+#endif
+
+static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
+{
+    struct mallinfo minfo;
+    minfo = mallinfo();
+
+    fprintf(cio, " Total space allocated from system:        %12lu B\n", minfo.arena);
+    fprintf(cio, " Number of non-inuse chunks:               %12lu\n", minfo.ordblks);
+    fprintf(cio, " Number of mmapped regions:                %12lu\n", minfo.hblks);
+    fprintf(cio, " Total space in mmapped regions:           %12lu B\n", minfo.hblkhd);
+    fprintf(cio, " Total allocated space:                    %12lu B\n", minfo.uordblks);
+    fprintf(cio, " Total non-inuse space:                    %12lu B\n", minfo.fordblks);
+    fprintf(cio, " Top-most, releasable space (malloc_trim): %12lu B\n", minfo.keepcost);
+    fprintf(cio, " Average size of non-inuse chunks:         %12lu B\n", minfo.fordblks / minfo.ordblks);
+
+    return 0;
+}
+
+#ifdef HAVE_LWIP
+static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
+{
+	/* prints available interfaces */
+	struct netif *netif;
+	int is_up;
+	uint8_t flags;
+
+	for (netif = netif_list; netif != NULL; netif = netif->next) {
+		is_up = netif_is_up(netif);
+		flags = netif->flags;
+
+		/* name + mac */
+		fprintf(cio, "%c%c%c%c      ",
+		        (netif->name[0] ? netif->name[0] : ' '),
+		        (netif->name[1] ? netif->name[1] : ' '),
+		        (netif->name[2] ? netif->name[2] : ' '),
+		        (netif == netif_default ? '*' : ' '));
+		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
+		        netif->hwaddr[0], netif->hwaddr[1],
+		        netif->hwaddr[2], netif->hwaddr[3],
+		        netif->hwaddr[4], netif->hwaddr[5]);
+		/* flags + mtu */
+		fprintf(cio, "          ");
+		if (flags & NETIF_FLAG_UP)
+			fprintf(cio, "UP ");
+		if (flags & NETIF_FLAG_BROADCAST)
+			fprintf(cio, "BROADCAST ");
+		if (flags & NETIF_FLAG_POINTTOPOINT)
+			fprintf(cio, "P2P ");
+		if (flags & NETIF_FLAG_DHCP)
+			fprintf(cio, "DHCP ");
+		if (flags & NETIF_FLAG_ETHARP)
+			fprintf(cio, "ARP ");
+		if (flags & NETIF_FLAG_ETHERNET)
+			fprintf(cio, "ETHERNET ");
+		fprintf(cio, "MTU:%u\n", netif->mtu);
+	        /* ip addr */
+		if (is_up) {
+			fprintf(cio, "          inet addr:%u.%u.%u.%u",
+			        ip4_addr1(&netif->ip_addr),
+			        ip4_addr2(&netif->ip_addr),
+			        ip4_addr3(&netif->ip_addr),
+			        ip4_addr4(&netif->ip_addr));
+			fprintf(cio, " Mask:%u.%u.%u.%u",
+			        ip4_addr1(&netif->netmask),
+			        ip4_addr2(&netif->netmask),
+			        ip4_addr3(&netif->netmask),
+			        ip4_addr4(&netif->netmask));
+			fprintf(cio, " Gw:%u.%u.%u.%u\n",
+			        ip4_addr1(&netif->gw),
+			        ip4_addr2(&netif->gw),
+			        ip4_addr3(&netif->gw),
+			        ip4_addr4(&netif->gw));
+		}
+	}
+	return 0;
 }
 #endif

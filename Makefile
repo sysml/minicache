@@ -12,7 +12,6 @@ stubdom		 = y
 
 CFLAGS          += -Wunused -Winline -Wtype-limits -Wcast-align --param large-stack-frame=256 --param large-stack-frame-growth=16
 
-CONFIG_MEMPOOL			= y
 
 ######################################
 ## Networking options
@@ -67,6 +66,7 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ######################################
 CFLAGS				+= -DSHFS_OPENBYNAME
 CFLAGS				+= -DSHFS_STATS
+CFLAGS				+= -DSHFS_CACHE_INFO
 
 # Advanced statistics from HTTP
 #  This enables counting the number of successful downloads
@@ -93,6 +93,8 @@ CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 ######################################
 CFLAGS				+= -DHTTP_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
 //CFLAGS			+= -DHTTP_TESTFILE
+CFLAGS				+= -DHTTP_STATS_DISPLAY
+CFLAGS				+= -DHTTP_URL_CUTARGS
 
 ######################################
 ## ctldir options
@@ -103,6 +105,7 @@ CFLAGS				+= -DCTLDIR_NOCHMOD
 ## General MiniCache options
 ######################################
 CFLAGS				+= -DCONFIG_AUTOMOUNT
+CONFIG_TESTSUITE		= y
 
 ######################################
 ## Debugging options
@@ -115,11 +118,16 @@ CONFIG_DEBUG_LWIP_MALLOC	= n
 //CFLAGS			+= -DLWIP_TCP_DEBUG
 //CFLAGS			+= -DCONFIG_MINDER_PRINT
 //CFLAGS			+= -DHTTP_DEBUG
+//CFLAGS			+= -DHTTP_DEBUG_PRINTACCESS
 //CFLAGS			+= -DSHFS_DEBUG
+//CFLAGS			+= -DSHFS_CACHE_DEBUG
 //CFLAGS			+= -DSHELL_DEBUG
 //CFLAGS			+= -DHTABLE_DEBUG
 //CFLAGS			+= -DMEMPOOL_DEBUG
 CFLAGS				+= -DTRACE_BOOTTIME
+ifeq ($(CONFIG_TESTSUITE),y)
+CFLAGS				+= -DTESTSUITE
+endif
 
 ######################################
 ## MiniOS path
@@ -132,8 +140,12 @@ MINI_OS_ROOT	= $(realpath ./mini-os/)
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
-		  ctldir.o shfs.o shfs_check.o shfs_fio.o shfs_tools.o shfs_stats.o
+STUB_APP_OBJS0  = main.o mempool.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
+		  ctldir.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o shfs_stats.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
+
+ifeq ($(CONFIG_TESTSUITE),y)
+STUB_APP_OBJS0  += testsuite.o
+endif
 
 include $(MINI_OS_ROOT)/stub.mk

@@ -86,20 +86,13 @@ You can configure your build by enabling/disabling features in MiniCache's
 Makefile. For instance, a netmap frontend (via nmwrap) is activated by setting
 the following symbols:
 
-    CONFIG_NETMAP_XENBUS = y
-    CONFIG_NETMAP = y
-    CONFIG_NETMAP_API = 4
-    CONFIG_NETFRONT = n
-    CONFIG_NETFRONT_NETMAP2 = n
-    CONFIG_NMWRAP = y
+    ## vif
+    CONFIG_NETMAP                   = y
 
 Mini-OS's standard netfront (vif) is enabled with the following settings:
 
-    CONFIG_NETMAP_XENBUS = n
-    CONFIG_NETMAP = n
-    CONFIG_NETFRONT = y
-    CONFIG_NETFRONT_NETMAP2 = n
-    CONFIG_NMWRAP = n
+    ## vif
+    CONFIG_NETMAP                   = n
 
 #### Build
 
@@ -120,7 +113,7 @@ following example as a basis:
     kernel        = './build/minicache_x86_64.gz'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '256'
+    memory        = '64'
 
     name          = 'minicache'
 
@@ -147,15 +140,18 @@ specify the kernel parameters:
 
 ### MiniCache Parameters
 
-    -s [sec]               Startup delay in seconds
+    -s [sec]               Startup delay in seconds (default is 0)
     -i [IPv4/Route prefix] Host IP address in CIDR notation
-                           (if not specified, DHCP is enabled)
+                           (if not specified, DHCP client is enabled)
     -g [IPv4]              Gateway IP address
     -d [IPv4]              Primary DNS server
     -e [IPv4]              Secondary DNS server
+    -a [hwaddr]/[IPv4]     Static ARP entry
+                           (multiple tokens possible)
     -b [VBD ID]            Automount filesystem from VBD ID
                            (multiple tokens possible;
                             disables vbd auto detection)
     -h                     Disable XenStore control trigger
                            (see: ctltrigger)
     -x [VBD ID]            Device for stats export
+    -c [num]               Max. number of simultaneous HTTP connections
