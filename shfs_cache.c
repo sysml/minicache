@@ -14,8 +14,8 @@
 
 #define shfs_cache_free_mem() \
 	({ struct mallinfo minfo = mallinfo(); \
-	((num_free_pages() * PAGE_SIZE) + /* free pages */ \
-	((heap_mapped - heap) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
+	((mm_free_pages() * PAGE_SIZE) + /* free pages */ \
+	((mm_heap_pages() * PAGE_SIZE) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
 	 (minfo.fordblks / minfo.ordblks)); }) /* minimum possible allocation on current heap size */
 
 #define shfs_cache_notify_retry() \
@@ -202,7 +202,7 @@ static inline void shfs_cache_flush_alist(void)
     int orig_call_cb_retry = shfs_vol.chunkcache->call_cb_retry;
 
     dprintf("Flushing cache...\n");
-    while (cce = dlist_first_el(shfs_vol.chunkcache->alist, struct shfs_cache_entry)) {
+    while ((cce = dlist_first_el(shfs_vol.chunkcache->alist, struct shfs_cache_entry)) != NULL) {
 	    if (cce->t) {
 		    dprintf("I/O of chunk buffer %llu is not done yet, "
 		            "waiting for completion...\n", cce->addr);

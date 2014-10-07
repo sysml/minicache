@@ -4,10 +4,10 @@ MiniCache
 What is MiniCache?
 ------------------
 
-MiniCache is a content cache server based on Mini-OS. It follows the
+MiniCache is a content cache/web server based on Mini-OS. It follows the
 minimalistic and single-purpose VM idea. MiniCache servers files via HTTP,
 provides a tiny telnet shell server (µShell) for management, and comes with
-SHFS support.
+SHFS (Simple Hash Filesystem) support.
 
 
 Building MiniCache
@@ -25,13 +25,13 @@ I recommend to add this export line to your shell profile (e.g., via .bashrc if
 you are using bash).
 
 
-### Download and Build Xen (here: 4.2.3)
+### Download and Build Xen (here: 4.4)
 Please follow Xen's build instructions - it should be something like the
 following:
 
-    wget http://bits.xensource.com/oss-xen/release/4.2.3/xen-4.2.3.tar.gz
-    tar -xvf xen-4.2.3
-    cd xen-4.2.3
+    git clone git://xenbits.xen.org/xen.git
+    cd xen
+    git checkout stable-4.4
     ./configure
     make world
     cd ..
@@ -42,30 +42,47 @@ You might need to restart your computer.
 After that, please ensure that you set the following environment variables set
 (I also recommend to add this to your shell profile):
 
-    export XEN_VER=4.2.3   # replace this number with your downloaded Xen version
-    export XEN_VERSION=$XEN_VER
-    export XEN_ROOT=$WORKSPACE/xen-$XEN_VER
+    export XEN_ROOT=$WORKSPACE/xen
 
 
 ### Download and Build toolchain
 The toolchain is required to comile and link the MiniCache VM binary. A
-toolchain having lightweightIP 1.4.1 is required.
+toolchain having lightweightIP 1.4.1 (or newer) is required.
 
-    git clone git@repos:joao/toolchain.git
+    git clone git@repos:oss/toolchain.git
     cd toolchain
-    git checkout feature/lwip-latest
+    git checkout skuenzer/lwip-latest
     cd ..
 
 Please follow the build procedure as described in 'toolchain/README'.
 
+After that, please ensure that you set the following environment variables set
+(I also recommend to add this to your shell profile):
+
+    export NEWLIB_ROOT=$WORKSPACE/toolchain/x86_64-root/x86_64-xen-elf
+    export LWIP_ROOT=$WORKSPACE/toolchain/x86_64-root/x86_64-xen-elf
+
+
+### Download mini-os
+
+    git clone git@repos:oss/mini-os.git
+    cd mini-os
+    git checkout skuenzer/lwip-latest
+    cd ..
+
+After that, please ensure that you set the following environment variables set
+(I also recommend to add this to your shell profile):
+
+    export MINIOS_ROOT=$WORKSPACE/mini-os
 
 ### Download and Build Cosmos (optional)
 Cosmos is used to instiate the MiniCache VM. However, you can also use the
 traditional xl tools from Xen but netmap/vale will not be supported then.
 
-    git clone git@repos:joao/cosmos.git
+    git clone https://github.com/cnplab/cosmos.git
 
 Please follow the build procedure as described in 'cosmos/README.md'.
+I recommend to build cosmos with 'xl'.
 
 Additionally, I recommend to link the cosmos binary to a directory that is
 included in the command search of your shell:
@@ -83,7 +100,7 @@ included in the command search of your shell:
 
 #### Configure (optional)
 You can configure your build by enabling/disabling features in MiniCache's
-Makefile. For instance, a netmap frontend (via nmwrap) is activated by setting
+Makefile. For instance, a netmap-based netfrontend is activated by setting
 the following symbols:
 
     ## vif
@@ -96,7 +113,7 @@ Mini-OS's standard netfront (vif) is enabled with the following settings:
 
 #### Build
 
-    make -j8 all
+    make all
 
 #### Build SHFS Tools
 The SHFS tools are required to create and maintain SHFS filesystems.
@@ -110,7 +127,7 @@ following example as a basis:
 
     #!/usr/local/bin/cosmos load
 
-    kernel        = './build/minicache_x86_64.gz'
+    kernel        = './build/minicache_x86_64'
     builder       = 'linux'
     vcpus         = '1'
     memory        = '64'
@@ -125,9 +142,9 @@ following example as a basis:
                       'phy:/dev/ram14,xvdc,w',
                       'phy:/dev/ram15,xvdd,w' ]
 
-Thanks to Cosmos, you can set the executable bit to this file and instantiate
-the VM like a regular binary that is executed in Domain-0. The parameters
-are passed as kernel parameters to the image:
+Thanks to Cosmos (when build with xl), you can set the executable bit to
+this file and instantiate the VM like a regular binary that is executed
+in Domain-0. The parameters are passed as kernel parameters to the image:
 
     chmod a+x minicache
     ./minicache -i 192.168.0.2/24 -g 192.168.0.1

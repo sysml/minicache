@@ -1156,10 +1156,10 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    size_t other_p;
 	    size_t free_p;
 
-	    total_p    = num_total_pages();
-	    reserved_p = num_reserved_pages();
-	    heap_p     = (heap_mapped - heap) / PAGE_SIZE;
-	    free_p     = num_free_pages();
+	    total_p    = mm_total_pages();
+	    reserved_p = mm_reserved_pages();
+	    heap_p     = mm_heap_pages();
+	    free_p     = mm_free_pages();
 	    other_p    = total_p - free_p - reserved_p - heap_p;
 
 	    fprintf(cio, "       %12s %12s %12s %12s %12s\n",
@@ -1187,12 +1187,12 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    size_t free_s;
 
 	    //total_s = start_info.nr_pages * PAGE_SIZE;
-	    total_s = num_total_pages() * PAGE_SIZE;
+	    total_s = mm_total_pages() * PAGE_SIZE;
 	    text_s  = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
 	    data_s  = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
 	    bss_s   = ((size_t) &_end - (size_t) &_edata); /* bss section */
-	    heap_s  = heap_mapped - heap;
-	    free_s  = num_free_pages() * PAGE_SIZE;
+	    heap_s  = mm_heap_pages() * PAGE_SIZE;
+	    free_s  = mm_free_pages() * PAGE_SIZE;
 	    other_s = total_s - free_s - text_s - data_s - bss_s - heap_s;
 
 	    fprintf(cio, "       %12s %12s %12s %12s %12s %12s %12s\n",

@@ -5,8 +5,8 @@
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 #include <stdio.h>
-#include <hexdump.h>
 
+#include "hexdump.h"
 #include "shfs.h"
 #include "shfs_btable.h"
 #include "shfs_tools.h"
@@ -403,7 +403,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 
  out:
 	up(&shfs_mount_lock);
-	return 0;
+	return ret;
 }
 
 int register_shfs_tools(struct ctldir *cd)
