@@ -530,14 +530,18 @@ int main(int argc, char *argv[])
      * banner
      * ----------------------------------- */
 #ifndef CONFIG_HIDE_BANNER
+    printk("\n");
     printk("______  _______       ______________            ______       \n");
     printk("___   |/  /__(_)_________(_)_  ____/_____ _________  /______ \n");
     printk("__  /|_/ /__  /__  __ \\_  /_  /    _  __ `/  ___/_  __ \\  _ \\\n");
     printk("_  /  / / _  / _  / / /  / / /___  / /_/ // /__ _  / / /  __/\n");
     printk("/_/  /_/  /_/  /_/ /_//_/  \\____/  \\__,_/ \\___/ /_/ /_/\\___/ \n");
+#ifdef CONFIG_BANNER_VERSION
+    printk("%61s\n", ""CONFIG_BANNER_VERSION"");
+#endif
     printk("\n");
     printk("Copyright(C) 2013-2014 NEC Europe Ltd.\n");
-    printk("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
+    printk("Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
 
