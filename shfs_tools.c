@@ -355,7 +355,7 @@ static int shcmd_shfs_prefetch_cache(FILE *cio, int argc, char *argv[])
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
 	unsigned int m;
-	char str_uuid[17];
+	char str_uuid[37];
 	char str_date[20];
 	int ret = 0;
 

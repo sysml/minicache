@@ -217,7 +217,7 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	chk_t    htable_size_chks;
 	uint32_t htable_total_entries;
 	uint8_t  m;
-	char str_uuid[17];
+	char str_uuid[37];
 	char str_date[20];
 
 	chunksize            = SHFS_CHUNKSIZE(hdr_common);
