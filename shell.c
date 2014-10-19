@@ -147,6 +147,7 @@ static struct shell *sh = NULL; /* will be initialized first */
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
+static int shcmd_sexec(FILE *cio, int argc, char *argv[]);
 static int shcmd_clear(FILE *cio, int argc, char *argv[]);
 static int shcmd_time(FILE *cio, int argc, char *argv[]);
 static int shcmd_repeat(FILE *cio, int argc, char *argv[]);
@@ -227,6 +228,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("exit",   shcmd_exit);
     shell_register_cmd("clear",  shcmd_clear);
     shell_register_cmd("echo",   shcmd_echo);
+    shell_register_cmd("sexec",  shcmd_sexec);
     shell_register_cmd("who",    shcmd_who);
     shell_register_cmd("time",   shcmd_time);
     shell_register_cmd("repeat", shcmd_repeat);
@@ -1019,6 +1021,36 @@ static int shcmd_echo(FILE *cio, int argc, char *argv[])
     }
     fprintf(cio, "\n");
     return 0;
+}
+
+static int shcmd_sexec(FILE *cio, int argc, char *argv[])
+{
+    /* run a shell command but redirects input/output to sysin/sysout */
+    int ret = 0;
+    int32_t cmdi;
+    int sys_cfd;
+    FILE *sys_cio;
+
+    if (argc == 1) {
+        fprintf(cio, "Usage: %s [command] [[args]]...\n", argv[0]);
+        return -1;
+    }
+    cmdi = shell_get_cmd_index(argv[1]);
+    if (cmdi < 0) {
+        fprintf(cio, "%s: command not found\n", argv[1]);
+        return -1;
+    }
+    sys_cfd = open("/var/log/", O_RDWR); /* workaround to
+					  * access stdin/stdout */
+    if (sys_cfd < 0) {
+        fprintf(cio, "%s: Could not open sysin/sysout\n", argv[0]);
+        return -1;
+    }
+
+    sys_cio = fdopen(sys_cfd, "r+");
+    ret = sh->cmd_func[cmdi](sys_cio, argc - 1, &argv[1]);
+    fclose(sys_cio);
+    return ret;
 }
 
 static int shcmd_time(FILE *cio, int argc, char *argv[])
