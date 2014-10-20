@@ -5,6 +5,7 @@
 
 #include <mini-os/os.h>
 #include <mini-os/types.h>
+#include <mini-os/lib.h>
 #include <stdio.h>
 #include <stdlib.h>
 

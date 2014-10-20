@@ -3,6 +3,7 @@
 #include <mini-os/xmalloc.h>
 #include <mini-os/wait.h>
 #include <mini-os/sched.h>
+#include <mini-os/lib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include "ctldir.h"
