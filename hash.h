@@ -31,7 +31,7 @@ static inline void hash_copy(hash512_t dst, const hash512_t src, uint8_t hlen)
 		*p64_dst = *p64_src & mask64;
 	}
 #else
-	memcpy(target, source, hlen);
+	memcpy(dst, src, hlen);
 #endif
 }
 
