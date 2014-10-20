@@ -158,10 +158,10 @@ static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
 static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #endif
-#ifdef __MINIOS__
+#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
 static int shcmd_free(FILE *cio, int argc, char *argv[]);
-#endif
 static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
+#endif
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
 #endif
@@ -234,10 +234,10 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
     shell_register_cmd("date",   shcmd_date);
-#ifdef __MINIOS__
+#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
     shell_register_cmd("free",   shcmd_free);
-#endif
     shell_register_cmd("mallinfo",shcmd_mallinfo);
+#endif
 #ifdef HAVE_LWIP
     shell_register_cmd("ifconfig",shcmd_ifconfig);
 #endif
@@ -1145,7 +1145,7 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 }
 #endif
 
-#ifdef __MINIOS__
+#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
 #include <mini-os/mm.h>
 
 static int shcmd_free(FILE *cio, int argc, char *argv[])
@@ -1252,7 +1252,6 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
     fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
     return -1;
 }
-#endif
 
 static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
 {
@@ -1270,6 +1269,7 @@ static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
 
     return 0;
 }
+#endif
 
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])

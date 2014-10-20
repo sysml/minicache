@@ -12,11 +12,15 @@
 
 #define MIN_ALIGN 8
 
+#if (defined __x86_64 || defined __x86_32)
 #define shfs_cache_free_mem() \
 	({ struct mallinfo minfo = mallinfo(); \
 	((mm_free_pages() * PAGE_SIZE) + /* free pages */ \
 	((mm_heap_pages() * PAGE_SIZE) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
 	 (minfo.fordblks / minfo.ordblks)); }) /* minimum possible allocation on current heap size */
+#else
+#undef SHFS_CACHE_GROW_THRESHOLD /* not supported on non-x86 */
+#endif
 
 #define shfs_cache_notify_retry() \
 	do { \

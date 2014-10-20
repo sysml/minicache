@@ -7,6 +7,8 @@
 #ifndef _HASH_H_
 #define _HASH_H_
 
+#include <string.h>
+
 typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 
 

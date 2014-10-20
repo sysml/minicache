@@ -8,6 +8,7 @@
 #include <kernel.h>
 #include <sched.h>
 #include <semaphore.h>
+#include <shutdown.h>
 
 #include <lwip/ip_addr.h>
 #include <netif/etharp.h>
