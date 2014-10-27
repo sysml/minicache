@@ -5,8 +5,8 @@
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 #include <stdio.h>
-#include <hexdump.h>
 
+#include "hexdump.h"
 #include "shfs.h"
 #include "shfs_btable.h"
 #include "shfs_tools.h"
@@ -355,7 +355,7 @@ static int shcmd_shfs_prefetch_cache(FILE *cio, int argc, char *argv[])
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
 	unsigned int m;
-	char str_uuid[17];
+	char str_uuid[37];
 	char str_date[20];
 	int ret = 0;
 
@@ -403,7 +403,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 
  out:
 	up(&shfs_mount_lock);
-	return 0;
+	return ret;
 }
 
 int register_shfs_tools(struct ctldir *cd)

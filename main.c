@@ -7,8 +7,8 @@
 #include <getopt.h>
 #include <kernel.h>
 #include <sched.h>
-#include <pkt_copy.h>
 #include <semaphore.h>
+#include <shutdown.h>
 
 #include <lwip/ip_addr.h>
 #include <netif/etharp.h>
@@ -22,12 +22,7 @@
 #include <lwip/ip_frag.h>
 #include <lwip/init.h>
 #include <lwip/stats.h>
-
-#ifdef CONFIG_NMWRAP
-#include <lwip-nmwrap.h>
-#else
-#include <lwip-netfront.h>
-#endif
+#include <lwip-net.h>
 
 #include "mempool.h"
 #include "http.h"
@@ -43,10 +38,6 @@
 #endif
 
 #include "debug.h"
-
-#ifdef CONFIG_LWIP_SINGLETHREADED
-#define RXBURST_LEN (LNMW_MAX_RXBURST_LEN)
-#endif /* CONFIG_LWIP_MINIMAL */
 
 /* runs (func) a command on a timeout */
 #define TIMED(ts_now, ts_tmr, interval, func)                        \
@@ -507,17 +498,17 @@ int main(int argc, char *argv[])
     int ret;
     err_t err;
     unsigned int i;
-#if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
     uint64_t now;
 #endif
-#ifdef CONFIG_LWIP_SINGLETHREADED
+#ifdef CONFIG_LWIP_NOTHREADS
     uint64_t ts_tcp = 0;
     uint64_t ts_etharp = 0;
     uint64_t ts_ipreass = 0;
     uint64_t ts_dns = 0;
     uint64_t ts_dhcp_fine = 0;
     uint64_t ts_dhcp_coarse = 0;
-#endif /* CONFIG_LWIP_SINGLETHREADED */
+#endif /* CONFIG_LWIP_NOTHREADS */
 #ifdef CONFIG_MINDER_PRINT
     uint64_t ts_minder = 0;
 #endif /* CONFIG_MINDER_PRINT */
@@ -541,14 +532,17 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
 #ifndef CONFIG_HIDE_BANNER
     printk("\n");
-    printk("_|      _|  _|            _|    _|_|_|                      _|                \n");
-    printk("_|_|  _|_|      _|_|_|        _|          _|_|_|    _|_|_|  _|_|_|      _|_|  \n");
-    printk("_|  _|  _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|_|_|_|\n");
-    printk("_|      _|  _|  _|    _|  _|  _|        _|    _|  _|        _|    _|  _|      \n");
-    printk("_|      _|  _|  _|    _|  _|    _|_|_|    _|_|_|    _|_|_|  _|    _|    _|_|_|\n");
+    printk("______  _______       ______________            ______       \n");
+    printk("___   |/  /__(_)_________(_)_  ____/_____ _________  /______ \n");
+    printk("__  /|_/ /__  /__  __ \\_  /_  /    _  __ `/  ___/_  __ \\  _ \\\n");
+    printk("_  /  / / _  / _  / / /  / / /___  / /_/ // /__ _  / / /  __/\n");
+    printk("/_/  /_/  /_/  /_/ /_//_/  \\____/  \\__,_/ \\___/ /_/ /_/\\___/ \n");
+#ifdef CONFIG_BANNER_VERSION
+    printk("%61s\n", ""CONFIG_BANNER_VERSION"");
+#endif
     printk("\n");
     printk("Copyright(C) 2013-2014 NEC Europe Ltd.\n");
-    printk("                       Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
+    printk("Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
 
@@ -616,10 +610,10 @@ int main(int argc, char *argv[])
      * ----------------------------------- */
     printk("Starting networking...\n");
     TT_START(tt_lwipinit);
-#ifdef CONFIG_LWIP_SINGLETHREADED
-    lwip_init(); /* single threaded */
+#ifdef CONFIG_LWIP_NOTHREADS
+    lwip_init();
 #else
-    tcpip_init(NULL, NULL); /* multi-threaded */
+    tcpip_init(NULL, NULL);
 #endif
     TT_END(tt_lwipinit);
 
@@ -627,23 +621,13 @@ int main(int argc, char *argv[])
      * network interface initialization
      * ----------------------------------- */
     TT_START(tt_netifadd);
-#ifdef CONFIG_LWIP_SINGLETHREADED
-#ifdef CONFIG_NMWRAP
-    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      nmwif_init, ethernet_input);
-#else
+#ifdef CONFIG_LWIP_NOTHREADS
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                       netfrontif_init, ethernet_input);
-#endif /* CONFIG_NMWRAP */
-#else
-#ifdef CONFIG_NMWRAP
-    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      nmwif_init, tcpip_input);
 #else
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                       netfrontif_init, tcpip_input);
-#endif /* CONFIG_NMWRAP */
-#endif /* CONFIG_LWIP_SINGLETHREADED */
+#endif /* CONFIG_LWIP_NOTHREADS */
     TT_END(tt_netifadd);
 
     /* device init function is user-defined
@@ -787,19 +771,15 @@ int main(int argc, char *argv[])
 	/* poll block devices */
 	shfs_poll_blkdevs();
 
-#ifdef CONFIG_LWIP_SINGLETHREADED
+#ifdef CONFIG_LWIP_NOTHREADS
         /* NIC handling loop (single threaded lwip) */
-#ifdef CONFIG_NMWRAP
-	nmwif_handle(&netif, RXBURST_LEN);
-#else
-	netfrontif_handle(&netif, RXBURST_LEN);
-#endif /* CONFIG_NMWRAP */
-#endif /* CONFIG_LWIP_SINGLETHREADED */
+	netfrontif_poll(&netif, LWIP_NETIF_MAX_RXBURST_LEN);
+#endif /* CONFIG_LWIP_NOTHREADS */
 
-#if defined CONFIG_LWIP_SINGLETHREADED || defined CONFIG_MINDER_PRINT
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
         now = NSEC_TO_MSEC(NOW());
 #endif
-#ifdef CONFIG_LWIP_SINGLETHREADED
+#ifdef CONFIG_LWIP_NOTHREADS
 	/* Process lwip network-related timers */
         TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
         TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
@@ -809,7 +789,7 @@ int main(int argc, char *argv[])
 	        TIMED(now, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
 	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
         }
-#endif /* CONFIG_LWIP_SINGLETHREADED */
+#endif /* CONFIG_LWIP_NOTHREADS */
 #ifdef CONFIG_MINDER_PRINT
         TIMED(now, ts_minder,  MINDER_INTERVAL,  minder_print());
 #endif /* CONFIG_MINDER_PRINT */
@@ -854,8 +834,8 @@ int main(int argc, char *argv[])
     netif_remove(&netif);
  out:
     if (shall_reboot)
-	    kernel_poweroff(SHUTDOWN_reboot);
-    kernel_poweroff(SHUTDOWN_poweroff);
+	    kernel_shutdown(SHUTDOWN_reboot);
+    kernel_shutdown(SHUTDOWN_poweroff);
 
     return 0; /* will never be reached */
 }

@@ -17,7 +17,7 @@ int register_shfs_tools(struct ctldir *cd);
 
 /**
  * Prints an uuid/hash number to a buffer
- * Note: The target buffer for the UUID has to be at least 17 bytes long
+ * Note: The target buffer for the UUID has to be at least 37 bytes long
  * Note: The target buffer for the hash has to be at least ((2 * hlen) + 1) bytes long
  */
 void uuid_unparse(const uuid_t uu, char *out);

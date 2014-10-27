@@ -147,6 +147,7 @@ static struct shell *sh = NULL; /* will be initialized first */
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
+static int shcmd_sexec(FILE *cio, int argc, char *argv[]);
 static int shcmd_clear(FILE *cio, int argc, char *argv[]);
 static int shcmd_time(FILE *cio, int argc, char *argv[]);
 static int shcmd_repeat(FILE *cio, int argc, char *argv[]);
@@ -157,10 +158,10 @@ static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
 static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #endif
-#ifdef __MINIOS__
+#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
 static int shcmd_free(FILE *cio, int argc, char *argv[]);
-#endif
 static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
+#endif
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
 #endif
@@ -227,15 +228,16 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("exit",   shcmd_exit);
     shell_register_cmd("clear",  shcmd_clear);
     shell_register_cmd("echo",   shcmd_echo);
+    shell_register_cmd("sexec",  shcmd_sexec);
     shell_register_cmd("who",    shcmd_who);
     shell_register_cmd("time",   shcmd_time);
     shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
     shell_register_cmd("date",   shcmd_date);
-#ifdef __MINIOS__
+#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
     shell_register_cmd("free",   shcmd_free);
-#endif
     shell_register_cmd("mallinfo",shcmd_mallinfo);
+#endif
 #ifdef HAVE_LWIP
     shell_register_cmd("ifconfig",shcmd_ifconfig);
 #endif
@@ -1021,6 +1023,36 @@ static int shcmd_echo(FILE *cio, int argc, char *argv[])
     return 0;
 }
 
+static int shcmd_sexec(FILE *cio, int argc, char *argv[])
+{
+    /* run a shell command but redirects input/output to sysin/sysout */
+    int ret = 0;
+    int32_t cmdi;
+    int sys_cfd;
+    FILE *sys_cio;
+
+    if (argc == 1) {
+        fprintf(cio, "Usage: %s [command] [[args]]...\n", argv[0]);
+        return -1;
+    }
+    cmdi = shell_get_cmd_index(argv[1]);
+    if (cmdi < 0) {
+        fprintf(cio, "%s: command not found\n", argv[1]);
+        return -1;
+    }
+    sys_cfd = open("/var/log/", O_RDWR); /* workaround to
+					  * access stdin/stdout */
+    if (sys_cfd < 0) {
+        fprintf(cio, "%s: Could not open sysin/sysout\n", argv[0]);
+        return -1;
+    }
+
+    sys_cio = fdopen(sys_cfd, "r+");
+    ret = sh->cmd_func[cmdi](sys_cio, argc - 1, &argv[1]);
+    fclose(sys_cio);
+    return ret;
+}
+
 static int shcmd_time(FILE *cio, int argc, char *argv[])
 {
     /* run a shell command while measuring its execution time */
@@ -1113,7 +1145,7 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 }
 #endif
 
-#ifdef __MINIOS__
+#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
 #include <mini-os/mm.h>
 
 static int shcmd_free(FILE *cio, int argc, char *argv[])
@@ -1156,10 +1188,10 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    size_t other_p;
 	    size_t free_p;
 
-	    total_p    = num_total_pages();
-	    reserved_p = num_reserved_pages();
-	    heap_p     = (heap_mapped - heap) / PAGE_SIZE;
-	    free_p     = num_free_pages();
+	    total_p    = mm_total_pages();
+	    reserved_p = mm_reserved_pages();
+	    heap_p     = mm_heap_pages();
+	    free_p     = mm_free_pages();
 	    other_p    = total_p - free_p - reserved_p - heap_p;
 
 	    fprintf(cio, "       %12s %12s %12s %12s %12s\n",
@@ -1187,12 +1219,12 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    size_t free_s;
 
 	    //total_s = start_info.nr_pages * PAGE_SIZE;
-	    total_s = num_total_pages() * PAGE_SIZE;
+	    total_s = mm_total_pages() * PAGE_SIZE;
 	    text_s  = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
 	    data_s  = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
 	    bss_s   = ((size_t) &_end - (size_t) &_edata); /* bss section */
-	    heap_s  = heap_mapped - heap;
-	    free_s  = num_free_pages() * PAGE_SIZE;
+	    heap_s  = mm_heap_pages() * PAGE_SIZE;
+	    free_s  = mm_free_pages() * PAGE_SIZE;
 	    other_s = total_s - free_s - text_s - data_s - bss_s - heap_s;
 
 	    fprintf(cio, "       %12s %12s %12s %12s %12s %12s %12s\n",
@@ -1220,7 +1252,6 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
     fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
     return -1;
 }
-#endif
 
 static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
 {
@@ -1238,6 +1269,7 @@ static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
 
     return 0;
 }
+#endif
 
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])

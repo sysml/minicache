@@ -7,6 +7,8 @@
 #ifndef _HASH_H_
 #define _HASH_H_
 
+#include <string.h>
+
 typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 
 
@@ -31,7 +33,7 @@ static inline void hash_copy(hash512_t dst, const hash512_t src, uint8_t hlen)
 		*p64_dst = *p64_src & mask64;
 	}
 #else
-	memcpy(target, source, hlen);
+	memcpy(dst, src, hlen);
 #endif
 }
 

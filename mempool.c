@@ -7,6 +7,7 @@
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
+#include <mini-os/lib.h>
 #include <kernel.h>
 #include <errno.h>
 #include "mempool.h"

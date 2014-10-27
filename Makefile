@@ -3,47 +3,39 @@ default : all
 ######################################
 ## General configuration
 ######################################
-XEN_VER		?= 4.2.0
-XEN_ROOT	?= $(realpath ../xen-$(XEN_VER))
-TOOLCHAIN_ROOT	?= $(realpath ../toolchain.xen.$(XEN_VER))
-GCC_VERSION	?= 4.5.0
+XEN_ROOT	?= $(realpath ../xen)
+TOOLCHAIN_ROOT	?= $(realpath ../toolchain)
+MINIOS_ROOT	?= $(realpath ../mini-os)
+GCC_VERSION	?= 4.7.2
 verbose		?=
 stubdom		 = y
 
 CFLAGS          += -Wunused -Winline -Wtype-limits -Wcast-align --param large-stack-frame=256 --param large-stack-frame-growth=16
 
+######################################
+## MiniCache options
+######################################
+#CFLAGS				+= -DCONFIG_HIDE_BANNER
+CFLAGS				+= -DCONFIG_BANNER_VERSION="\"MiniCache/$(_GITSHA1)/$(XEN_TARGET_ARCH)\""
 
 ######################################
 ## Networking options
 ######################################
 
 ## vif
-CONFIG_NETMAP			= n
-
-ifeq ($(CONFIG_NETMAP),y)
-# use 'vale' for xenbus driver instead of 'vif'
-CONFIG_NETMAP_XENBUS		= y
-# POSIX netmap implementation
-CONFIG_NETMAP_API		= 4
-CONFIG_NETFRONT			= n
-CONFIG_NETFRONT_NETMAP2		= n
-CONFIG_NMWRAP			= y
-CONFIG_NMWRAP_SYNCRX		= n
-CFLAGS				+= -DNETMAP_DEBUG=0
-else
-CONFIG_NETMAP_XENBUS		= n
 CONFIG_NETFRONT			= y
-CONFIG_NETFRONT_NETMAP2		= n
-CONFIG_NMWRAP			= n
-endif
-CONFIG_START_NETWORK		= n
+CONFIG_NETFRONT_POLL		= n
+CONFIG_NETFRONT_POLLTIMEOUT	= 1
+
+CONFIG_NETMAP			= n
 
 ## lwip
 CONFIG_LWIP			= y
 CONFIG_LWIP_MINIMAL		= y
-CONFIG_LWIP_SINGLETHREADED 	= y
+CONFIG_LWIP_NOTHREADS		= y
 CONFIG_LWIP_HEAP_ONLY		= n
 CONFIG_LWIP_POOLS_ONLY		= n
+CONFIG_START_NETWORK		= n
 
 # support 4K TCP connections
 #CFLAGS				+= -DCONFIG_LWIP_NUM_TCPCON=4096
@@ -57,7 +49,7 @@ CFLAGS				+= -DCONFIG_LWIP_NUM_TCPCON=1024
 _GITSHA1			= $(shell git rev-parse --short HEAD || echo "?")
 CFLAGS				+= -DSHELL_INFO="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\"" \
 				   -DSHELL_WELCOME="\"MiniCache $(_GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\n\nType 'help' to get an overview of available commands\""
-//CFLAGS			+= -DSHELL_PROMPT="\"mc\#\""
+#CFLAGS			+= -DSHELL_PROMPT="\"mc\#\""
 # colored prompt #
 CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 
@@ -92,7 +84,7 @@ CFLAGS				+= -DSHFS_STATS_HTTP_DPCR=6
 ## HTTP options
 ######################################
 CFLAGS				+= -DHTTP_SERVER_AGENT="\"MiniCache/$(_GITSHA1)\""
-//CFLAGS			+= -DHTTP_TESTFILE
+#CFLAGS				+= -DHTTP_TESTFILE
 CFLAGS				+= -DHTTP_STATS_DISPLAY
 CFLAGS				+= -DHTTP_URL_CUTARGS
 
@@ -110,42 +102,41 @@ CONFIG_TESTSUITE		= y
 ######################################
 ## Debugging options
 ######################################
-CONFIG_DEBUG			= y
+CONFIG_CONSFRONT_SYNC		= y
+
+debug				= y
 CONFIG_DEBUG_LWIP		= n
 CONFIG_DEBUG_LWIP_MALLOC	= n
-//CFLAGS	       		+= -DLWIP_STATS_DISPLAY=1
-//CFLAGS			+= -DLWIP_IF_DEBUG
-//CFLAGS			+= -DLWIP_TCP_DEBUG
-//CFLAGS			+= -DCONFIG_MINDER_PRINT
-//CFLAGS			+= -DHTTP_DEBUG
-//CFLAGS			+= -DHTTP_DEBUG_PRINTACCESS
-//CFLAGS			+= -DSHFS_DEBUG
-//CFLAGS			+= -DSHFS_CACHE_DEBUG
-//CFLAGS			+= -DSHELL_DEBUG
-//CFLAGS			+= -DHTABLE_DEBUG
-//CFLAGS			+= -DMEMPOOL_DEBUG
+#CFLAGS	       			+= -DLWIP_STATS_DISPLAY=1
+#CFLAGS				+= -DLWIP_IF_DEBUG
+#CFLAGS				+= -DLWIP_TCP_DEBUG
+#CFLAGS				+= -DCONFIG_MINDER_PRINT
+#CFLAGS				+= -DHTTP_DEBUG
+#CFLAGS				+= -DHTTP_DEBUG_PRINTACCESS
+#CFLAGS				+= -DSHFS_DEBUG
+#CFLAGS				+= -DSHFS_CACHE_DEBUG
+#CFLAGS				+= -DSHELL_DEBUG
+#CFLAGS				+= -DHTABLE_DEBUG
+#CFLAGS				+= -DMEMPOOL_DEBUG
 CFLAGS				+= -DTRACE_BOOTTIME
 ifeq ($(CONFIG_TESTSUITE),y)
 CFLAGS				+= -DTESTSUITE
 endif
 
 ######################################
-## MiniOS path
-######################################
-MINI_OS_ROOT	= $(realpath ./mini-os/)
-
-######################################
 ## Stubdomain
 ######################################
+CONFIG_SHUTDOWN	= y
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o mempool.o debug.o htable.o shell.o http_parser.o http.o blkdev.o \
-		  ctldir.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o shfs_stats.o
+STUB_APP_OBJS0  = main.o mempool.o hexdump.o debug.o shell.o ctldir.o \
+		  blkdev.o htable.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o shfs_stats.o \
+		  http_parser.o http.o
 STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 
 ifeq ($(CONFIG_TESTSUITE),y)
 STUB_APP_OBJS0  += testsuite.o
 endif
 
-include $(MINI_OS_ROOT)/stub.mk
+include $(MINIOS_ROOT)/stub.mk
