@@ -56,9 +56,10 @@ CFLAGS				+= -DSHELL_PROMPT="\"\\e[01;31mmc\\e[00m\#\""
 ######################################
 ## SHFS options
 ######################################
+CONFIG_SHFS_STATS		= y
 CFLAGS				+= -DSHFS_OPENBYNAME
-CFLAGS				+= -DSHFS_STATS
 CFLAGS				+= -DSHFS_CACHE_INFO
+CFLAGS-$(CONFIG_SHFS_STATS)	+= -DSHFS_STATS
 
 # Advanced statistics from HTTP
 #  This enables counting the number of successful downloads
@@ -119,24 +120,24 @@ CONFIG_DEBUG_LWIP_MALLOC	= n
 #CFLAGS				+= -DHTABLE_DEBUG
 #CFLAGS				+= -DMEMPOOL_DEBUG
 CFLAGS				+= -DTRACE_BOOTTIME
-ifeq ($(CONFIG_TESTSUITE),y)
-CFLAGS				+= -DTESTSUITE
-endif
+CFLAGS-$(CONFIG_TESTSUITE)	+= -DTESTSUITE
 
 ######################################
 ## Stubdomain
 ######################################
 CONFIG_SHUTDOWN	= y
+
 STUBDOM_NAME	= minicache
 STUBDOM_ROOT	= $(realpath .)
 
-STUB_APP_OBJS0  = main.o mempool.o hexdump.o debug.o shell.o ctldir.o \
-		  blkdev.o htable.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o shfs_stats.o \
+STUB_APP_OBJS0	= main.o mempool.o hexdump.o debug.o shell.o ctldir.o \
+		  blkdev.o htable.o shfs.o shfs_check.o shfs_cache.o shfs_fio.o shfs_tools.o \
 		  http_parser.o http.o
-STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
+STUB_APP_OBJS0-$(CONFIG_TESTSUITE)	+= testsuite.o
+STUB_APP_OBJS0-$(CONFIG_SHFS_STATS)	+= shfs_stats.o
 
-ifeq ($(CONFIG_TESTSUITE),y)
-STUB_APP_OBJS0  += testsuite.o
-endif
+STUB_APP_OBJS0 += $(STUB_APP_OBJS0-y)
+STUB_APP_OBJS	= $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
+CFLAGS         += $(CFLAGS-y)
 
 include $(MINIOS_ROOT)/stub.mk
