@@ -818,10 +818,12 @@ int main(int argc, char *argv[])
 	    printk("System is going down to reboot now\n");
     else
 	    printk("System is going down to halt now\n");
+#ifdef SHFS_STATS
     if (args.stats_vbd) {
 	    printk("Closing stats device...\n");
 	    exit_shfs_stats_export();
     }
+#endif
     printk("Stopping HTTP server...\n");
     exit_http();
     printk("Stopping shell...\n");
