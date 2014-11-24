@@ -130,7 +130,7 @@ struct ctldir *create_ctldir(const char *name) {
 	struct ctldir *cd;
 	int ret;
 
-	cd = _xmalloc(sizeof(*cd), 0);
+	cd = _xmalloc(sizeof(*cd), 1);
 	if (!cd) {
 		errno = ENOMEM;
 		goto err_out;
