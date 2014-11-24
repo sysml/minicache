@@ -177,7 +177,7 @@ static chk_t _shfs_alist_find_bf(struct shfs_alist *al, chk_t len)
 		}
 
 		/* free_start and free_end points now to a free space segment */
-		printf("[FREE]  %15lu - %15lu\n", free_start, free_end);
+		printf("[FREE]  %15"PRIchk" - %15"PRIchk"\n", free_start, free_end);
 	}
 
 	return 0;

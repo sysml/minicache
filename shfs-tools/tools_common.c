@@ -111,7 +111,7 @@ int sync_io_chunk(struct storage *s, chk_t start, chk_t len, int owrite, void *b
 	for (strp = start_s; strp < end_s; ++strp) {
 		m = strp % s->nb_members;
 		startb = (strp / s->nb_members) * s->stripesize;
-		dprintf(D_MAX, " %s chunk %lu on member %u (at %lu KiB, length: %u KiB)\n",
+		dprintf(D_MAX, " %s chunk %"PRIstrp" on member %u (at %lu KiB, length: %u KiB)\n",
 		        owrite ? "Writing to" : "Reading from",
 		        s->stripemode == SHFS_SM_COMBINED ? strp / s->nb_members: strp - (s->nb_members - 1),
 		        m,
@@ -172,7 +172,7 @@ int sync_erase_chunk(struct storage *s, chk_t start, chk_t len) {
 
 		if (verbosity >= D_L0) {
 			p = (strp - start_s + 1) * 1000 / (end_s - start_s);
-			dprintf(D_L0, "\r Erasing chunk %lu on member %u (%lu.%01lu %%)...       ",
+			dprintf(D_L0, "\r Erasing chunk %"PRIstrp" on member %u (%"PRIu64".%01"PRIu64" %%)...       ",
 			        s->stripemode == SHFS_SM_COMBINED ?
 			        strp / s->nb_members : strp - (s->nb_members - 1),
 			        m, p / 10, p % 10);
@@ -255,7 +255,7 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	       htable_total_entries, hdr_config->htable_bucket_count,
 	       htable_size_chks, htable_size / 1024,
 	       hdr_config->htable_bak_ref ? "2nd copy enabled" : "No copy");
-	printf("Entry size:         %"PRIu64" Bytes (raw: %ld Bytes)\n", hentry_size, sizeof(struct shfs_hentry));
+	printf("Entry size:         %"PRIu64" Bytes (raw: %zu Bytes)\n", hentry_size, sizeof(struct shfs_hentry));
 	printf("Metadata total:     %"PRIu64" chunks\n", metadata_size(hdr_common, hdr_config));
 	printf("Available space:    %"PRIu64" chunks\n", avail_space(hdr_common, hdr_config));
 

@@ -40,7 +40,7 @@ static inline print_alist(struct shfs_alist *al)
 	unsigned int i = 0;
 
 	for (e = al->head; e != NULL; e = e->next)
-		printf("[entry%5u] %15lu - %15lu (len: %15lu)\n", i++, e->start, e->end, e->end - e->start);
+		printf("[entry%5u] %15"PRIchk" - %15"PRIchk" (len: %15"PRIchk")\n", i++, e->start, e->end, e->end - e->start);
 }
 
 

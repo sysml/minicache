@@ -24,6 +24,9 @@ typedef uint64_t strp_t;
 typedef uint8_t uuid_t[16];
 #endif /* __MINIOS__ */
 
+#define PRIchk PRIu64
+#define PRIstrp PRIu64
+
 #define SHFS_MAX_NB_MEMBERS 16
 
 /* vol_byteorder */

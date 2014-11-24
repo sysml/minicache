@@ -724,14 +724,14 @@ static int actn_addfile(struct token *j)
 	/* find and alloc container */
 	fsize = fd_stat.st_size;
 	csize = DIV_ROUND_UP(fsize, shfs_vol.chunksize);
-	dprintf(D_L0, "Searching for an appropriate container to store file contents (%lu chunks)...\n", csize);
+	dprintf(D_L0, "Searching for an appropriate container to store file contents (%"PRIchk" chunks)...\n", csize);
 	cchk = shfs_alist_find_free(shfs_vol.al, csize);
 	if (cchk == 0 || cchk >= shfs_vol.volsize) {
 		eprintf("Could not find appropriate volume area to store %s\n", j->path);
 		ret = -1;
 		goto err_close_fd;
 	}
-	dprintf(D_L1, "Found appropriate container at chunk %lu\n", cchk);
+	dprintf(D_L1, "Found appropriate container at chunk %"PRIchk"\n", cchk);
 	dprintf(D_L1, "Reserving container...\n");
 	shfs_alist_register(shfs_vol.al, cchk, csize);
 
@@ -1125,7 +1125,7 @@ static int actn_ls(struct token *token)
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
 		if (shfs_vol.hlen <= 32)
-			printf("%-64s %12lu %12lu  %c%c%c%c %-24s %-16s %s\n",
+			printf("%-64s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
 			       hentry->chunk,
 			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
@@ -1137,7 +1137,7 @@ static int actn_ls(struct token *token)
 			       str_date,
 			       str_name);
 		else
-			printf("%-128s %12lu %12lu  %c%c%c%c %-24s %-16s %s\n",
+			printf("%-128s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
 			       hentry->chunk,
 			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
