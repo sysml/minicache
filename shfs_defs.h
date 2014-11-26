@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
+#include <inttypes.h>
 #ifndef __MINIOS__
 #include <uuid/uuid.h>
 #include <mhash.h>

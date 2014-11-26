@@ -144,7 +144,7 @@ static const char _http_err404p[] = \
 	"<h1>Element not found</h1>\r\n"
 	"<p>The requested element could not be found.</p>\r\n"
 	"</body></html>\r\n";
-static const size_t _http_err404p_len = sizeof(_http_err404p) - 1;
+static const uint64_t _http_err404p_len = sizeof(_http_err404p) - 1;
 
 static const char _http_err500p[] = \
 	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
@@ -154,7 +154,7 @@ static const char _http_err500p[] = \
 	"<h1>Internal server error</h1>\r\n"
 	"<p>An internal server error occured.</p>\r\n"
 	"</body></html>\r\n";
-static const size_t _http_err500p_len = sizeof(_http_err500p) - 1;
+static const uint64_t _http_err500p_len = sizeof(_http_err500p) - 1;
 
 static const char _http_err501p[] = \
 	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
@@ -164,7 +164,7 @@ static const char _http_err501p[] = \
 	"<h1>Unsupported request</h1>\r\n"
 	"<p>The request method is unsupported.</p>\r\n"
 	"</body></html>\r\n";
-static const size_t _http_err501p_len = sizeof(_http_err501p) - 1;
+static const uint64_t _http_err501p_len = sizeof(_http_err501p) - 1;
 
 static const char _http_err503p[] = \
 	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
@@ -174,7 +174,7 @@ static const char _http_err503p[] = \
 	"<h1>Service unavailable</h1>\r\n"
 	"<p>The service is temporarily unavailable.<br>Please try it again.</p>\r\n"
 	"</body></html>\r\n";
-static const size_t _http_err503p_len = sizeof(_http_err503p) - 1;
+static const uint64_t _http_err503p_len = sizeof(_http_err503p) - 1;
 
 #ifdef HTTP_TESTFILE
 static const char _http_testfile[] = \
@@ -206,7 +206,7 @@ static const char _http_testfile[] = \
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /* 1456 bytes */
-static const size_t _http_testfile_len = sizeof(_http_testfile) - 1;
+static const uint64_t _http_testfile_len = sizeof(_http_testfile) - 1;
 #endif
 
 #endif /* _HTTP_DATA_H_ */

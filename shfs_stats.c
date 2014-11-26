@@ -87,7 +87,7 @@ static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, st
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", stats->laccess);
 #ifdef SHFS_STATS_HTTP
-		fprintf(cio, "%c%s %c%c %6u [ %6u | ",
+		fprintf(cio, "%c%s %c%c %6"PRIu32" [ %6"PRIu32" | ",
 		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        available ? 'I' : ' ',
@@ -96,13 +96,13 @@ static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, st
 		        stats->c ); /* completed file request */
 #ifdef SHFS_STATS_HTTP_DPC
 		for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i)
-			fprintf(cio, "%6u ", stats->p[i]);
+			fprintf(cio, "%6"PRIu32" ", stats->p[i]);
 #endif
-		fprintf(cio, "] %6u %-16s\n",
+		fprintf(cio, "] %6"PRIu32" %-16s\n",
 			stats->m, /* missed */
 		        str_date);
 #else
-		fprintf(cio, "%c%s %c%c %8u %8u %-16s\n",
+		fprintf(cio, "%c%s %c%c %8"PRIu32" %8"PRIu32" %-16s\n",
 		        SFHS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        available ? 'I' : ' ',
@@ -129,9 +129,9 @@ static int shcmd_shfs_stats(FILE *cio, int argc, char *argv[])
 
 	shfs_dump_stats(_shcmd_shfs_print_el_stats, cio);
 	if (shfs_vol.mstats.i)
-		fprintf(cio, "Invalid element requests: %8lu\n", shfs_vol.mstats.i);
+		fprintf(cio, "Invalid element requests: %8"PRIu32"\n", shfs_vol.mstats.i);
 	if (shfs_vol.mstats.e)
-		fprintf(cio, "Errors on requests:       %8lu\n", shfs_vol.mstats.e);
+		fprintf(cio, "Errors on requests:       %8"PRIu32"\n", shfs_vol.mstats.e);
 
  out:
 	up(&shfs_mount_lock);
@@ -221,7 +221,7 @@ static int _shcmd_shfs_export_el_stats(void *argp, hash512_t h, int available, s
 	if (unlikely(ret < 0))
 		goto out;
 
-	slen = snprintf(sbuf, sizeof(sbuf), ";%lu;%lu;%lu",
+	slen = snprintf(sbuf, sizeof(sbuf), ";%"PRIu32";%"PRIu32";%"PRIu32,
 	                stats->laccess,
 	                stats->h,
 	                stats->m);
@@ -230,14 +230,14 @@ static int _shcmd_shfs_export_el_stats(void *argp, hash512_t h, int available, s
 		goto out;
 
 #ifdef SHFS_STATS_HTTP
-	slen = snprintf(sbuf, sizeof(sbuf), ";%lu", stats->c);
+	slen = snprintf(sbuf, sizeof(sbuf), ";%"PRIu32, stats->c);
 	ret = _stats_dev_write(sbuf, slen);
 	if (unlikely(ret < 0))
 		goto out;
 
 #ifdef SHFS_STATS_HTTP_DPC
 	for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i) {
-		slen = snprintf(sbuf, sizeof(sbuf), ";%lu", stats->p[i]);
+		slen = snprintf(sbuf, sizeof(sbuf), ";%"PRIu32, stats->p[i]);
 		ret = _stats_dev_write(sbuf, slen);
 		if (unlikely(ret < 0))
 			goto out;
@@ -290,7 +290,7 @@ static int shcmd_shfs_stats_export(FILE *cio, int argc, char *argv[])
 
 #ifdef SHFS_STATS_HTTP_DPC
 	for (i=0; i<SHFS_STATS_HTTP_DPCR; ++i) {
-		slen = snprintf(sbuf, sizeof(sbuf), ";u%us(%d%%)",
+		slen = snprintf(sbuf, sizeof(sbuf), ";u%us(%u%%)",
 		                member_size(struct shfs_el_stats, p[i]),
 		                SHFS_STATS_HTTP_DPC_THRESHOLD_PERCENTAGE(i));
 		ret = _stats_dev_write(sbuf, slen);

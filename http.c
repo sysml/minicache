@@ -559,7 +559,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	hsess->state = HSS_ESTABLISHED;
 	++hs->nb_sess;
 	dprintf("New HTTP session accepted on server %p "
-		"(currently, there are %u/%u open sessions)\n",
+		"(currently, there are %"PRIu16"/%"PRIu16" open sessions)\n",
 		hs, hs->nb_sess, hs->max_nb_sess);
 	return 0;
 
@@ -567,7 +567,7 @@ static err_t httpsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 	mempool_put(hsobj);
  err_out:
 	dprintf("Session establishment declined on server %p "
-		"(currently, there are %u/%u open sessions)\n",
+		"(currently, there are %"PRIu16"/%"PRIu16" open sessions)\n",
 		hs, hs->nb_sess, hs->max_nb_sess);
 	return err;
 }
@@ -1055,7 +1055,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 
 	/* check request method (GET, POST, ...) */
 	if (hreq->request_hdr.method != HTTP_GET) {
-		dprintf("Invalid/unsupported request method: %u HTTP/%u.%u\n",
+		dprintf("Invalid/unsupported request method: %u HTTP/%hu.%hu\n",
 		        hreq->request_hdr.method,
 		        hreq->request_hdr.http_major,
 		        hreq->request_hdr.http_minor);
@@ -1063,7 +1063,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	}
 
 #ifdef HTTP_DEBUG
-	dprintf("GET %s HTTP/%u.%u\n",
+	dprintf("GET %s HTTP/%hu.%hu\n",
 	        hreq->request_hdr.url,
 	        hreq->request_hdr.http_major,
 	        hreq->request_hdr.http_minor);
@@ -1125,7 +1125,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 			uint64_t rlast;
 
 			ret = sscanf(hreq->request_hdr.line[ret].value.b + 6,
-			             "%lu-%lu",
+			             "%"PRIu64"-%"PRIu64,
 			             &rfirst, &rlast);
 			if (ret == 1) {
 				/* only rfirst specified */
@@ -1151,7 +1151,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 			goto err416_hdr;
 		}
 
-		dprintf("Client requested range of element: %lu-%lu\n",
+		dprintf("Client requested range of element: %"PRIu64"-%"PRIu64"\n",
 		        hreq->rfirst, hreq->rlast);
 	}
 
@@ -1171,11 +1171,11 @@ static inline void httpreq_build_response(struct http_req *hreq)
 
 	/* Content length */
 	hreq->rlen   = (hreq->rlast + 1) - hreq->rfirst;
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
 
 	/* Content range */
 	if (hreq->response_hdr.code == 206)
-		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu-%lu/%lu\r\n",
+		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
 		                 _http_dhdr[HTTP_DHDR_RANGE],
 		                 hreq->rfirst, hreq->rlast, hreq->fsize);
 
@@ -1257,7 +1257,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err404p_len);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err404p_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err404p;
 	hreq->rlen = _http_err404p_len;
@@ -1267,7 +1267,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	/* 416 Range request error */
 	hreq->response_hdr.code = 416;
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
 	hreq->type = HRT_NOMSG;
 	goto finalize_hdr;
 
@@ -1278,7 +1278,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err500p_len);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err500p_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err500p;
 	hreq->rlen = _http_err500p_len;
@@ -1291,7 +1291,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err501p_len);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err501p_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err501p;
 	hreq->rlen = _http_err501p_len;
@@ -1304,9 +1304,9 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
 	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err503p_len);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err503p_len);
 	/* Retry-after (TODO: here, just set to 2 second) */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_RETRY], 2);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%u\r\n", _http_dhdr[HTTP_DHDR_RETRY], 2);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err503p;
 	hreq->rlen = _http_err503p_len;
@@ -1318,7 +1318,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
 	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%lu\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_testfile;
 	hreq->rlen = _http_testfile_len;
@@ -1559,7 +1559,7 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		                                we need to wait for ack */
 		goto out;
 	}
-	dprintf("[idx=%u] sent %u bytes (%lu-%lu, chunksize: %lu, left on this chunk: %lu, available on sndbuf: %u, sndqueuelen: %u, infly: %u)\n",
+	dprintf("[idx=%u] sent %u bytes (%"PRIu64"-%"PRIu64", chunksize: %lu, left on this chunk: %lu, available on sndbuf: %"PRIu16", sndqueuelen: %"PRIu16", infly: %zu)\n",
 	        idx, slen, chk_off, chk_off + slen, shfs_vol.chunksize, left - (size_t) slen, avail - slen,
 	        tcp_sndqueuelen(hreq->hsess->tpcb), hreq->hsess->sent_infly);
 
@@ -1597,7 +1597,7 @@ static inline void httpreq_ack_shfsafio(struct http_req *hreq, size_t acked)
 	start_chk = shfs_volchk_foff(hreq->fd, foff);
 	end_chk  = shfs_volchk_foff(hreq->fd, foff + acked);
 
-	dprintf("Client acknowledged %u bytes from buffers\n", acked);
+	dprintf("Client acknowledged %zu bytes from buffers\n", acked);
 	if (start_chk < end_chk) {
 		/* release cache buffers */
 		nb_chk = end_chk - start_chk;
@@ -1788,7 +1788,7 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 
 	hdr_infly = hreq->response_hdr.total_len - hreq->response_hdr.acked_len;
 	if (hdr_infly) {
-		dprintf("hdr_infly: %u\n", hdr_infly);
+		dprintf("hdr_infly: %zu\n", hdr_infly);
 		if (hdr_infly > acked) {
 			hreq->response_hdr.acked_len += acked;
 			acked = 0;
@@ -1800,7 +1800,7 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 
 	msg_infly = hreq->rlen - hreq->alen;
 	if (msg_infly) {
-		dprintf("msg_infly: %u\n", msg_infly);
+		dprintf("msg_infly: %zu\n", msg_infly);
 		if (msg_infly > acked) {
 			hreq->alen += acked;
 			if (acked && hreq->type == HRT_DMSG)
@@ -1815,7 +1815,7 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 	}
 
 	ftr_infly = _http_sep_len - hreq->response_ftr.acked_len;
-	dprintf("ftr_infly: %u\n", ftr_infly);
+	dprintf("ftr_infly: %zu\n", ftr_infly);
 	if (ftr_infly > acked) {
 		hreq->response_ftr.acked_len += acked;
 		*len = 0;
@@ -1833,11 +1833,11 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 	struct http_req *hreq;
 	int isdone = 0;
 
-	dprintf("Client acknowledged %u bytes\n", len);
+	dprintf("Client acknowledged %zu bytes\n", len);
 	while (len) {
 		hreq = hsess->aqueue_head;
 		if (hreq) {
-			dprintf("Acknowledge on request %p (len: %u, acked: %lu -> %lu, left: %lu -> %lu)\n",
+			dprintf("Acknowledge on request %p (len: %"PRIu64", acked: %"PRIu64" -> %"PRIu64", left: %"PRIu64" -> %"PRIu64")\n",
 			        hreq, httpreq_len(hreq),
 			        httpreq_acked(hreq),
 			        httpreq_infly(hreq) < len ? httpreq_len(hreq) : httpreq_acked(hreq) + len,
@@ -1863,7 +1863,7 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 		BUG_ON(!hreq); /* Client acknowledged data that was
 		                  not sent out yet?! (or simply the object got closed already) */
 
-		dprintf("Acknowledge on current request %p (len: %u, acked: %lu -> %lu, left: %lu -> %lu)\n",
+		dprintf("Acknowledge on current request %p (len: %zu, acked: %"PRIu64" -> %"PRIu64", left: %"PRIu64" -> %"PRIu64")\n",
 		        hreq, httpreq_len(hreq),
 		        httpreq_acked(hreq),
 		        httpreq_infly(hreq) < len ? httpreq_len(hreq) : httpreq_acked(hreq) + len,
@@ -1902,15 +1902,15 @@ static int shcmd_http_stats(FILE *cio, int argc, char *argv[])
 	if (shfs_mounted)
 		bffrlen = shfs_vol.chunksize * HTTPREQ_MAXNB_BUFFERS;
 
-	fprintf(cio, " Listen port:               %8u\n", HTTP_LISTEN_PORT);
-	fprintf(cio, " Number of sessions:       %4u/%4u\n", nb_sess, max_nb_sess);
-	fprintf(cio, " Number of requests:       %4u/%4u\n", nb_reqs, max_nb_reqs);
-	fprintf(cio, " Chunkbuffer chain length:  %8u", HTTPREQ_MAXNB_BUFFERS);
+	fprintf(cio, " Listen port:               %8"PRIu16"\n", HTTP_LISTEN_PORT);
+	fprintf(cio, " Number of sessions:       %4"PRIu16"/%4"PRIu16"\n", nb_sess, max_nb_sess);
+	fprintf(cio, " Number of requests:       %4"PRIu32"/%4"PRIu32"\n", nb_reqs, max_nb_reqs);
+	fprintf(cio, " Chunkbuffer chain length:  %8zu", HTTPREQ_MAXNB_BUFFERS);
 	if (bffrlen)
-		fprintf(cio, " (%u KiB)\n", bffrlen / 1024);
+		fprintf(cio, " (%zu KiB)\n", bffrlen / 1024);
 	else
 		fprintf(cio, "\n");
-	fprintf(cio, " HTTP parser version:         %2u.%u.%u\n",
+	fprintf(cio, " HTTP parser version:         %2hu.%hu.%hu\n",
 	        (pver >> 16) & 255, /* major */
 	        (pver >> 8) & 255, /* minor */
 	        (pver) & 255); /* patch */
