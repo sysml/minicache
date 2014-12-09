@@ -1,5 +1,7 @@
 shfs-tools/shfs_mkfs
 shfs-tools/shfs_admin
+ctltrigger/ctltrigger
+.config.mk
 build/*
 *.bak
 *.o
