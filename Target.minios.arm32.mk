@@ -6,19 +6,19 @@ MINIOS_ROOT		?= $(realpath ../mini-os)
 NEWLIB_ROOT		?= $(TOOLCHAIN_ROOT)/$(ARCH)-root/arm-none-eabi
 NEWLIB_PATH		?= $(NEWLIB_ROOT)
 LWIP_ROOT		?= $(TOOLCHAIN_ROOT)/$(ARCH)-root/arm-none-eabi
+GCC_VERSION		?= 4.7.2
 
-GCC_VERSION		?= 4.7
-CCTOOL			?= arm-linux-gnueabihf
-CC			?= $(CCTOOL)-gcc-$(GCC_VERSION)
-CXX			?= $(CCTOOL)-g++-$(GCC_VERSION)
-AR			?= $(CCTOOL)-ar
-AS			?= $(CCTOOL)-as
-LD			?= $(CCTOOL)-ld
-RANLIB			?= $(CCTOOL)-ranlib
-READELF			?= $(CCTOOL)-readelf
-STRIP			?= $(CCTOOL)-strip
-NM			?= $(CCTOOL)-nm
-OBJCOPY			?= $(CCTOOL)-objcopy
+# arm32 cross compiler
+CCTOOL			 = arm-linux-gnueabihf
+CC			 = $(CCTOOL)-gcc-$(shell echo ${GCC_VERSION} | cut -d. -f1,2)
+AR			 = $(CCTOOL)-ar
+AS			 = $(CCTOOL)-as
+LD			 = $(CCTOOL)-ld
+RANLIB			 = $(CCTOOL)-ranlib
+READELF			 = $(CCTOOL)-readelf
+STRIP			 = $(CCTOOL)-strip
+NM			 = $(CCTOOL)-nm
+OBJCOPY			 = $(CCTOOL)-objcopy
 
 verbose			?=
 
@@ -67,7 +67,7 @@ stubdom		 = y
 STUBDOM_NAME	 = minicache
 STUBDOM_ROOT	 = $(realpath .)
 
-STUB_APP_OBJS0	 = main.o blkdev.o $(STUB_APP_OBJS0-y) $(MCOBJS)
+STUB_APP_OBJS0	 = main.o blkdev.o $(MCOBJS)
 STUB_APP_OBJS	 = $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 CFLAGS		+= $(MCCFLAGS)
 

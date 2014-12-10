@@ -55,7 +55,7 @@ stubdom		 = y
 STUBDOM_NAME	 = minicache
 STUBDOM_ROOT	 = $(realpath .)
 
-STUB_APP_OBJS0	 = main.o blkdev.o $(STUB_APP_OBJS0-y) $(MCOBJS)
+STUB_APP_OBJS0	 = main.o blkdev.o $(MCOBJS)
 STUB_APP_OBJS	 = $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 CFLAGS		+= $(MCCFLAGS)
 
