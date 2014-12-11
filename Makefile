@@ -5,12 +5,12 @@ GITSHA1	?= $(shell git rev-parse --short HEAD || echo "?")
 ARCH	?= x86_64
 TARGET	?= minios
 
-# default configuration
-include Config.mk
 # user configuration
 ifneq ("$(wildcard .config.mk)","")
 include .config.mk
 endif
+# default configuration
+include Config.mk
 
 # build target specific configuration
 include Minicache.mk
