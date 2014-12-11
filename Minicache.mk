@@ -87,4 +87,4 @@ MCOBJS-$(CONFIG_TESTSUITE)		+= testsuite.o
 
 ######################################
 MCOBJS					+= $(MCOBJS-y)
-MCFLAGS					+= $(MCFLAGS-y)
+MCCFLAGS				+= $(MCCFLAGS-y)
