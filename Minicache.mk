@@ -7,7 +7,8 @@ MCCFLAGS-$(CONFIG_MINICACHE_AUTOMOUNT)		+= -DCONFIG_AUTOMOUNT
 MCCFLAGS-$(CONFIG_MINICACHE_MINDER_PRINT)	+= -DCONFIG_MINDER_PRINT
 MCCFLAGS-$(CONFIG_MINICACHE_TRACE_BOOTTIME)	+= -DTRACE_BOOTTIME
 
-MCOBJS						= mempool.o \
+MCOBJS						= ring.o \
+						  mempool.o \
 						  hexdump.o \
 						  debug.o \
 						  htable.o \
