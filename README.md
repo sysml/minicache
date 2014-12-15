@@ -99,9 +99,12 @@ included in the command search of your shell:
     git submodule update
 
 #### Configure (optional)
-You can configure your build by enabling/disabling features in MiniCache's
-Makefile. For instance, a netmap-based netfrontend is activated by setting
-the following symbols:
+You can configure your build by enabling/disabling features in MiniCache.
+This can be done by placing a file called .config.mk in your MiniCache
+source directory. You can have a look in Config.mk which is the managed
+configuration file (do not change this one).
+For instance, a netmap-based netfrontend is activated by adding the
+following line to .config.mk:
 
     ## vif
     CONFIG_NETMAP                   = y
@@ -121,7 +124,6 @@ Please read 'shfs-tools/README.md' for more details.
 
 
 ### Getting Started
-
 In order to boot MiniCache, create a Xen VM configuration file. You can use the
 following example as a basis:
 
@@ -130,7 +132,7 @@ following example as a basis:
     kernel        = './build/minicache_x86_64'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '64'
+    memory        = '16'
 
     name          = 'minicache'
 
@@ -167,7 +169,9 @@ specify the kernel parameters:
                            (multiple tokens possible)
     -b [VBD ID]            Automount filesystem from VBD ID
                            (multiple tokens possible;
-                            disables vbd auto detection)
+                            disables vbd auto detection;
+                            example IDs: 51712=xvda, 51728=xvdb,
+                            51744=xvdc, 51760=xvdd)
     -h                     Disable XenStore control trigger
                            (see: ctltrigger)
     -x [VBD ID]            Device for stats export
