@@ -44,7 +44,9 @@
 #define HTTPHDR_RESP_MAXNB_DLINES  8
 #define HTTPURL_ARGS_INDICATOR   '?'
 
-#define HTTPREQ_MAXNB_BUFFERS     (DIV_ROUND_UP((size_t) TCP_SND_BUF, SHFS_MIN_CHUNKSIZE))
+#define HTTPREQ_TCP_MAXSNDBUF          ((size_t) TCP_SND_BUF)
+#define HTTPREQ_MAXNB_BUFFERS          (DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE))
+#define httpreq_nb_buffers(chunksize)  (max((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize)), 2))
 
 #ifndef min
 #define min(a, b) \
@@ -225,6 +227,7 @@ struct http_req {
 	SHFS_AIO_TOKEN *cce_t;
 	unsigned int cce_idx;
 	unsigned int cce_idx_ack;
+        unsigned int cce_max_nb;
 
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 	struct {
@@ -251,8 +254,8 @@ static int httprecv_req_complete(struct http_parser *parser);
 static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_field(struct http_parser *parser, const char *buf, size_t len);
 static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_t len);
-#ifdef HTTP_STATS_DISPLAY
-static int shcmd_http_stats(FILE *cio, int argc, char *argv[]);
+#ifdef HTTP_INFO
+static int shcmd_http_info(FILE *cio, int argc, char *argv[]);
 #endif
 
 int init_http(uint16_t nb_sess, uint32_t nb_reqs)
@@ -317,8 +320,8 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	dlist_init_head(hs->ioretry_chain);
 
 	dprintf("HTTP server %p initialized\n", hs);
-#ifdef HTTP_STATS_DISPLAY
-	shell_register_cmd("http-stats", shcmd_http_stats);
+#ifdef HTTP_INFO
+	shell_register_cmd("http-info", shcmd_http_info);
 #endif
 	return ret;
 
@@ -451,8 +454,12 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 	hreq->smsg = NULL;
 	hreq->fd = NULL;
 	hreq->cce_idx = 0;
-	hreq->cce_idx_ack = HTTPREQ_MAXNB_BUFFERS - 1;
-	for (i = 0; i < HTTPREQ_MAXNB_BUFFERS; ++i)
+	if (shfs_mounted)
+		hreq->cce_max_nb = httpreq_nb_buffers(shfs_vol.chunksize);
+	else
+		hreq->cce_max_nb = HTTPREQ_MAXNB_BUFFERS; /* shfs_open() will fail later --> no file content will be served */
+	hreq->cce_idx_ack = hreq->cce_max_nb - 1;
+	for (i = 0; i < hreq->cce_max_nb; ++i)
 		hreq->cce[i] = NULL;
 	hreq->cce_t = NULL;
 	hreq->rlen = 0;
@@ -477,7 +484,7 @@ static inline void httpreq_close(struct http_req *hreq)
 
 	/* close open file */
 	if (hreq->fd) {
-		for (i = 0; i < HTTPREQ_MAXNB_BUFFERS; ++i) {
+		for (i = 0; i < hreq->cce_max_nb; ++i) {
 			if (i == hreq->cce_idx && hreq->cce[i]) {
 				shfs_cache_release_ioabort(hreq->cce[i], hreq->cce_t);
 			} else if (hreq->cce[i]) {
@@ -1429,8 +1436,8 @@ static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
 }
 
 /* async SHFS I/O */
-#define _httpreq_shfs_nextidx(idx) \
-	((idx + 1) % HTTPREQ_MAXNB_BUFFERS)
+#define _httpreq_shfs_nextidx(hreq, idx) \
+        ((idx + 1) % (hreq)->cce_max_nb)
 
 static void _httpreq_shfs_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 {
@@ -1559,15 +1566,15 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		                                we need to wait for ack */
 		goto out;
 	}
-	dprintf("[idx=%u] sent %u bytes (%"PRIu64"-%"PRIu64", chunksize: %lu, left on this chunk: %lu, available on sndbuf: %"PRIu16", sndqueuelen: %"PRIu16", infly: %zu)\n",
+	dprintf("[idx=%u] sent %u bytes (%"PRIu64"-%"PRIu64", chunksize: %lu, left on this chunk: %lu, available on sndbuf: %"PRIu16", sndqueuelen: %"PRIu16", infly: %"PRIu64")\n",
 	        idx, slen, chk_off, chk_off + slen, shfs_vol.chunksize, left - (size_t) slen, avail - slen,
-	        tcp_sndqueuelen(hreq->hsess->tpcb), hreq->hsess->sent_infly);
+	        tcp_sndqueuelen(hreq->hsess->tpcb), (uint64_t) hreq->hsess->sent_infly);
 
 	/* are we done with this chunkbuffer and there is still data that needs to be sent?
 	 *  -> continue with next buffer */
 	if (slen == left && *sent < hreq->rlen) {
-		dprintf("[idx=%u] switch to next buffer [idx=%u]\n", idx, _httpreq_shfs_nextidx(idx));
-		idx = _httpreq_shfs_nextidx(idx);
+		dprintf("[idx=%u] switch to next buffer [idx=%u]\n", idx, _httpreq_shfs_nextidx(hreq, idx));
+		idx = _httpreq_shfs_nextidx(hreq, idx);
 		roff += slen; /* new offset */
 		foff += slen;
 		cur_chk = shfs_volchk_foff(hreq->fd, foff);
@@ -1597,14 +1604,14 @@ static inline void httpreq_ack_shfsafio(struct http_req *hreq, size_t acked)
 	start_chk = shfs_volchk_foff(hreq->fd, foff);
 	end_chk  = shfs_volchk_foff(hreq->fd, foff + acked);
 
-	dprintf("Client acknowledged %zu bytes from buffers\n", acked);
+	dprintf("Client acknowledged %"PRIu64" bytes from buffers\n", (uint64_t) acked);
 	if (start_chk < end_chk) {
 		/* release cache buffers */
 		nb_chk = end_chk - start_chk;
 		idx = hreq->cce_idx_ack;
 		for (i = 0; i < nb_chk; ++i) {
 			dprintf("[idx=%u] Releasing buffer because data got acknowledged\n", idx);
-			idx = _httpreq_shfs_nextidx(idx);
+			idx = _httpreq_shfs_nextidx(hreq, idx);
 			cce = hreq->cce[idx];
 			BUG_ON(cce->addr != start_chk + i);
 			hreq->cce[idx] = NULL;
@@ -1788,7 +1795,7 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 
 	hdr_infly = hreq->response_hdr.total_len - hreq->response_hdr.acked_len;
 	if (hdr_infly) {
-		dprintf("hdr_infly: %zu\n", hdr_infly);
+	  dprintf("hdr_infly: %"PRIu64"\n", (uint64_t) hdr_infly);
 		if (hdr_infly > acked) {
 			hreq->response_hdr.acked_len += acked;
 			acked = 0;
@@ -1800,7 +1807,7 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 
 	msg_infly = hreq->rlen - hreq->alen;
 	if (msg_infly) {
-		dprintf("msg_infly: %zu\n", msg_infly);
+	  dprintf("msg_infly: %"PRIu64"\n", (uint64_t) msg_infly);
 		if (msg_infly > acked) {
 			hreq->alen += acked;
 			if (acked && hreq->type == HRT_DMSG)
@@ -1815,7 +1822,7 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 	}
 
 	ftr_infly = _http_sep_len - hreq->response_ftr.acked_len;
-	dprintf("ftr_infly: %zu\n", ftr_infly);
+	dprintf("ftr_infly: %"PRIu64"\n", (uint64_t) ftr_infly);
 	if (ftr_infly > acked) {
 		hreq->response_ftr.acked_len += acked;
 		*len = 0;
@@ -1833,7 +1840,7 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 	struct http_req *hreq;
 	int isdone = 0;
 
-	dprintf("Client acknowledged %zu bytes\n", len);
+	dprintf("Client acknowledged %"PRIu64" bytes\n", (uint64_t) len);
 	while (len) {
 		hreq = hsess->aqueue_head;
 		if (hreq) {
@@ -1863,8 +1870,8 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 		BUG_ON(!hreq); /* Client acknowledged data that was
 		                  not sent out yet?! (or simply the object got closed already) */
 
-		dprintf("Acknowledge on current request %p (len: %zu, acked: %"PRIu64" -> %"PRIu64", left: %"PRIu64" -> %"PRIu64")\n",
-		        hreq, httpreq_len(hreq),
+		dprintf("Acknowledge on current request %p (len: %"PRIu64", acked: %"PRIu64" -> %"PRIu64", left: %"PRIu64" -> %"PRIu64")\n",
+		        hreq, (uint64_t) httpreq_len(hreq),
 		        httpreq_acked(hreq),
 		        httpreq_infly(hreq) < len ? httpreq_len(hreq) : httpreq_acked(hreq) + len,
 		        httpreq_infly(hreq),
@@ -1878,12 +1885,13 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 	return ERR_OK;
 }
 
-#ifdef HTTP_STATS_DISPLAY
-static int shcmd_http_stats(FILE *cio, int argc, char *argv[])
+#ifdef HTTP_INFO
+static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 {
 	uint32_t nb_sess, max_nb_sess;
 	uint32_t nb_reqs, max_nb_reqs;
 	unsigned long pver;
+	size_t nb_buffers = 0;
 	size_t bffrlen = 0;
 
 	if (!hs) {
@@ -1899,17 +1907,21 @@ static int shcmd_http_stats(FILE *cio, int argc, char *argv[])
 	max_nb_reqs = hs->max_nb_reqs;
 	pver        = http_parser_version();
 
-	if (shfs_mounted)
-		bffrlen = shfs_vol.chunksize * HTTPREQ_MAXNB_BUFFERS;
+	if (shfs_mounted) {
+		nb_buffers = httpreq_nb_buffers(shfs_vol.chunksize);
+		bffrlen = shfs_vol.chunksize * nb_buffers;
+	}
 
+	/* thread switching might happen from here on */
 	fprintf(cio, " Listen port:               %8"PRIu16"\n", HTTP_LISTEN_PORT);
 	fprintf(cio, " Number of sessions:       %4"PRIu16"/%4"PRIu16"\n", nb_sess, max_nb_sess);
 	fprintf(cio, " Number of requests:       %4"PRIu32"/%4"PRIu32"\n", nb_reqs, max_nb_reqs);
-	fprintf(cio, " Chunkbuffer chain length:  %8zu", HTTPREQ_MAXNB_BUFFERS);
-	if (bffrlen)
-		fprintf(cio, " (%zu KiB)\n", bffrlen / 1024);
-	else
-		fprintf(cio, "\n");
+	if (nb_buffers) {
+		fprintf(cio, " Chunkbuffer chain length:  %8"PRIu64, nb_buffers);
+		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) bffrlen / 1024);
+	}
+	fprintf(cio, " Maximum TCP send buffer:   %8"PRIu64" KiB", HTTPREQ_TCP_MAXSNDBUF / 1024);
+	fprintf(cio, "\n");
 	fprintf(cio, " HTTP parser version:         %2hu.%hu.%hu\n",
 	        (pver >> 16) & 255, /* major */
 	        (pver >> 8) & 255, /* minor */

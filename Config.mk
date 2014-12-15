@@ -44,8 +44,8 @@ CONFIG_SHFS_STATS_HTTP_DPCR	?= 6
 ######################################
 ## HTTP
 ######################################
-# Enable http-stats cmd in µSh
-CONFIG_HTTP_STATS_DISPLAY	?= y
+# Enable http-info cmd in shell
+CONFIG_HTTP_INFO		?= y
 # Consider
 CONFIG_HTTP_URL_CUTARGS		?= y
 # Provide a performance test file on hash digest 0x0
