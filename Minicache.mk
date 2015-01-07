@@ -27,7 +27,7 @@ MCCFLAGS-$(CONFIG_MEMPOOL_DEBUG)		+= -DMEMPOOL_DEBUG
 ## µSh
 ######################################
 ifeq ($(CONFIG_SHELL),y)
-MCCFLAGS	+= -DSHELL_INFO="\"MiniCache $(GITSHA1) $(ARCH)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\"" \
+MCCFLAGS	+= -DSHELL_INFO="\"MiniCache/$(GITSHA1)/$(ARCH) (built: $(shell date +%F))\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\"" \
 		   -DSHELL_WELCOME="\"MiniCache $(GITSHA1)\nCopyright(C) 2013-2014 NEC Laboratories Europe Ltd.\n\nType 'help' to get an overview of available commands\""
 
 ifeq ($(CONFIG_SHELL_COLORPROMPT),y)
