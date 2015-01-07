@@ -1284,10 +1284,9 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 		flags = netif->flags;
 
 		/* name + mac */
-		fprintf(cio, "%c%c%c%c      ",
+		fprintf(cio, "%c%c %c      ",
 		        (netif->name[0] ? netif->name[0] : ' '),
 		        (netif->name[1] ? netif->name[1] : ' '),
-		        (netif->name[2] ? netif->name[2] : ' '),
 		        (netif == netif_default ? '*' : ' '));
 		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
 		        netif->hwaddr[0], netif->hwaddr[1],

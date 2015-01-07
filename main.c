@@ -680,8 +680,7 @@ int main(int argc, char *argv[])
 	               args.sarp_entry[i].mac.addr[2],
 	               args.sarp_entry[i].mac.addr[3],
 	               args.sarp_entry[i].mac.addr[4],
-	               args.sarp_entry[i].mac.addr[5],
-	               args.sarp_entry[i].mac.addr[6]);
+	               args.sarp_entry[i].mac.addr[5]);
 	    }
 	}
     }

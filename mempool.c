@@ -45,7 +45,7 @@ struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data
 {
   struct mempool *p = NULL;
   struct mempool_obj *o_ptr;
-  off_t o_offset;
+  uintptr_t o_offset;
   size_t h_size ,o_size;
   size_t o_data_offset;
   size_t struct_mempool_size, struct_mempool_obj_size;
@@ -98,7 +98,7 @@ struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data
 	goto error_free_p;
 
   /* initialize object skeletons and add them to pool management */
-  o_offset = (off_t) p + h_size;
+  o_offset = (uintptr_t) p + h_size;
   for (i = 0; i < nb_objs; i++) {
 	o_ptr           = (struct mempool_obj *) (o_offset + (i * o_size));
 	o_ptr->p_ref    = p;

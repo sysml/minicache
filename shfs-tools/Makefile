@@ -1,7 +1,7 @@
 RM = rm -f
 CC = gcc
 LD = gcc
-CFLAGS += -O3 -g -Wunused -Wtype-limits -Wcast-align
+CFLAGS += -O3 -g -Wunused -Wtype-limits
 LDFLAGS +=
 LDLIBS += -luuid -lmhash
 

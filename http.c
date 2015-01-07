@@ -1917,10 +1917,10 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, " Number of sessions:       %4"PRIu16"/%4"PRIu16"\n", nb_sess, max_nb_sess);
 	fprintf(cio, " Number of requests:       %4"PRIu32"/%4"PRIu32"\n", nb_reqs, max_nb_reqs);
 	if (nb_buffers) {
-		fprintf(cio, " Chunkbuffer chain length:  %8"PRIu64, nb_buffers);
+		fprintf(cio, " Chunkbuffer chain length:  %8"PRIu64, (uint64_t) nb_buffers);
 		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) bffrlen / 1024);
 	}
-	fprintf(cio, " Maximum TCP send buffer:   %8"PRIu64" KiB", HTTPREQ_TCP_MAXSNDBUF / 1024);
+	fprintf(cio, " Maximum TCP send buffer:   %8"PRIu64" KiB", (uint64_t) HTTPREQ_TCP_MAXSNDBUF / 1024);
 	fprintf(cio, "\n");
 	fprintf(cio, " HTTP parser version:         %2hu.%hu.%hu\n",
 	        (pver >> 16) & 255, /* major */
