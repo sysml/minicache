@@ -3,6 +3,8 @@ XEN_COMPILE_ARCH	?= $(ARCH)
 XEN_ROOT		?= $(realpath ../xen)
 TOOLCHAIN_ROOT		?= $(realpath ../toolchain)
 MINIOS_ROOT		?= $(realpath ../mini-os)
+NEWLIB_ROOT             ?= $(TOOLCHAIN_ROOT)/$(ARCH)-root/x86_64-xen-elf
+LWIP_ROOT               ?= $(TOOLCHAIN_ROOT)/$(ARCH)-root/x86_64-xen-elf
 GCC_VERSION		?= 4.8
 verbose			?=
 

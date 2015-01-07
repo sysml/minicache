@@ -4,7 +4,6 @@ XEN_ROOT		?= $(realpath ../xen)
 TOOLCHAIN_ROOT		?= $(realpath ../toolchain)
 MINIOS_ROOT		?= $(realpath ../mini-os)
 NEWLIB_ROOT		?= $(TOOLCHAIN_ROOT)/$(ARCH)-root/arm-none-eabi
-NEWLIB_PATH		?= $(NEWLIB_ROOT)
 LWIP_ROOT		?= $(TOOLCHAIN_ROOT)/$(ARCH)-root/arm-none-eabi
 GCC_VERSION		?= 4.7.2
 
