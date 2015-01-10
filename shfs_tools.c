@@ -42,7 +42,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
-		fprintf(cio, "%c%s %12lu %12lu %-24s %-16s %s\n",
+		fprintf(cio, "%c%s %12"PRIchk" %12"PRIchk" %-24s %-16s %s\n",
 		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        hentry->chunk,
@@ -73,7 +73,7 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 		bentry = el->private;
 		if (bentry->refcount > 0) {
 			hash_unparse(*el->h, shfs_vol.hlen, str_hash);
-			fprintf(cio, "%c%s %12lu\n",
+			fprintf(cio, "%c%s %12"PRIchk"\n",
 			        SHFS_HASH_INDICATOR_PREFIX,
 			        str_hash,
 			        bentry->refcount);
@@ -108,10 +108,21 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 		shfs_fio_size(f, &fsize);
 
 		fprintf(cio, "%s: %s, ", argv[i], str_mime);
-		if (fsize < 1024)
-			fprintf(cio, "%lu B\n", fsize);
+		if (fsize < 1024ll)
+			fprintf(cio, "%"PRIu64" B\n",
+				fsize);
+		else if (fsize < (1024ll * 1024ll))
+			fprintf(cio, "%"PRIu64".%01"PRIu64" KiB\n",
+				fsize / (1024ll),
+				(fsize / (1024ll / 10)) % 10);
+		else if (fsize < (1024ll * 1024ll * 1024ll))
+			fprintf(cio, "%"PRIu64".%02"PRIu64" MiB\n",
+				fsize / (1024ll * 1024ll),
+				(fsize / ((1024ll * 1024ll) / 100)) % 100);
 		else
-			fprintf(cio, "%lu KiB\n", fsize / 1024);
+			fprintf(cio, "%"PRIu64".%02"PRIu64" GiB\n",
+				fsize / (1024ll * 1024ll * 1024ll),
+				(fsize / ((1024ll * 1024ll * 1024ll) / 100)) % 100);
 
 		shfs_fio_close(f);
 	}
@@ -375,30 +386,30 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	strftimestamp_s(str_date, sizeof(str_date),
 	                "%b %e, %g %H:%M", shfs_vol.ts_creation);
 	fprintf(cio, "Creation date:      %s\n", str_date);
-	fprintf(cio, "Chunksize:          %lu KiB\n",
+	fprintf(cio, "Chunksize:          %"PRIu32" KiB\n",
 	        shfs_vol.chunksize / 1024);
-	fprintf(cio, "Volume size:        %lu KiB\n",
+	fprintf(cio, "Volume size:        %"PRIchk" KiB\n",
 	        CHUNKS_TO_BYTES(shfs_vol.volsize, shfs_vol.chunksize) / 1024);
-	fprintf(cio, "Hash table:         %lu entries in %ld buckets\n" \
-	        "                    %lu chunks (%ld KiB)\n" \
+	fprintf(cio, "Hash table:         %"PRIu32" entries in %ld buckets\n" \
+	        "                    %"PRIchk" chunks (%"PRIchk" KiB)\n" \
 	        "                    %s\n",
 	        shfs_vol.htable_nb_entries, shfs_vol.htable_nb_buckets,
 	        shfs_vol.htable_len, (shfs_vol.htable_len * shfs_vol.chunksize) / 1024,
 	        shfs_vol.htable_bak_ref ? "2nd copy enabled" : "No copy");
-	fprintf(cio, "Entry size:         %lu Bytes (raw: %ld Bytes)\n",
+	fprintf(cio, "Entry size:         %u Bytes (raw: %zu Bytes)\n",
 	        SHFS_HENTRY_SIZE, sizeof(struct shfs_hentry));
 
 	fprintf(cio, "\n");
-	fprintf(cio, "Member stripe size: %u KiB\n", shfs_vol.stripesize / 1024);
+	fprintf(cio, "Member stripe size: %"PRIu32" KiB\n", shfs_vol.stripesize / 1024);
 	fprintf(cio, "Member stripe mode: %s\n", (shfs_vol.stripemode == SHFS_SM_COMBINED ?
 	                                          "Combined" : "Independent" ));
 	fprintf(cio, "Volume members:     %u device(s)\n", shfs_vol.nb_members);
 	for (m = 0; m < shfs_vol.nb_members; m++) {
 		uuid_unparse(shfs_vol.member[m].uuid, str_uuid);
-		fprintf(cio, "  Member %2d:\n", m);
+		fprintf(cio, "  Member %2u:\n", m);
 		fprintf(cio, "    VBD:            %u\n", shfs_vol.member[m].bd->vbd_id);
 		fprintf(cio, "    UUID:           %s\n", str_uuid);
-		fprintf(cio, "    Block size:     %u\n", blkdev_ssize(shfs_vol.member[m].bd));
+		fprintf(cio, "    Block size:     %"PRIu32"\n", blkdev_ssize(shfs_vol.member[m].bd));
 	}
 
  out:

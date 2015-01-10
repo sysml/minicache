@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
+#include <inttypes.h>
 #ifndef __MINIOS__
 #include <uuid/uuid.h>
 #include <mhash.h>
@@ -23,6 +24,9 @@ typedef uint64_t strp_t;
 #ifdef __MINIOS__
 typedef uint8_t uuid_t[16];
 #endif /* __MINIOS__ */
+
+#define PRIchk PRIu64
+#define PRIstrp PRIu64
 
 #define SHFS_MAX_NB_MEMBERS 16
 

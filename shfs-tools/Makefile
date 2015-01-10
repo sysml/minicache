@@ -1,9 +1,11 @@
 RM = rm -f
 CC = gcc
 LD = gcc
-CFLAGS += -O0 -g -Wunused -Winline -Wtype-limits -Wcast-align
+CFLAGS += -O3 -g -Wunused -Wtype-limits
 LDFLAGS +=
 LDLIBS += -luuid -lmhash
+
+default: all
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

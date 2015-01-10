@@ -154,7 +154,7 @@ static int load_vol_cconf(unsigned int vbd_id[], unsigned int count)
 	hdr_common = (void *)((uint8_t *) chk0 + BOOT_AREA_LENGTH);
 	memcpy(shfs_vol.uuid, hdr_common->vol_uuid, 16);
 	memcpy(shfs_vol.volname, hdr_common->vol_name, 16);
-	shfs_vol.volname[17] = '\0'; /* ensure nullterminated volume name */
+	shfs_vol.volname[16] = '\0'; /* ensure nullterminated volume name */
 	shfs_vol.ts_creation = hdr_common->vol_ts_creation;
 	shfs_vol.stripesize = hdr_common->member_stripesize;
 	shfs_vol.stripemode = hdr_common->member_stripemode;
@@ -619,7 +619,7 @@ static int reload_vol_htable(void) {
 	int chash_is_zero, nhash_is_zero;
 	register chk_t c;
 	register unsigned int e;
-	int ret;
+	int ret = 0;
 
 	dprintf("Re-reading hash table...\n");
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
@@ -753,7 +753,7 @@ static int reload_vol_htable(void) {
  *  is different from the one of the main loop
  */
 int remount_shfs(void) {
-	int ret = 0;
+	int ret;
 
 	down(&shfs_mount_lock);
 	if (!shfs_mounted) {

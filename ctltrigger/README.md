@@ -21,7 +21,7 @@ Build Instructions
 
 You build the tool with the following make command:
 
-    make all
+    make
 
 
 Examples: Using ctltrigger with MiniCache

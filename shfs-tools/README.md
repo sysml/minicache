@@ -22,9 +22,9 @@ Build Instructions
 
 You build the SHFS tools with the following make command:
 
-    make all
+    make
 
-Alternatively, you can also build just a single tool by passing its executable
+Alternatively, you can also build a single tool by passing its executable
 name (e.g., shfs_mkfs) to make:
 
     make shfs_mkfs

@@ -111,7 +111,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 		return -ENXIO;
 	}
 
-	if (unlikely(((uint64_t) buffer) & ((uint64_t) blkdev_ssize(bd) - 1))) {
+	if (unlikely(((uintptr_t) buffer) & ((uintptr_t) blkdev_ssize(bd) - 1))) {
 		/* buffer is not aligned to device sector size */
 		return -EINVAL;
 	}

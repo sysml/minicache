@@ -680,8 +680,7 @@ int main(int argc, char *argv[])
 	               args.sarp_entry[i].mac.addr[2],
 	               args.sarp_entry[i].mac.addr[3],
 	               args.sarp_entry[i].mac.addr[4],
-	               args.sarp_entry[i].mac.addr[5],
-	               args.sarp_entry[i].mac.addr[6]);
+	               args.sarp_entry[i].mac.addr[5]);
 	    }
 	}
     }
@@ -773,7 +772,7 @@ int main(int argc, char *argv[])
 
 #ifdef CONFIG_LWIP_NOTHREADS
         /* NIC handling loop (single threaded lwip) */
-	netfrontif_poll(&netif, LWIP_NETIF_MAX_RXBURST_LEN);
+	netfrontif_poll(&netif);
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT

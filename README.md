@@ -38,6 +38,8 @@ following:
 
 Note: If Xen is not installed on your system yet, please install it as well.
 You might need to restart your computer.
+Note: For ARM builds you might need different Xen sources (e.g., https://github.com/talex5/xen.git)
+or you might have to use a different branch.
 
 After that, please ensure that you set the following environment variables set
 (I also recommend to add this to your shell profile):
@@ -54,14 +56,21 @@ toolchain having lightweightIP 1.4.1 (or newer) is required.
     git checkout skuenzer/lwip-latest
     cd ..
 
-Please follow the build procedure as described in 'toolchain/README'.
+Note: Please checkout the branch skuenzer/lwip-latest-arm32 when you build for ARM.
 
-After that, please ensure that you set the following environment variables set
+Please follow the build procedure as described in 'toolchain/README'.
+In principle it should be:
+
+    make
+
+For ARM it should be
+
+    make XEN_TARGET_ARCH=arm32
+
+After that, please ensure that you set the following environment variables
 (I also recommend to add this to your shell profile):
 
-    export NEWLIB_ROOT=$WORKSPACE/toolchain/x86_64-root/x86_64-xen-elf
-    export LWIP_ROOT=$WORKSPACE/toolchain/x86_64-root/x86_64-xen-elf
-
+    export TOOLCHAIN_ROOT=$WORKSPACE/toolchain
 
 ### Download mini-os
 
@@ -70,12 +79,14 @@ After that, please ensure that you set the following environment variables set
     git checkout skuenzer/lwip-latest
     cd ..
 
+Note: Please checkout the branch skuenzer/lwip-latest-arm32 when you build for ARM.
+
 After that, please ensure that you set the following environment variables set
 (I also recommend to add this to your shell profile):
 
     export MINIOS_ROOT=$WORKSPACE/mini-os
 
-### Download and Build Cosmos (optional)
+### Download and Build Cosmos (optional, x86_64 only)
 Cosmos is used to instiate the MiniCache VM. However, you can also use the
 traditional xl tools from Xen but netmap/vale will not be supported then.
 
@@ -95,13 +106,14 @@ included in the command search of your shell:
 
     git clone git@repos:skuenzer/minicache.git
     cd minicache
-    git submodule init
-    git submodule update
 
 #### Configure (optional)
-You can configure your build by enabling/disabling features in MiniCache's
-Makefile. For instance, a netmap-based netfrontend is activated by setting
-the following symbols:
+You can configure your build by enabling/disabling features in MiniCache.
+This can be done by placing a file called .config.mk in your MiniCache
+source directory. You can have a look in Config.mk which is the managed
+configuration file (do not change this one).
+For instance, a netmap-based netfrontend is activated by adding the
+following line to .config.mk:
 
     ## vif
     CONFIG_NETMAP                   = y
@@ -113,7 +125,13 @@ Mini-OS's standard netfront (vif) is enabled with the following settings:
 
 #### Build
 
-    make all
+    make
+
+Note: If you want to build for ARM, call the following make command instead:
+
+    make ARCH=arm32
+
+Note: Multi-threaded building (-j option) is not working at the moment.
 
 #### Build SHFS Tools
 The SHFS tools are required to create and maintain SHFS filesystems.
@@ -121,7 +139,6 @@ Please read 'shfs-tools/README.md' for more details.
 
 
 ### Getting Started
-
 In order to boot MiniCache, create a Xen VM configuration file. You can use the
 following example as a basis:
 
@@ -130,7 +147,7 @@ following example as a basis:
     kernel        = './build/minicache_x86_64'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '64'
+    memory        = '16'
 
     name          = 'minicache'
 
@@ -167,7 +184,9 @@ specify the kernel parameters:
                            (multiple tokens possible)
     -b [VBD ID]            Automount filesystem from VBD ID
                            (multiple tokens possible;
-                            disables vbd auto detection)
+                            disables vbd auto detection;
+                            example IDs: 51712=xvda, 51728=xvdb,
+                            51744=xvdc, 51760=xvdd)
     -h                     Disable XenStore control trigger
                            (see: ctltrigger)
     -x [VBD ID]            Device for stats export

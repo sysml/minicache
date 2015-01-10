@@ -12,14 +12,15 @@
 
 #define MIN_ALIGN 8
 
-#if (defined __x86_64 || defined __x86_32)
+#if defined HAVE_LIBC && !defined CONFIG_ARM
 #define shfs_cache_free_mem() \
 	({ struct mallinfo minfo = mallinfo(); \
-	((mm_free_pages() * PAGE_SIZE) + /* free pages */ \
-	((mm_heap_pages() * PAGE_SIZE) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
+	((mm_free_pages() << PAGE_SHIFT) + /* free pages in page allocator (used for heap increase) */ \
+	((mm_heap_pages() << PAGE_SHIFT) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
 	 (minfo.fordblks / minfo.ordblks)); }) /* minimum possible allocation on current heap size */
 #else
-#undef SHFS_CACHE_GROW_THRESHOLD /* not supported on non-x86 */
+#define shfs_cache_free_mem() \
+	(mm_free_pages() << PAGE_SHIFT) /* free pages in page allocator */
 #endif
 
 #define shfs_cache_notify_retry() \

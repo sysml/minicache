@@ -7,8 +7,9 @@ CSIZE=4096
 NB_BKTS=1024
 E_PER_BKT=16
 ESIZE=256
-MKFS="../shfs-tools/shfs_mkfs"
-ADMIN="../shfs-tools/shfs_admin"
+
+SHFS_MKFS=${SHFS_MKFS:-"../shfs-tools/shfs_mkfs"}
+SHFS_ADMIN=${SHFS_ADMIN:-"../shfs-tools/shfs_admin"}
 
 function usage() {
     echo "Usage: $0 [WWWDIR] [SHFSOUT]"
@@ -285,18 +286,18 @@ if [ ! -b "${SHFSIMG}" ]; then
 fi
 
 echo "* Formatting"
-$MKFS -f -n "mkwebfs" -F manual -l 20 -b "${NB_BKTS}" -e "${E_PER_BKT}" -s "${CSIZE}" "${SHFSIMG}"
+$SHFS_MKFS -f -n "mkwebfs" -F manual -l 20 -b "${NB_BKTS}" -e "${E_PER_BKT}" -s "${CSIZE}" "${SHFSIMG}"
 
 echo "* Adding files"
 for (( I=0; I<${NB_FILES}; I++ )); do
     echo "  ${NAME[$I]}"
-    $ADMIN -a "${FILE[$I]}" -D "${HASH[$I]}" -n "${NAME[$I]}" -m "${MIME[$I]}" "${SHFSIMG}"
+    $SHFS_ADMIN -a "${FILE[$I]}" -D "${HASH[$I]}" -n "${NAME[$I]}" -m "${MIME[$I]}" "${SHFSIMG}"
 done
 
 if [ "$DEF_I" != "-1" ]; then
     echo "* Marking index file (${NAME[$DEF_I]}, ${HASH[$DEF_I]})"
-    $ADMIN -d "${HASH[$DEF_I]}" "${SHFSIMG}"
+    $SHFS_ADMIN -d "${HASH[$DEF_I]}" "${SHFSIMG}"
 fi
 
 echo "* Done"
-$ADMIN -l "${SHFSIMG}"
+$SHFS_ADMIN -l "${SHFSIMG}"

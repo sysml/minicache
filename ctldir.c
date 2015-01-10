@@ -130,7 +130,7 @@ struct ctldir *create_ctldir(const char *name) {
 	struct ctldir *cd;
 	int ret;
 
-	cd = _xmalloc(sizeof(*cd), 0);
+	cd = _xmalloc(sizeof(*cd), 1);
 	if (!cd) {
 		errno = ENOMEM;
 		goto err_out;
@@ -282,11 +282,11 @@ int ctldir_start_watcher(struct ctldir *cd)
 	register uint32_t i;
 	register int ret;
 	register int err = -EACCES;
-	domid_t self;
-
+#ifndef CTLDIR_NOCHMOD
+	domid_t self = xenbus_get_self_id();
+#endif
 	BUG_ON(cd->watcher != NULL);
 
-	self = xenbus_get_self_id();
 	for (;;) {
 		ret = _xb_begin_transaction(&xbt);
 		if (ret < 0)
