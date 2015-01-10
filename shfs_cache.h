@@ -12,11 +12,16 @@
 #define SHFS_CACHE_POOL_NB_BUFFERS 32 /* defines minimum cache size,
                                        * if 0, CACHE_GROW has to be enabled */
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
+
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
-                         * allocating more buffers on demand (via _xmalloc) */
-#define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* uncomment this line to stop the cache trying to grow 
-                                                * as soon as this limit for left free memory for malloc
-                                                * is exceeded */
+                         * allocating more buffers on demand (via _xmalloc). When
+			 * SHFS_GROW_THRESHOLD is defined, left system memory 
+			 * is checked before the allocation */
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+#define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* 256KB */
+#else
+#define SHFS_CACHE_GROW_THRESHOLD (1 * 1024 * 1024) /* 1MB */
+#endif
 
 struct shfs_cache_entry {
 	struct mempool_obj *pobj;
