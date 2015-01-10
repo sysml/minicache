@@ -158,8 +158,10 @@ static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
 static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #endif
-#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
+#ifdef __MINIOS__
 static int shcmd_free(FILE *cio, int argc, char *argv[]);
+#endif
+#if defined HAVE_LIBC && !defined CONFIG_ARM
 static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
 #endif
 #ifdef HAVE_LWIP
@@ -234,8 +236,10 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
     shell_register_cmd("date",   shcmd_date);
-#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
+#ifdef __MINIOS__
     shell_register_cmd("free",   shcmd_free);
+#endif
+#if defined HAVE_LIBC && !defined CONFIG_ARM
     shell_register_cmd("mallinfo",shcmd_mallinfo);
 #endif
 #ifdef HAVE_LWIP
@@ -1145,7 +1149,7 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 }
 #endif
 
-#if defined __MINIOS__ && (defined __x86_64 || defined __x86_32)
+#if defined __MINIOS__
 #include <mini-os/mm.h>
 
 static int shcmd_free(FILE *cio, int argc, char *argv[])
@@ -1182,67 +1186,72 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 
     case 'p': /* pages */
         do {
-	    size_t total_p;
-	    size_t reserved_p;
-	    size_t heap_p;
-	    size_t other_p;
-	    size_t free_p;
+	    size_t total_p     = arch_mem_size() >> PAGE_SHIFT;
+	    size_t free_p      = mm_free_pages();
+	    size_t reserved_p  = arch_reserved_mem() >> PAGE_SHIFT;
+	    size_t allocated_p = mm_total_pages() - mm_free_pages();
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+	    size_t heap_p      = mm_heap_pages();
+	    allocated_p       -= heap_p; /* excludes heap pages from page allocator */
+#endif
 
-	    total_p    = mm_total_pages();
-	    reserved_p = mm_reserved_pages();
-	    heap_p     = mm_heap_pages();
-	    free_p     = mm_free_pages();
-	    other_p    = total_p - free_p - reserved_p - heap_p;
+	    fprintf(cio, "       ");
+	    fprintf(cio, "%12s ", "total");
+	    fprintf(cio, "%12s ", "reserved");
+	    fprintf(cio, "%12s ", "allocated");
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+	    fprintf(cio, "%12s ", "heap");
+#endif
+	    fprintf(cio, "%12s\n", "free");
 
-	    fprintf(cio, "       %12s %12s %12s %12s %12s\n",
-	            "total",
-	            "reserved",
-	            "heap",
-	            "other",
-	            "free");
-	    fprintf(cio, "Pages: %12lu %12lu %12lu %12lu %12lu\n",
-	            total_p,
-	            reserved_p,
-	            heap_p,
-	            other_p,
-	            free_p);
+	    fprintf(cio, "Pages: ");
+	    fprintf(cio, "%12lu ", total_p);
+	    fprintf(cio, "%12lu ", reserved_p);
+	    fprintf(cio, "%12lu ", allocated_p);
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+	    fprintf(cio, "%12lu ", heap_p);
+#endif
+	    fprintf(cio, "%12lu\n", free_p);
         } while(0);
         break;
     default: /* mem */
         do {
-	    size_t total_s;
-	    size_t text_s;
-	    size_t data_s;
-	    size_t bss_s;
-	    size_t heap_s;
-	    size_t other_s;
-	    size_t free_s;
+	    size_t total_s     = arch_mem_size();
+	    size_t free_s      = mm_free_pages() << PAGE_SHIFT;
+	    size_t other_s     = arch_reserved_mem();
+	    size_t text_s      = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
+	    size_t data_s      = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
+	    size_t bss_s       = ((size_t) &_end - (size_t) &_edata); /* bss section */
+	    size_t allocated_s = (mm_total_pages() - mm_free_pages()) << PAGE_SHIFT;
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+	    size_t heap_s      = mm_heap_pages() << PAGE_SHIFT;
+	    allocated_s       -= heap_s; /* excludes heap pages from page allocator */
+#endif
+	    other_s -= text_s + data_s + bss_s;
 
-	    //total_s = start_info.nr_pages * PAGE_SIZE;
-	    total_s = mm_total_pages() * PAGE_SIZE;
-	    text_s  = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
-	    data_s  = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
-	    bss_s   = ((size_t) &_end - (size_t) &_edata); /* bss section */
-	    heap_s  = mm_heap_pages() * PAGE_SIZE;
-	    free_s  = mm_free_pages() * PAGE_SIZE;
-	    other_s = total_s - free_s - text_s - data_s - bss_s - heap_s;
+	    fprintf(cio, "       ");
+	    fprintf(cio, "%12s ", "total");
+	    fprintf(cio, "%12s ", "text");
+	    fprintf(cio, "%12s ", "data");
+	    fprintf(cio, "%12s ", "bss");
+	    fprintf(cio, "%12s ", "other");
+	    fprintf(cio, "%12s ", "allocated");
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+	    fprintf(cio, "%12s ", "heap");
+#endif
+	    fprintf(cio, "%12s\n", "free");
 
-	    fprintf(cio, "       %12s %12s %12s %12s %12s %12s %12s\n",
-	            "total",
-	            "text",
-	            "data",
-	            "bss",
-	            "heap",
-	            "other",
-	            "free");
-	    fprintf(cio, "Mem:   %12lu %12lu %12lu %12lu %12lu %12lu %12lu\n",
-	            total_s / base,
-	            text_s / base,
-	            data_s / base,
-	            bss_s / base,
-	            heap_s / base,
-	            other_s / base,
-	            free_s / base);
+	    fprintf(cio, "Mem:   ");
+	    fprintf(cio, "%12lu ", total_s / base);
+	    fprintf(cio, "%12lu ", text_s / base);
+	    fprintf(cio, "%12lu ", data_s / base);
+	    fprintf(cio, "%12lu ", bss_s / base);
+	    fprintf(cio, "%12lu ", other_s / base);
+	    fprintf(cio, "%12lu ", allocated_s / base);
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+	    fprintf(cio, "%12lu ", heap_s / base);
+#endif
+	    fprintf(cio, "%12lu\n", free_s /base);
         } while(0);
         break;
     }
@@ -1252,7 +1261,9 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
     fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
     return -1;
 }
+#endif
 
+#if defined HAVE_LIBC && !defined CONFIG_ARM
 static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
 {
     struct mallinfo minfo;
