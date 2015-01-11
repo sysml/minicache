@@ -50,16 +50,45 @@ static void _cce_pobj_init(struct mempool_obj *pobj, void *unused)
     cce->aio_chain.last = NULL;
 }
 
+static inline uint32_t log2(uint32_t v)
+{
+  uint32_t i = 0;
+
+  while (v) {
+	v >>= 1;
+	i++;
+  }
+  return (i - 1);
+}
+
 int shfs_alloc_cache(void (*cb_retry)(void))
 {
     struct shfs_cache *cc;
-    uint32_t htlen, i;
+    uint32_t htlen, htorder, i;
     size_t cc_size;
     int ret;
 
     ASSERT(shfs_vol.chunkcache == NULL);
 
-    htlen = (1 << SHFS_CACHE_HTABLE_ORDER);
+    /* quickly calculate an "optimal" collision table size (heuristical):
+     * n per entry: nb_entries = max_nb_bffrs / n
+     * Note: the resulting number will be shrinked down the
+     * closest power-of-2 value */
+#ifdef SHFS_CACHE_GROW
+#ifdef SHFS_CACHE_GROW_THRESHOLD
+    htlen   = (((mm_total_pages() << PAGE_SHIFT) - SHFS_CACHE_GROW_THRESHOLD) /
+              shfs_vol.chunksize) / SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY;
+#else
+    htlen   = ((mm_total_pages() << PAGE_SHIFT) / shfs_vol.chunksize) /
+              SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY;
+#endif
+#else
+    htlen   = SHFS_CACHE_POOL_NB_BUFFERS /
+              SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY;
+#endif
+    htorder = log2(htlen);
+    htlen   = 1 << htorder;
+
     cc_size = sizeof(*cc) + (htlen * sizeof(struct shfs_cache_htel));
     cc = _xmalloc(cc_size, MIN_ALIGN);
     if (!cc) {
@@ -543,14 +572,15 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	}
 
 #ifdef SHFS_CACHE_DEBUG
-	printk("Buffer states:\n");
+	printk("\nBuffer states:\n");
 	for (i = 0; i < shfs_vol.chunkcache->htlen; ++i) {
+	  printk(" ht[%2"PRIu32"]: %"PRIu32" buffers:\n", i, shfs_vol.chunkcache->htable[i].len);
 		dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
-			printk(" ht[%2u] chk:%8llu, refcount:%3u, %s\n",
+			printk("  %12"PRIchk"chk: %s, refcount:%3"PRIu32"}\n",
 			       i,
 			       cce->addr,
-			       cce->refcount,
-			       cce->invalid ? "INVALID" : "valid");
+			       cce->invalid ? "INVALID" : "valid",
+			       cce->refcount);
 		}
 	}
 #endif
@@ -560,12 +590,12 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	nb_ref_entries = shfs_vol.chunkcache->nb_ref_entries;
 	htlen          = shfs_vol.chunkcache->htlen;
 
-	fprintf(cio, " Number of cache buffers:            %12u (total: %lu KiB)\n",
+	fprintf(cio, " Number of cache buffers:            %12"PRIu64" (total: %"PRIu64" KiB)\n",
 	        nb_entries,
 	        (nb_entries * chunksize) /1024);
-	fprintf(cio, " Number of referenced cache buffers: %12u\n",
+	fprintf(cio, " Number of referenced cache buffers: %12"PRIu32"\n",
 	        nb_ref_entries);
-	fprintf(cio, " Hash table size:                    %12u\n",
+	fprintf(cio, " Hash table size:                    %12"PRIu32"\n",
 	        htlen);
 
 #ifdef SHFS_CACHE_DEBUG

@@ -8,7 +8,7 @@
 #include "dlist.h"
 #include "mempool.h"
 
-#define SHFS_CACHE_HTABLE_ORDER 8 /* order of 2 for collision table size */
+#define SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY 2 /* defines roughly the average maximum number of comparisons per table entry (Note: due to rounding, the real number will be higher) */
 #define SHFS_CACHE_POOL_NB_BUFFERS 32 /* defines minimum cache size,
                                        * if 0, CACHE_GROW has to be enabled */
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
