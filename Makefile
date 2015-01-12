@@ -1,3 +1,5 @@
+default : all
+
 # default build target
 GITSHA1	?= $(shell git rev-parse --short HEAD || echo "?")
 ARCH	?= x86_64
