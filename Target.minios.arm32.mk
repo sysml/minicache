@@ -28,7 +28,8 @@ CONFIG_SHUTDOWN			 = y
 CONFIG_CONSFRONT_SYNC		 = n
 
 CFLAGS				+= -Wunused \
-				   -Wtype-limits
+				   -Wtype-limits \
+				   -Itarget/minios/include
 
 ######################################
 ## Networking
@@ -69,7 +70,7 @@ stubdom		 = y
 STUBDOM_NAME	 = minicache
 STUBDOM_ROOT	 = $(realpath .)
 
-STUB_APP_OBJS0	 = main.o blkdev.o $(MCOBJS)
+STUB_APP_OBJS0	 = blkdev.o $(MCOBJS)
 STUB_APP_OBJS	 = $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
 CFLAGS		+= $(MCCFLAGS)
 

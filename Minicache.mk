@@ -18,7 +18,8 @@ MCOBJS						= ring.o \
 						  shfs_fio.o \
 						  shfs_tools.o \
 						  http_parser.o \
-						  http.o
+						  http.o \
+						  minicache.o
 
 MCCFLAGS-$(CONFIG_HTABLE_DEBUG)			+= -DHTABLE_DEBUG
 MCCFLAGS-$(CONFIG_MEMPOOL_DEBUG)		+= -DMEMPOOL_DEBUG

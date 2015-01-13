@@ -1,14 +1,9 @@
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/minicache.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <getopt.h>
-#include <kernel.h>
-#include <sched.h>
-#include <semaphore.h>
-#include <shutdown.h>
 
 #include <lwip/ip_addr.h>
 #include <netif/etharp.h>
@@ -26,10 +21,14 @@
 
 #include "mempool.h"
 #include "http.h"
+#ifdef HAVE_SHELL
 #include "shell.h"
+#endif
 #include "shfs.h"
 #include "shfs_tools.h"
+#ifdef HAVE_CTLDIR
 #include "ctldir.h"
+#endif
 #ifdef SHFS_STATS
 #include "shfs_stats.h"
 #endif
@@ -49,9 +48,24 @@
 		}                                                    \
 	} while(0)
 
+/* boot time tracing helper */
+#ifdef TRACE_BOOTTIME
+#define TT_DECLARE(var) uint64_t (var) = 0
+#define TT_START(var) do { (var) = NOW(); } while(0)
+#define TT_END(var) do {(var) = (NOW() - (var)); } while(0)
+#define TT_PRINT(desc, var) printk(" %-32s: %lu.%06lus\n",	  \
+                                   (desc),	  \
+                                   (var) / 1000000000l,	  \
+                                   ((var) / 1000l) % 1000000l);
+#else
+#define TT_DECLARE(var) while(0) {}
+#define TT_START(var) while(0) {}
+#define TT_END(var) while(0) {}
+#endif
+
+
 #ifdef CONFIG_MINDER_PRINT
 #define MINDER_INTERVAL 500
-
 static inline void minder_print(void)
 {
     static int minder_step = 0;
@@ -106,7 +120,7 @@ static inline void minder_print(void)
 /**
  * ARGUMENT PARSING
  */
-static struct _args {
+struct mcargs {
     int             dhclient;
     struct eth_addr mac;
     struct ip_addr  ip;
@@ -114,15 +128,17 @@ static struct _args {
     struct ip_addr  gw;
     struct ip_addr  dns0;
     struct ip_addr  dns1;
-
-    unsigned int    nb_vbds;
-    unsigned int    vbd_id[MAX_NB_TRY_BLKDEVS];
-    int             vbd_detect;
-    unsigned int    stats_vbd_id;
-    int             stats_vbd;
     unsigned int    nb_http_sess;
 
+    int             vbd_detect;
+    int             stats_vbd;
+    unsigned int    nb_vbds;
+    blkdev_id_t     vbd_id[MAX_NB_TRY_BLKDEVS];
+    blkdev_id_t     stats_vbd_id;
+
+#ifdef HAVE_CTLDIR
     int             no_ctldir;
+#endif
 
     unsigned int    startup_delay;
 
@@ -236,6 +252,7 @@ static int parse_args(int argc, char *argv[])
     int opt;
     int ret;
     int ival;
+    blkdev_id_t ibd;
 
     /* default arguments */
     memset(&args, 0, sizeof(args));
@@ -332,8 +349,8 @@ static int parse_args(int argc, char *argv[])
 	      args.nb_sarp_entries++;
               break;
          case 'b': /* virtual block device (specified manually to skip detection) */
-	      ret = parse_args_setval_int(&ival, optarg);
-	      if (ret < 0 || ival < 0) {
+	      ret = parse_blkdev_id(optarg, &ibd);
+	      if (ret < 0) {
 	           printk("invalid block device id specified\n");
 	           return -1;
               }
@@ -342,15 +359,15 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
 	      }
 	      args.vbd_detect = 0; /* disable vbd detection */
-	      args.vbd_id[args.nb_vbds++] = (unsigned int) ival;
+	      args.vbd_id[args.nb_vbds++] = ibd;
               break;
          case 'h': /* hide xenstore control entries */
 	      args.no_ctldir = 1;
               break;
 #ifdef SHFS_STATS
          case 'x': /* virtual block device for exporting statistics */
-	      ret = parse_args_setval_int(&ival, optarg);
-	      if (ret < 0 || ival < 0) {
+	      ret = parse_blkdev_id(optarg, &ibd);
+	      if (ret < 0) {
 	           printk("invalid block device id specified\n");
 	           return -1;
               }
@@ -359,7 +376,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
 	      }
 	      args.stats_vbd = 1; /* enable stats vbd */
-	      args.stats_vbd_id = (unsigned int) ival;
+	      args.stats_vbd_id = ibd;
               break;
 #endif
          case 'c': /* number of http connections */
@@ -387,6 +404,7 @@ static volatile int shall_shutdown = 0;
 static volatile int shall_reboot = 0;
 static volatile int shall_suspend = 0;
 
+#ifdef HAVE_SHELL
 static int shcmd_halt(FILE *cio, int argc, char *argv[])
 {
     shall_reboot = 0;
@@ -406,21 +424,22 @@ static int shcmd_suspend(FILE *cio, int argc, char *argv[])
     shall_suspend = 1;
     return 0;
 }
+#endif
 
 void app_shutdown(unsigned reason)
 {
     switch (reason) {
-    case SHUTDOWN_poweroff:
+    case TARGET_SHTDN_POWEROFF:
 	    printk("Poweroff requested\n", reason);
 	    shall_reboot = 0;
 	    shall_shutdown = 1;
 	    break;
-    case SHUTDOWN_reboot:
+    case TARGET_SHTDN_REBOOT:
 	    printk("Reboot requested: %d\n", reason);
 	    shall_reboot = 1;
 	    shall_shutdown = 1;
 	    break;
-    case SHUTDOWN_suspend:
+    case TARGET_SHTDN_SUSPEND:
 	    printk("Suspend requested: %d\n", reason);
 	    shall_suspend = 1;
 	    break;
@@ -433,6 +452,7 @@ void app_shutdown(unsigned reason)
 /**
  * VBD MGMT
  */
+#if defined CAN_DETECT_BLKDEVS && defined HAVE_SHELL
 static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
 {
     unsigned int vbd_id[32];
@@ -459,8 +479,9 @@ static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
     }
     return 0;
 }
+#endif
 
-#if LWIP_STATS_DISPLAY
+#if LWIP_STATS_DISPLAY && defined HAVE_SHELL
 #include <lwip/stats.h>
 
 static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
@@ -475,26 +496,13 @@ static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
 /**
  * MAIN
  */
-#ifdef TRACE_BOOTTIME
-#define TT_DECLARE(var) uint64_t (var) = 0
-#define TT_START(var) do { (var) = NOW(); } while(0)
-#define TT_END(var) do {(var) = (NOW() - (var)); } while(0)
-#define TT_PRINT(desc, var) printk(" %-32s: %lu.%06lus\n",	  \
-                                   (desc),	  \
-                                   (var) / 1000000000l,	  \
-                                   ((var) / 1000l) % 1000000l);
-#else
-#define TT_DECLARE(var) while(0) {}
-#define TT_START(var) while(0) {}
-#define TT_END(var) while(0) {}
-#endif
-
-
 int main(int argc, char *argv[])
 {
     struct netif netif;
     struct netif *niret;
+#ifdef HAVE_CTLDIR
     struct ctldir *cd = NULL;
+#endif
     int ret;
     err_t err;
     unsigned int i;
@@ -564,12 +572,13 @@ int main(int argc, char *argv[])
 		    fflush(stdout);
 		    msleep(1000);
 	    }
-	    printf("\n");
+	    printk("\n");
     }
 
     /* -----------------------------------
-     * control dir
+     * control dir - phase 1/2
      * ----------------------------------- */
+#ifdef HAVE_CTLDIR
     if (!args.no_ctldir) {
 	    printk("Initialize xenstore control entries...\n");
 	    cd = create_ctldir("minicache");
@@ -578,16 +587,19 @@ int main(int argc, char *argv[])
 		    printk("         Disabling xenstore cotrol entries\n");
 	    }
     }
+#endif
 
     /* -----------------------------------
      * detect available block devices
      * ----------------------------------- */
+#ifdef CAN_DETECT_BLKDEVS
     if (args.vbd_detect) {
 	    printk("Detecting block devices...\n");
 	    TT_START(tt_vbddetect);
 	    args.nb_vbds = detect_blkdevs(args.vbd_id, sizeof(args.vbd_id));
 	    TT_END(tt_vbddetect);
     }
+#endif
 
     /* -----------------------------------
      * filesystem initialization & automount
@@ -623,10 +635,10 @@ int main(int argc, char *argv[])
     TT_START(tt_netifadd);
 #ifdef CONFIG_LWIP_NOTHREADS
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      netfrontif_init, ethernet_input);
+                      target_netif_init, ethernet_input);
 #else
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      netfrontif_init, tcpip_input);
+                      target_netif_init, tcpip_input);
 #endif /* CONFIG_LWIP_NOTHREADS */
     TT_END(tt_netifadd);
 
@@ -688,14 +700,17 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * service initialization
      * ----------------------------------- */
+#ifdef HAVE_SHELL
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
+#endif
     printk("Starting HTTP server (max number of connections: %u)...\n",
            args.nb_http_sess);
     init_http(args.nb_http_sess,
               args.nb_http_sess + args.nb_http_sess / 2);
 
     /* add custom commands to the shell */
+#ifdef HAVE_SHELL
     shell_register_cmd("halt", shcmd_halt);
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
@@ -703,8 +718,13 @@ int main(int argc, char *argv[])
 #if LWIP_STATS_DISPLAY
     shell_register_cmd("lwip-stats", shcmd_lwipstats);
 #endif
-
+#ifdef HAVE_CTLDIR
     register_shfs_tools(cd); /* Note: cd might be NULL */
+#else
+    register_shfs_tools(NULL);
+#endif
+#endif
+
 #ifdef SHFS_STATS
     /* -----------------------------------
      * stats device
@@ -720,15 +740,29 @@ int main(int argc, char *argv[])
 	}
     }
 
-    register_shfs_stats_tools(cd);
+#ifdef HAVE_CTLDIR
+    register_shfs_stats_tools(cd); /* Note: cd might be NULL */
+#else
+    register_shfs_stats_tools(NULL);
 #endif
-#ifdef TESTSUITE
-    register_testsuite(cd);
+
 #endif
 
     /* -----------------------------------
-     * control dir
+     * testsuite commands
      * ----------------------------------- */
+#ifdef TESTSUITE
+#ifdef HAVE_CTLDIR
+    register_testsuite(cd); /* Note: cd might be NULL */
+#else
+    register_testsuite(NULL);
+#endif
+#endif
+
+    /* -----------------------------------
+     * control dir - phase 2/2
+     * ----------------------------------- */
+#ifdef HAVE_CTLDIR
     if (cd) {
 	    printk("Registering xenstore control entries...\n");
 	    TT_START(tt_ctldirstart);
@@ -739,9 +773,10 @@ int main(int argc, char *argv[])
 		    goto out;
 	    }
     }
+#endif
 
     /* -----------------------------------
-     * Processing loop
+     * Boot banner/time trace output
      * ----------------------------------- */
     printk("*** MiniCache is up and running ***\n");
 #ifdef TRACE_BOOTTIME
@@ -759,13 +794,19 @@ int main(int argc, char *argv[])
     if (args.stats_vbd)
 	    TT_PRINT("stats device initialization", tt_statsdev);
 #endif
+#ifdef HAVE_CTLDIR
     if (cd)
 	    TT_PRINT("xenstore registration", tt_ctldirstart);
+#endif
     printk("***\n");
 #endif /* TRACE_BOOTTIME */
 #ifdef CONFIG_MINDER_PRINT
     printk("\n");
 #endif
+
+    /* -----------------------------------
+     * Processing loop
+     * ----------------------------------- */
     while(likely(!shall_shutdown)) {
 	/* poll block devices */
 	shfs_poll_blkdevs();
@@ -799,7 +840,7 @@ int main(int argc, char *argv[])
             netif_set_down(&netif);
             netif_remove(&netif);
 
-            kernel_suspend();
+            target_suspend();
 
             printk("System woke up from suspend\n");
             netif_set_default(&netif);
@@ -825,18 +866,20 @@ int main(int argc, char *argv[])
 #endif
     printk("Stopping HTTP server...\n");
     exit_http();
+#ifdef HAVE_SHELL
     printk("Stopping shell...\n");
     exit_shell();
+#endif
     printk("Unmounting cache filesystem...\n");
-    umount_shfs(0); /* we cannot enforce unmount but all files should be closed here */
+    umount_shfs(0); /* we cannot enforce unmount but all files should be closed here anyways */
     exit_shfs();
     printk("Stopping networking...\n");
     netif_set_down(&netif);
     netif_remove(&netif);
  out:
     if (shall_reboot)
-	    kernel_shutdown(SHUTDOWN_reboot);
-    kernel_shutdown(SHUTDOWN_poweroff);
+        target_reboot();
+    target_halt();
 
-    return 0; /* will never be reached */
+    return 0;
 }
