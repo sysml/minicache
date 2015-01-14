@@ -65,8 +65,8 @@ stubdom		 = y
 STUBDOM_NAME	 = minicache
 STUBDOM_ROOT	 = $(realpath .)
 
-STUB_APP_OBJS0	 = blkdev.o $(MCOBJS)
 STUB_APP_OBJS	 = $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
+STUB_BUILD_DIRS += $(STUB_APP_OBJ_DIR)/target/$(TARGET)
 CFLAGS		+= $(MCCFLAGS)
 
 include $(MINIOS_ROOT)/stub.mk
