@@ -53,9 +53,9 @@
 #define TT_DECLARE(var) uint64_t (var) = 0
 #define TT_START(var) do { (var) = NOW(); } while(0)
 #define TT_END(var) do {(var) = (NOW() - (var)); } while(0)
-#define TT_PRINT(desc, var) printk(" %-32s: %lu.%06lus\n",	  \
-                                   (desc),	  \
-                                   (var) / 1000000000l,	  \
+#define TT_PRINT(desc, var) printk(" %-32s: %"PRIu64".%06"PRIu64"s\n", \
+                                   (desc),			       \
+                                   (var) / 1000000000l,	       \
                                    ((var) / 1000l) % 1000000l);
 #else
 #define TT_DECLARE(var) while(0) {}
