@@ -24,9 +24,9 @@ extern uint64_t __dprintf_tsref;
 	    mins = secs / 60; \
 	    secs %= 60; \
 	     \
-	    printf("[%lum%02lu.%06lus] ", mins, secs, usecs); \
-	    printf("%s:%4d: %s(): ",  __FILE__, __LINE__, __FUNCTION__); \
-	    printf((fmt),               ##__VA_ARGS__); \
+	    printk("[%lum%02lu.%06lus] ", mins, secs, usecs); \
+	    printk("%s:%4d: %s(): ",  __FILE__, __LINE__, __FUNCTION__); \
+	    printk((fmt),               ##__VA_ARGS__); \
 	} while(0)
 
 /**
