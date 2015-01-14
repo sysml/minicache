@@ -130,11 +130,11 @@ struct mcargs {
     struct ip_addr  dns1;
     unsigned int    nb_http_sess;
 
-    int             vbd_detect;
-    int             stats_vbd;
-    unsigned int    nb_vbds;
-    blkdev_id_t     vbd_id[MAX_NB_TRY_BLKDEVS];
-    blkdev_id_t     stats_vbd_id;
+    int             bd_detect;
+    unsigned int    nb_bds;
+    blkdev_id_t     bd_id[MAX_NB_TRY_BLKDEVS];
+    int             stats_bd;
+    blkdev_id_t     stats_bd_id;
 
 #ifdef HAVE_CTLDIR
     int             no_ctldir;
@@ -261,9 +261,13 @@ static int parse_args(int argc, char *argv[])
     IP4_ADDR(&args.gw,     0,   0,   0,   0);
     IP4_ADDR(&args.dns0,   0,   0,   0,   0);
     IP4_ADDR(&args.dns1,   0,   0,   0,   0);
-    args.nb_vbds = 0;
-    args.stats_vbd = 0; /* disable stats vbd */
-    args.vbd_detect = 1;
+    args.nb_bds = 0;
+    args.stats_bd = 0; /* disable stats bd */
+#ifdef CAN_DETECT_BLKDEVS
+    args.bd_detect = 1;
+#else
+    args.bd_detect = 0;
+#endif
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
     args.no_ctldir = 0;
@@ -349,34 +353,32 @@ static int parse_args(int argc, char *argv[])
 	      args.nb_sarp_entries++;
               break;
          case 'b': /* virtual block device (specified manually to skip detection) */
-	      ret = parse_blkdev_id(optarg, &ibd);
-	      if (ret < 0) {
+              if (blkdev_id_parse(optarg, &ibd) < 0) {
 	           printk("invalid block device id specified\n");
 	           return -1;
               }
-	      if (args.nb_vbds == sizeof(args.vbd_id)) {
-		      printk("only %u block devices can be specified\n", sizeof(args.vbd_id));
+	      if (args.nb_bds == sizeof(args.bd_id)) {
+		      printk("only %u block devices can be specified\n", sizeof(args.bd_id));
 	           return -1;
 	      }
-	      args.vbd_detect = 0; /* disable vbd detection */
-	      args.vbd_id[args.nb_vbds++] = ibd;
+	      args.bd_detect = 0; /* disable bd detection */
+	      args.bd_id[args.nb_bds++] = ibd;
               break;
          case 'h': /* hide xenstore control entries */
 	      args.no_ctldir = 1;
               break;
 #ifdef SHFS_STATS
          case 'x': /* virtual block device for exporting statistics */
-	      ret = parse_blkdev_id(optarg, &ibd);
-	      if (ret < 0) {
+              if (blkdev_id_parse(optarg, &ibd) < 0) {
 	           printk("invalid block device id specified\n");
 	           return -1;
               }
-	      if (args.stats_vbd) {
+	      if (args.stats_bd) {
 		   printk("only one stats devices can be specified\n");
 	           return -1;
 	      }
-	      args.stats_vbd = 1; /* enable stats vbd */
-	      args.stats_vbd_id = ibd;
+	      args.stats_bd = 1; /* enable stats bd */
+	      args.stats_bd_id = ibd;
               break;
 #endif
          case 'c': /* number of http connections */
@@ -450,37 +452,8 @@ void app_shutdown(unsigned reason)
 }
 
 /**
- * VBD MGMT
+ * LWIP STATS
  */
-#if defined CAN_DETECT_BLKDEVS && defined HAVE_SHELL
-static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
-{
-    unsigned int vbd_id[32];
-    unsigned int nb_vbds;
-    struct blkdev *bd;
-    unsigned int i;
-
-    nb_vbds = detect_blkdevs(vbd_id, sizeof(vbd_id));
-
-    for (i = 0; i < nb_vbds; ++i) {
-	    bd = open_blkdev(vbd_id[i], 0x0);
-
-	    if (bd) {
-		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
-		            vbd_id[i],
-		            blkdev_ssize(bd),
-		            blkdev_size(bd),
-		            bd->refcount >= 2 ? ", in use" : "");
-		    close_blkdev(bd);
-	    } else {
-		    if (errno == EBUSY)
-			    fprintf(cio, " %u: in exclusive use\n", vbd_id[i]);
-	    }
-    }
-    return 0;
-}
-#endif
-
 #if LWIP_STATS_DISPLAY && defined HAVE_SHELL
 #include <lwip/stats.h>
 
@@ -523,7 +496,7 @@ int main(int argc, char *argv[])
     TT_DECLARE(tt_boot);
     TT_DECLARE(tt_netifadd);
     TT_DECLARE(tt_lwipinit);
-    TT_DECLARE(tt_vbddetect);
+    TT_DECLARE(tt_bddetect);
 #ifdef CONFIG_AUTOMOUNT
     TT_DECLARE(tt_automount);
 #endif
@@ -593,11 +566,11 @@ int main(int argc, char *argv[])
      * detect available block devices
      * ----------------------------------- */
 #ifdef CAN_DETECT_BLKDEVS
-    if (args.vbd_detect) {
+    if (args.bd_detect) {
 	    printk("Detecting block devices...\n");
-	    TT_START(tt_vbddetect);
-	    args.nb_vbds = detect_blkdevs(args.vbd_id, sizeof(args.vbd_id));
-	    TT_END(tt_vbddetect);
+	    TT_START(tt_bddetect);
+	    args.nb_bds = detect_blkdevs(args.bd_id, sizeof(args.bd_id));
+	    TT_END(tt_bddetect);
     }
 #endif
 
@@ -607,10 +580,10 @@ int main(int argc, char *argv[])
     printk("Loading SHFS...\n");
     init_shfs();
 #ifdef CONFIG_AUTOMOUNT
-    if (args.nb_vbds) {
+    if (args.nb_bds) {
 	    printk("Automount cache filesystem...\n");
 	    TT_START(tt_automount);
-	    ret = mount_shfs(args.vbd_id, args.nb_vbds);
+	    ret = mount_shfs(args.bd_id, args.nb_bds);
 	    TT_END(tt_automount);
 	    if (ret < 0)
 		    printk("Warning: Could not find or mount a cache filesystem\n");
@@ -714,7 +687,6 @@ int main(int argc, char *argv[])
     shell_register_cmd("halt", shcmd_halt);
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
-    shell_register_cmd("lsvbd", shcmd_lsvbd);
 #if LWIP_STATS_DISPLAY
     shell_register_cmd("lwip-stats", shcmd_lwipstats);
 #endif
@@ -730,13 +702,13 @@ int main(int argc, char *argv[])
      * stats device
      * ----------------------------------- */
     printk("Initializing stats device...\n");
-    if(args.stats_vbd) {
+    if(args.stats_bd) {
 	TT_START(tt_statsdev);
-	ret = init_shfs_stats_export(args.stats_vbd_id);
+	ret = init_shfs_stats_export(args.stats_bd_id);
 	TT_END(tt_statsdev);
 	if (ret < 0) {
 	    printk("Warning: Could not open stats device: %s\n", strerror(-ret));
-	    args.stats_vbd = 0;
+	    args.stats_bd = 0;
 	}
     }
 
@@ -784,14 +756,14 @@ int main(int argc, char *argv[])
     TT_PRINT("boot time since invoking main", tt_boot);
     TT_PRINT("lwip initialization", tt_lwipinit);
     TT_PRINT("vif addition", tt_netifadd);
-    if (args.vbd_detect)
-	    TT_PRINT("virtual block device detection", tt_vbddetect);
+    if (args.bd_detect)
+	    TT_PRINT("virtual block device detection", tt_bddetect);
 #ifdef CONFIG_AUTOMOUNT
-    if (args.nb_vbds)
+    if (args.nb_bds)
 	    TT_PRINT("file system mount time", tt_automount);
 #endif
 #ifdef SHFS_STATS
-    if (args.stats_vbd)
+    if (args.stats_bd)
 	    TT_PRINT("stats device initialization", tt_statsdev);
 #endif
 #ifdef HAVE_CTLDIR
@@ -859,7 +831,7 @@ int main(int argc, char *argv[])
     else
 	    printk("System is going down to halt now\n");
 #ifdef SHFS_STATS
-    if (args.stats_vbd) {
+    if (args.stats_bd) {
 	    printk("Closing stats device...\n");
 	    exit_shfs_stats_export();
     }

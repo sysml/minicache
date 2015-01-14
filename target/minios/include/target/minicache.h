@@ -11,16 +11,6 @@
  */
 //#define printk printf
 
-/*
- * Block device
- */
-typedef unsigned int blkdev_id_t;
-
-//int parse_args_setval_blkdev_id(blkdev_id_t *out, const char *arg);
-#define parse_blkdev_id(id, out) \
-  ((blkdev_id_t) parse_args_setval_int((out), (id)))
-#define CAN_DETECT_BLKDEVS
-
 
 /*
  * Networking

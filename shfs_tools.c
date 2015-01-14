@@ -222,15 +222,47 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+#ifdef CAN_DETECT_BLKDEVS
+static int shcmd_lsbd(FILE *cio, int argc, char *argv[])
+{
+    blkdev_id_t id[64];
+    char str_id[64];
+    unsigned int nb_bds;
+    struct blkdev *bd;
+    unsigned int i;
+
+    nb_bds = detect_blkdevs(id, sizeof(id));
+
+    for (i = 0; i < nb_bds; ++i) {
+	    bd = open_blkdev(id[i], 0x0);
+	    blkdev_id_unparse(id[i], str_id, sizeof(str_id));
+
+	    if (bd) {
+		    fprintf(cio, " %s: block size = %"PRIsctr" bytes, size = %lu bytes%s\n",
+		            str_id,
+		            blkdev_ssize(bd),
+		            blkdev_size(bd),
+		            blkdev_refcount(bd) >= 2 ? ", in use" : "");
+		    close_blkdev(bd);
+	    } else {
+		    if (errno == EBUSY)
+			    fprintf(cio, " %s: in exclusive use\n", str_id);
+	    }
+    }
+    return 0;
+}
+#endif
+
 static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 {
-    unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
+    blkdev_id_t id[MAX_NB_TRY_BLKDEVS];
+    char str_id[64];
     unsigned int count;
     unsigned int i, j;
     int ret;
 
     if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
-	    fprintf(cio, "At most %u devices are supported\n", MAX_NB_TRY_BLKDEVS);
+	    fprintf(cio, "At most %u block devices are supported\n", MAX_NB_TRY_BLKDEVS);
 	    return -1;
     }
     if ((argc) == 1) {
@@ -239,10 +271,11 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 	    if (shfs_mounted) {
 		    /* list mounted filesystem and exit */
 		    for (i = 0; i < shfs_vol.nb_members; ++i) {
+			    blkdev_id_unparse(blkdev_id(shfs_vol.member[i].bd), str_id, sizeof(str_id));
 			    if (i == 0)
-				    fprintf(cio, "%u", shfs_vol.member[i].bd->vbd_id);
+				    fprintf(cio, "%s", str_id);
 			    else
-				    fprintf(cio, ",%u", shfs_vol.member[i].bd->vbd_id);
+				    fprintf(cio, ",%s", str_id);
 		    }
 		    up(&shfs_mount_lock);
 		    fprintf(cio, " on / type shfs (ro)\n");
@@ -250,13 +283,13 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 		    /* show usage and exit */
 		    up(&shfs_mount_lock);
 		    fprintf(cio, "No filesystem mounted\n");
-		    fprintf(cio, "\nUsage: %s [vbd_id]...\n", argv[0]);
+		    fprintf(cio, "\nUsage: %s [block device]...\n", argv[0]);
 
 	    }
 	    return 0;
     }
     for (i = 1; i < argc; ++i) {
-	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
+	    if (blkdev_id_parse(argv[i], &id[i- 1]) < 0) {
 		    fprintf(cio, "Invalid argument %u\n", i);
 		    return -1;
 	    }
@@ -267,12 +300,12 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
      * This is unfortunately an ugly & slow way of how it is done here... */
     for (i = 0; i < count; ++i)
 	    for (j = 0; j < count; ++j)
-		    if (i != j && vbd_id[i] == vbd_id[j]) {
+		    if (i != j && (blkdev_id_cmp(id[i], id[j]) == 0)) {
 			    fprintf(cio, "Found duplicates in the list\n");
 			    return -1;
 		    }
 
-    ret = mount_shfs(vbd_id, count);
+    ret = mount_shfs(id, count);
     if (ret == -EALREADY) {
 	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
 	    return -1;
@@ -368,6 +401,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	unsigned int m;
 	char str_uuid[37];
 	char str_date[20];
+	char str_bdid[64];
 	int ret = 0;
 
 	down(&shfs_mount_lock);
@@ -406,8 +440,9 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "Volume members:     %u device(s)\n", shfs_vol.nb_members);
 	for (m = 0; m < shfs_vol.nb_members; m++) {
 		uuid_unparse(shfs_vol.member[m].uuid, str_uuid);
+		blkdev_id_unparse(blkdev_id(shfs_vol.member[m].bd), str_bdid, sizeof(str_bdid));
 		fprintf(cio, "  Member %2u:\n", m);
-		fprintf(cio, "    VBD:            %u\n", shfs_vol.member[m].bd->vbd_id);
+		fprintf(cio, "    Device:         %s\n", str_bdid);
 		fprintf(cio, "    UUID:           %s\n", str_uuid);
 		fprintf(cio, "    Block size:     %"PRIu32"\n", blkdev_ssize(shfs_vol.member[m].bd));
 	}
@@ -429,6 +464,9 @@ int register_shfs_tools(struct ctldir *cd)
 	}
 
 	/* shell commands (ignore errors) */
+#ifdef CAN_DETECT_BLKDEVS
+	shell_register_cmd("lsbd", shcmd_lsbd);
+#endif
 	shell_register_cmd("mount", shcmd_shfs_mount);
 	shell_register_cmd("umount", shcmd_shfs_umount);
 	shell_register_cmd("remount", shcmd_shfs_remount);

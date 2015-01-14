@@ -1,12 +1,12 @@
 #include <mini-os/os.h>
 #include <mini-os/xmalloc.h>
+#include <target/blkdev.h>
 
 #include "shfs_stats.h"
 #include "shfs_tools.h"
 #include "shfs.h"
 #include "htable.h"
 #include "ctldir.h"
-#include "blkdev.h"
 #include "shell.h"
 
 #ifndef member_size
@@ -335,7 +335,7 @@ int register_shfs_stats_tools(struct ctldir *cd)
 	return 0;
 }
 
-int init_shfs_stats_export(unsigned int vbd_id)
+int init_shfs_stats_export(blkdev_id_t bd_id)
 {
 	int ret;
 
@@ -345,7 +345,7 @@ int init_shfs_stats_export(unsigned int vbd_id)
 		goto err_out;
 	}
 	/* exclusively open stats device for write only */
-	_stats_dev->bd = open_blkdev(vbd_id, (O_WRONLY | O_EXCL));
+	_stats_dev->bd = open_blkdev(bd_id, (O_WRONLY | O_EXCL));
 	if (!_stats_dev->bd) {
 		ret = -errno;
 		goto err_free_stats_dev;

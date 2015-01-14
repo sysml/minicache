@@ -10,8 +10,8 @@
 #include <mini-os/types.h>
 #include <stdint.h>
 #include <semaphore.h>
-#include "mempool.h"
-#include "blkdev.h"
+#include <target/blkdev.h>
+#include <mempool.h>
 
 #include "shfs_defs.h"
 #ifdef SHFS_STATS
@@ -70,7 +70,7 @@ extern int shfs_mounted;
 extern unsigned int shfs_nb_open;
 
 int init_shfs(void);
-int mount_shfs(unsigned int vbd_id[], unsigned int count);
+int mount_shfs(blkdev_id_t bd_id[], unsigned int count);
 int remount_shfs(void);
 int umount_shfs(int force);
 void exit_shfs(void);
