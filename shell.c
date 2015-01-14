@@ -166,6 +166,9 @@ static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
 #endif
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
+#if LWIP_STATS_DISPLAY
+static int shcmd_lwipstats(FILE *cio, int argc, char *argv[]);
+#endif
 #endif
 
 static err_t shlsess_accept(void);
@@ -244,6 +247,9 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
 #endif
 #ifdef HAVE_LWIP
     shell_register_cmd("ifconfig",shcmd_ifconfig);
+#if LWIP_STATS_DISPLAY
+    shell_register_cmd("lwip-stats",shcmd_shcmd_lwipstats);
+#endif
 #endif
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
@@ -926,12 +932,12 @@ static int shcmd_who(FILE *cio, int argc, char *argv[])
 {
     /* list opened sessions */
     struct timeval now;
-    uint64_t days = 0;
-    uint64_t hours = 0;
-    uint64_t mins = 0;
-    uint64_t secs;
+    unsigned long days = 0;
+    unsigned long hours = 0;
+    unsigned long mins = 0;
+    unsigned long secs;
     char str_name[32];
-    int32_t i;
+    unsigned int i;
 
     gettimeofday(&now, NULL);
     for (i = 0; i < MAX_NB_SESS; i++){
@@ -961,10 +967,10 @@ static int shcmd_uptime(FILE *cio, int argc, char *argv[])
 {
     /* shows shell uptime */
     struct timeval now;
-    uint64_t days = 0;
-    uint64_t hours = 0;
-    uint64_t mins = 0;
-    uint64_t secs;
+    unsigned long days = 0;
+    unsigned long hours = 0;
+    unsigned long mins = 0;
+    unsigned long secs;
 
     gettimeofday(&now, NULL);
     secs = (now.tv_sec - sh->ts_start.tv_sec);
@@ -1339,4 +1345,15 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 	}
 	return 0;
 }
+
+#if LWIP_STATS_DISPLAY
+#include <lwip/stats.h>
+
+static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
+{
+	stats_display();
+	fprintf(cio, "lwIP stats dumped to system output\n");
+	return 0;
+}
+#endif
 #endif

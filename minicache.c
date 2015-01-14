@@ -452,21 +452,6 @@ void app_shutdown(unsigned reason)
 }
 
 /**
- * LWIP STATS
- */
-#if LWIP_STATS_DISPLAY && defined HAVE_SHELL
-#include <lwip/stats.h>
-
-static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
-{
-	stats_display();
-	fprintf(cio, "Stats dumped to system output\n");
-	return 0;
-}
-#endif
-
-
-/**
  * MAIN
  */
 int main(int argc, char *argv[])
@@ -687,9 +672,6 @@ int main(int argc, char *argv[])
     shell_register_cmd("halt", shcmd_halt);
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
-#if LWIP_STATS_DISPLAY
-    shell_register_cmd("lwip-stats", shcmd_lwipstats);
-#endif
 #ifdef HAVE_CTLDIR
     register_shfs_tools(cd); /* Note: cd might be NULL */
 #else
