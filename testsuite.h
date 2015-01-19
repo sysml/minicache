@@ -2,7 +2,9 @@
 #define _TESTSUITE_H_
 
 #include "shfs_defs.h"
-#include "ctldir.h"
+#ifdef HAVE_CTLDIR
+#include <target/ctldir.h>
+#endif
 
 /**
  * Registers testsuite to micro shell + ctldir (if *cd is not NULL)

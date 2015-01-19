@@ -6,9 +6,7 @@
  * Copyright(C) 2014 NEC Laboratories Europe. All rights reserved.
  *                   Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/sys.h>
 #include <lwip/tcp.h>
 #include "mempool.h"
 #include "shfs.h"
@@ -263,7 +261,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	err_t err;
 	int ret = 0;
 
-	hs = _xmalloc(sizeof(*hs), PAGE_SIZE);
+	hs = aligned_alloc(CACHELINE_SIZE, sizeof(*hs));
 	if (!hs) {
 		ret = -ENOMEM;
 		goto err_out;
@@ -332,7 +330,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
  err_free_sesspool:
 	free_mempool(hs->sess_pool);
  err_free_hs:
-	xfree(hs);
+	free(hs);
  err_out:
 	return ret;
 }
@@ -350,7 +348,7 @@ void exit_http(void)
 	tcp_close(hs->tpcb);
 	free_mempool(hs->req_pool);
 	free_mempool(hs->sess_pool);
-	xfree(hs);
+	free(hs);
 	hs = NULL;
 }
 

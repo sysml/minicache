@@ -6,7 +6,7 @@
 #else
 #include <stdio.h>
 #endif
-#include <time.h>
+#include <sys/time.h>
 
 extern struct timeval __debug_tsref;
 

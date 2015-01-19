@@ -13,7 +13,10 @@
 #include "shfs_cache.h"
 #include "shfs_fio.h"
 #include "shell.h"
-#include "ctldir.h"
+
+#ifdef HAVE_CTLDIR
+#include "target/ctldir.h"
+#endif
 
 static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 {
@@ -452,8 +455,13 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+#ifdef HAVE_CTLDIR
 int register_shfs_tools(struct ctldir *cd)
+#else
+int register_shfs_tools(void)
+#endif
 {
+#ifdef HAVE_CTLDIR
 	/* ctldir entries (ignore errors) */
 	if (cd) {
 		ctldir_register_shcmd(cd, "mount", shcmd_shfs_mount);
@@ -462,6 +470,7 @@ int register_shfs_tools(struct ctldir *cd)
 		ctldir_register_shcmd(cd, "flush", shcmd_shfs_flush_cache);
 		ctldir_register_shcmd(cd, "prefetch", shcmd_shfs_prefetch_cache);
 	}
+#endif
 
 	/* shell commands (ignore errors) */
 #ifdef CAN_DETECT_BLKDEVS

@@ -67,14 +67,9 @@
  */
 /* Note: This implementation is thread-safe but not SMP-safe. */
 
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
-#include <mini-os/lib.h>
-#include <kernel.h>
+#include <target/sys.h>
 #include <errno.h>
-
-#include "ring.h"
+#include <ring.h>
 
 #define MIN_ALIGN 8
 #define CACHELINE_SIZE 64
@@ -94,7 +89,7 @@ struct ring *alloc_ring(uint32_t size)
 
     ASSERT(size > 0 && POWER_OF_2(size));
 
-    r = _xmalloc(h_size + (sizeof(void *) * size), CACHELINE_SIZE);
+    r = aligned_alloc(CACHELINE_SIZE, h_size + (sizeof(void *) * size));
     if (!r) {
         errno = ENOMEM;
         return NULL;

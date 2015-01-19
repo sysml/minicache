@@ -6,7 +6,7 @@
 #include <mini-os/lib.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include "ctldir.h"
+#include <target/ctldir.h>
 
 #define SHWRAPPER_MAX_NB_ARGS 96
 #define DOM0 ((domid_t) 0)

@@ -75,6 +75,13 @@ ifndef LWIP_ROOT
 $(error "Please define LWIP_ROOT")
 endif
 
+###########################################################################
+
+CONFIG_CTLDIR = n # ctldir is not supported on linuxapp
+
+
+#################################
+
 LN		 = ln -sf
 MKDIR		 = mkdir -p
 MV		 = mv -f
@@ -85,11 +92,12 @@ TOUCH		 = touch
 CCDEP=gcc
 CC=gcc
 
-CFLAGS=-g -D$(TARGET) -DLWIP_DEBUG -pedantic -Werror \
+CFLAGS=-g -D$(TARGET) -DLWIP_DEBUG $(MCCFLAGS) \
 	-Wparentheses -Wsequence-point -Wswitch-default \
-	-Wextra -Wundef -Wshadow -Wpointer-arith -Wbad-function-cast \
-	-Wc++-compat -Wwrite-strings -Wold-style-definition \
-	-Wmissing-prototypes -Wredundant-decls -Wno-address #-Wnested-externs -Wall
+	-Wundef -Wpointer-arith -Wbad-function-cast \
+	-Wwrite-strings -Wold-style-definition \
+	-Wmissing-prototypes -Wredundant-decls -Wno-address # -Wextra -Wnested-externs -Wall -Wshadow
+# -pedantic \
 
 # not used for now but interesting:
 # -Wpacked
@@ -107,9 +115,9 @@ BUILDDIR		?= $(MINICACHE_ROOT)/build
 MINICACHE_OUT		?= minicache_$(ARCH)
 
 CFLAGS:=$(CFLAGS) \
-	-I. -I$(CONTRIBDIR)/apps/httpserver_raw -I$(CONTRIBDIR)/apps/shell \
-	-I$(CONTRIBDIR)/apps/tcpecho -I$(CONTRIBDIR)/apps/udpecho \
-	-I$(LWIPDIR)/include -I$(LWIPARCH) -I$(LWIPARCH)/include -I$(LWIPDIR)
+	-I. -Itarget/$(TARGET)/include \
+	-I$(LWIPDIR)/include -I$(LWIPARCH) -I$(LWIPARCH)/include -I$(LWIPDIR) \
+	-laio
 
 # COREFILES, CORE4FILES: The minimum set of files needed for lwIP.
 COREDIRS=$(LWIPDIR)/core
@@ -130,10 +138,10 @@ CORE6FILES=$(LWIPDIR)/core/ipv6/dhcp6.c $(LWIPDIR)/core/ipv6/ethip6.c \
 	$(LWIPDIR)/core/ipv6/mld6.c $(LWIPDIR)/core/ipv6/nd6.c
 
 # SNMPFILES: Extra SNMPv1 agent
-SNMPDIRS=$(LWIPDIR)/core/snmp
-SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
+#SNMPDIRS=$(LWIPDIR)/core/snmp
+#SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
 	$(LWIPDIR)/core/snmp/mib2.c $(LWIPDIR)/core/snmp/mib_structs.c \
-	$(LWIPDIR)/core/snmp/msg_in.c $(LWIPDIR)/core/snmp/msg_out.c
+#	$(LWIPDIR)/core/snmp/msg_in.c $(LWIPDIR)/core/snmp/msg_out.c
 
 # APIFILES: The files which implement the sequential and socket APIs.
 APIDIRS=$(LWIPDIR)/api
@@ -166,10 +174,8 @@ NETIFFILES+=$(LWIPDIR)/netif/ppp/auth.c $(LWIPDIR)/netif/ppp/ccp.c \
 ARCHFILES=$(wildcard $(LWIPARCH)/*.c $(LWIPARCH)/netif/tapif.c $(LWIPARCH)/netif/tunif.c $(LWIPARCH)/netif/unixif.c $(LWIPARCH)/netif/list.c $(LWIPARCH)/netif/tcpdump.c)
 
 # APPFILES: Applications.
-APPDIRS=$(CONTRIBDIR)/apps/httpserver_raw:$(CONTRIBDIR)/apps/udpecho:$(CONTRIBDIR)/apps/tcpecho:$(CONTRIBDIR)/apps/shell
-APPFILES=$(CONTRIBDIR)/apps/httpserver_raw/fs.c $(CONTRIBDIR)/apps/httpserver_raw/httpd.c \
-	$(CONTRIBDIR)/apps/udpecho/udpecho.c $(CONTRIBDIR)/apps/tcpecho/tcpecho.c \
-	$(CONTRIBDIR)/apps/shell/shell.c
+APPDIRS=.:target/$(TARGET)
+APPFILES=$(addprefix $(BUILDDIR)/,$(MCOBJS))
 
 # LWIPFILES: All the above.
 LWIPFILES=$(COREFILES) $(CORE4FILES) $(CORE6FILES) $(SNMPFILES) $(APIFILES) $(NETIFFILES) $(ARCHFILES)
@@ -186,7 +192,7 @@ $(BUILDDIR):
 	$(MKDIR) $@
 
 # set source search path
-VPATH=.:$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(APPDIRS)
+VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(APPDIRS)
 
 $(BUILDDIR)/%.o: %.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -208,7 +214,7 @@ clean:
 distclean:
 	$(RMDIR) $(BUILDDIR)
 
-$(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPARCH)/simhost.c $(LWIPFILES) $(APPFILES)
+$(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPFILES) $(APPFILES)
 	$(CCDEP) $(CFLAGS) -MM $^ > $(BUILDDIR)/.depend || $(RM) $(BUILDDIR)/.depend
 
 include $(BUILDDIR)/.depend
@@ -222,5 +228,5 @@ $(LWIPLIB): $(LWIPOBJS)
 
 
 .PHONY: $(BUILDDIR)/$(MINICACHE_OUT)
-$(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPLIB) $(BUILDDIR)/simhost.o $(APPFILES)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT) $(BUILDDIR)/simhost.o $(APPLIB) $(LWIPLIB)
+$(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPLIB) $(APPFILES)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT) $(APPLIB) $(LWIPLIB)

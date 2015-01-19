@@ -7,10 +7,10 @@
 #ifndef _SHFS_H_
 #define _SHFS_H_
 
-#include <mini-os/types.h>
+#include <target/sys.h>
+#include <target/blkdev.h>
 #include <stdint.h>
 #include <semaphore.h>
-#include <target/blkdev.h>
 #include <mempool.h>
 
 #include "shfs_defs.h"
@@ -65,7 +65,7 @@ struct vol_info {
 };
 
 extern struct vol_info shfs_vol;
-extern struct semaphore shfs_mount_lock;
+extern sem_t shfs_mount_lock;
 extern int shfs_mounted;
 extern unsigned int shfs_nb_open;
 

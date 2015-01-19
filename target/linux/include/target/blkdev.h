@@ -1,27 +1,32 @@
 #ifndef _BLKDEV_H_
 #define _BLKDEV_H_
 
-#include <mini-os/blkfront.h>
-#include <mini-os/semaphore.h>
+#include <linux/fs.h>
 #include <fcntl.h>
-
+#include <stdlib.h>
+#include <string.h>
+#include <libaio.h>
+#include <semaphore.h>
 #include <mempool.h>
 
-#define MAX_REQUESTS ((__RING_SIZE((struct blkif_sring *)0, PAGE_SIZE)) - 1)
-#define MAX_DISKSIZE (1ll << 40) /* 1 TB */
+#define MAX_REQUESTS 1024
+#define DEFAULT_SSIZE 512 /* lower bound for opened files */
 
-typedef unsigned int blkdev_id_t; /* device id is a uint */
+typedef char blkdev_id_t[PATH_MAX]; /* device id is a path */
 typedef uint64_t sector_t;
 #define PRIsctr PRIu64
 
 typedef void (blkdev_aiocb_t)(int ret, void *argp);
 
 struct blkdev {
-  struct blkfront_dev *dev;
-  struct blkfront_info info;
+  blkdev_id_t dev;
+  int fd;
+  int mode;
+  struct stat fd_stat;
+  sector_t size;
+  uint32_t ssize;
   struct mempool *reqpool;
-  char nname[64];
-  blkdev_id_t id;
+  io_context_t ctxp;
 
   int exclusive;
   unsigned int refcount;
@@ -32,7 +37,7 @@ struct blkdev {
 struct _blkdev_req {
   struct mempool_obj *p_obj; /* reference to dependent memory pool object */
   struct blkdev *bd;
-  struct blkfront_aiocb aiocb;
+  struct iocb aiocb;
   sector_t sector;
   sector_t nb_sectors;
   int write;
@@ -40,8 +45,6 @@ struct _blkdev_req {
   void *cb_argp;
 };
 
-#define CAN_DETECT_BLKDEVS
-unsigned int detect_blkdevs(blkdev_id_t ids_out[], unsigned int max_nb);
 struct blkdev *open_blkdev(blkdev_id_t id, int mode);
 void close_blkdev(struct blkdev *bd);
 #define blkdev_refcount(bd) ((bd)->refcount)
@@ -49,22 +52,15 @@ void close_blkdev(struct blkdev *bd);
 int blkdev_id_parse(const char *id, blkdev_id_t *out);
 void blkdev_id_unparse(blkdev_id_t id, char *out, size_t maxlen);
 #define blkdev_id_cmp(id0, id1) \
-     ((id0) != (id1))
-#define blkdev_id(bd) ((bd)->id)
+     (strncmp((id0), (id1), PATH_MAX))
+#define blkdev_id(bd) ((bd)->dev)
 #define blkdev_ioalign(bd) blkdev_ssize((bd))
 
 /**
  * Retrieve device information
  */
-static inline sector_t blkdev_sectors(struct blkdev *bd)
-{
-  /* WORKAROUND: blkfront cannot handle > 1TB -> limit the disk size */
-  if (((sector_t) bd->info.sectors * (sector_t) bd->info.sector_size) > MAX_DISKSIZE)
-	return (MAX_DISKSIZE / (sector_t) bd->info.sector_size);
-  return (sector_t) bd->info.sectors;
-}
-#define blkdev_ssize(bd) ((uint32_t) (bd)->info.sector_size)
-#define blkdev_size(bd) (blkdev_sectors((bd)) * (sector_t) blkdev_ssize((bd)))
+#define blkdev_ssize(bd) ((uint32_t) (bd)->ssize)
+#define blkdev_size(bd) ((bd)->size * (sector_t) blkdev_ssize((bd)))
 #define blkdev_avail_req(bd) mempool_free_count((bd)->reqpool)
 
 
@@ -73,7 +69,7 @@ static inline sector_t blkdev_sectors(struct blkdev *bd)
  *
  * Note: target buffer has to be aligned to device sector size
  */
-void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret);
+void _blkdev_io_cb(io_context_t ctx, struct iocb *iocb, long res, long res2);
 
 static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sector_t len,
                                           int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
@@ -88,12 +84,14 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req = robj->data;
   req->p_obj = robj;
 
-  req->aiocb.data = NULL;
-  req->aiocb.aio_dev = bd->dev;
-  req->aiocb.aio_buf = buffer;
-  req->aiocb.aio_offset = (off_t) (start * blkdev_ssize(bd));
-  req->aiocb.aio_nbytes = len * blkdev_ssize(bd);
-  req->aiocb.aio_cb = _blkdev_async_io_cb;
+  memset(&req->aiocb, 0, sizeof(req->aiocb));
+  req->aiocb.aio_fildes = bd->fd;
+  req->aiocb.aio_lio_opcode = write ? IO_CMD_PWRITE : IO_CMD_PREAD;
+  //req->aiocb.reqprio = 0;
+  req->aiocb.u.c.buf = buffer;
+  req->aiocb.u.c.offset = (off_t) (start * blkdev_ssize(bd));
+  req->aiocb.u.c.nbytes = len * blkdev_ssize(bd);
+  //req->aiocb.aio_cb = _blkdev_async_io_cb;
   req->bd = bd;
   req->sector = start;
   req->nb_sectors = len;
@@ -112,19 +110,9 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
 static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,
                                   int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {
-	if (unlikely(write && !(bd->info.mode & (O_WRONLY | O_RDWR)))) {
+	if (unlikely(write && !(bd->mode & (O_WRONLY | O_RDWR)))) {
 		/* write access on non-writable device or read access on non-readable device */
 		return -EACCES;
-	}
-
-	if (unlikely((len * blkdev_ssize(bd)) / PAGE_SIZE > BLKIF_MAX_SEGMENTS_PER_REQUEST)) {
-		/* request too big -> blockfront cannot handle it with a single request */
-		return -ENXIO;
-	}
-
-	if (unlikely(((uintptr_t) buffer) & ((uintptr_t) blkdev_ssize(bd) - 1))) {
-		/* buffer is not aligned to device sector size */
-		return -EINVAL;
 	}
 
 	return blkdev_async_io_nocheck(bd, start, len, write, buffer, cb, cb_argp);
@@ -142,7 +130,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 void _blkdev_sync_io_cb(int ret, void *argp);
 
 struct _blkdev_sync_io_sync {
-	struct semaphore sem;
+	sem_t sem;
 	int ret;
 };
 

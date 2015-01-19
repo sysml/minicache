@@ -51,7 +51,7 @@ MCCFLAGS-$(CONFIG_SHELL_DEBUG)		+= -DSHELL_DEBUG
 ifeq ($(TARGET),minios)
 MCCFLAGS-$(CONFIG_CTLDIR)		+= -DHAVE_CTLDIR
 MCCFLAGS-$(CONFIG_CTLDIR_NOCHMOD)	+= -DCTLDIR_NOCHMOD
-MCOBJS-$(CONFIG_CTLDIR)			+= ctldir.o
+MCOBJS-$(CONFIG_CTLDIR)		+= target/$(TARGET)/ctldir.o
 endif
 
 ######################################

@@ -13,17 +13,17 @@
 #include <stdint.h>
 #include <time.h>
 #include <inttypes.h>
-#ifndef __MINIOS__
+#include "hash.h"
+
+#ifdef __SHFS_TOOLS__
 #include <uuid/uuid.h>
 #include <mhash.h>
-#endif /* __MINIOS__ */
-#include "hash.h"
+#else
+typedef uint8_t uuid_t[16];
+#endif /* __SHFS_TOOLS__ */
 
 typedef uint64_t chk_t;
 typedef uint64_t strp_t;
-#ifdef __MINIOS__
-typedef uint8_t uuid_t[16];
-#endif /* __MINIOS__ */
 
 #define PRIchk PRIu64
 #define PRIstrp PRIu64
@@ -170,7 +170,7 @@ struct shfs_hentry {
 #define SHFS_HENTRY_ISDEFAULT(hentry) \
 	((hentry)->flags & (SHFS_EFLAG_DEFAULT))
 
-#ifdef __MINIOS__
+#ifndef __SHFS_TOOLS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)
 {
 	return memcmp(uu1, uu2, sizeof(uuid_t));
@@ -194,7 +194,7 @@ static inline void uuid_copy(uuid_t dst, const uuid_t src)
 {
 	memcpy(dst, src, sizeof(uuid_t));
 }
-#endif /* __MINIOS__ */
+#endif /* __SHFS_TOOLS__ */
 
 static inline uint64_t gettimestamp_s(void)
 {

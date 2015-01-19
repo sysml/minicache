@@ -1,16 +1,13 @@
+
 /*
  * Simple memory pool implementation for MiniOS
  *
  * Copyright(C) 2013 NEC Laboratories Europe. All rights reserved.
  *                   Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
-#include <mini-os/lib.h>
-#include <kernel.h>
+#include <target/sys.h>
 #include <errno.h>
-#include "mempool.h"
+#include <mempool.h>
 
 #define MIN_ALIGN 8 /* minimum alignment of data structures within the mempool (64-bits) */
 
@@ -76,7 +73,7 @@ struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data
   o_size = align_up(o_size, obj_data_align);
 
   /* allocate pool */
-  p = _xmalloc(h_size + (o_size * nb_objs), max(PAGE_SIZE, obj_data_align));
+  p = aligned_alloc(max(PAGE_SIZE, obj_data_align), h_size + (o_size * nb_objs));
   if (!p) {
 	errno = ENOMEM;
 	goto error;

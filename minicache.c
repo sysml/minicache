@@ -27,7 +27,7 @@
 #include "shfs.h"
 #include "shfs_tools.h"
 #ifdef HAVE_CTLDIR
-#include "ctldir.h"
+#include <target/ctldir.h>
 #endif
 #ifdef SHFS_STATS
 #include "shfs_stats.h"

@@ -1,9 +1,7 @@
 /*
  *
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/sys.h>
 
 #include "likely.h"
 #include "shfs_fio.h"

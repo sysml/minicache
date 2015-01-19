@@ -4,9 +4,7 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/xmalloc.h>
-#include <mini-os/types.h>
+#include <target/sys.h>
 #include <stdint.h>
 #include <errno.h>
 
@@ -34,7 +32,7 @@
 
 int shfs_mounted = 0;
 unsigned int shfs_nb_open = 0;
-struct semaphore shfs_mount_lock;
+sem_t shfs_mount_lock;
 struct vol_info shfs_vol;
 
 int init_shfs(void) {
@@ -129,7 +127,7 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 		goto err_out;
 	}
 
-	chk0 = _xmalloc(4096, 4096);
+	chk0 = aligned_alloc(4096, 4096);
 	if (!chk0) {
 		ret = -ENOMEM;
 		goto err_out;
@@ -292,7 +290,7 @@ static int load_vol_hconf(void)
 	void *chk1;
 	int ret;
 
-	chk1 = _xmalloc(shfs_vol.chunksize, 4096);
+	chk1 = aligned_alloc(4096, shfs_vol.chunksize);
 	if (!chk1) {
 		ret = -ENOMEM;
 		goto out;
@@ -332,7 +330,7 @@ static int load_vol_hconf(void)
  * Note: load_vol_hconf() and local_vol_cconf() has to called before
  */
 struct _load_vol_htable_aiot {
-	struct semaphore done;
+	sem_t done;
 	chk_t left;
 	int ret;
 };
@@ -368,7 +366,7 @@ static int load_vol_htable(void)
 
 	dprintf("Allocating chunk cache reference table (size: %lu B)...\n",
 	        sizeof(void *) * shfs_vol.htable_len);
-	shfs_vol.htable_chunk_cache = _xmalloc(sizeof(void *) * shfs_vol.htable_len, CACHELINE_SIZE);
+	shfs_vol.htable_chunk_cache = aligned_alloc(CACHELINE_SIZE, sizeof(void *) * shfs_vol.htable_len);
 	if (!shfs_vol.htable_chunk_cache) {
 		ret = -ENOMEM;
 		goto err_out;
@@ -383,7 +381,7 @@ static int load_vol_htable(void)
 		/* allocate buffer and register it to htable chunk cache */
 		dprintf("Allocate buffer for chunk %"PRIchk" of htable (size: %lu B, align: %"PRIu32")\n",
 		        c, shfs_vol.chunksize, shfs_vol.ioalign);
-		chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+		chk_buf = aligned_alloc(shfs_vol.ioalign, shfs_vol.chunksize);
 		if (!chk_buf) {
 			dprintf("Could not alloc chunk %"PRIchk"\n", c);
 			ret = -ENOMEM;
@@ -520,7 +518,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	if (ret < 0)
 		goto err_close_members;
 
-	shfs_vol.remount_chunk_buffer = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+	shfs_vol.remount_chunk_buffer = aligned_alloc(shfs_vol.ioalign, shfs_vol.chunksize);
 	if (!shfs_vol.remount_chunk_buffer)
 		goto err_free_htable;
 
@@ -549,13 +547,13 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
  err_free_chunkcache:
 	shfs_free_cache();
  err_free_remount_buffer:
-	xfree(shfs_vol.remount_chunk_buffer);
+	free(shfs_vol.remount_chunk_buffer);
  err_free_htable:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
 		if (shfs_vol.htable_chunk_cache[i])
-			xfree(shfs_vol.htable_chunk_cache[i]);
+			free(shfs_vol.htable_chunk_cache[i]);
 	}
-	xfree(shfs_vol.htable_chunk_cache);
+	free(shfs_vol.htable_chunk_cache);
 	shfs_free_btable(shfs_vol.bt);
  err_free_aiotoken_pool:
 	free_mempool(shfs_vol.aiotoken_pool);
@@ -608,12 +606,12 @@ int umount_shfs(int force) {
 		shfs_free_cache();
 
 		shfs_mounted = 0;
-		xfree(shfs_vol.remount_chunk_buffer);
+		free(shfs_vol.remount_chunk_buffer);
 		for (i = 0; i < shfs_vol.htable_len; ++i) {
 			if (shfs_vol.htable_chunk_cache[i])
-				xfree(shfs_vol.htable_chunk_cache[i]);
+				free(shfs_vol.htable_chunk_cache[i]);
 		}
-		xfree(shfs_vol.htable_chunk_cache);
+		free(shfs_vol.htable_chunk_cache);
 		shfs_free_btable(shfs_vol.bt);
 		free_mempool(shfs_vol.aiotoken_pool);
 		for(i = 0; i < shfs_vol.nb_members; ++i)

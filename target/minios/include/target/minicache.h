@@ -1,15 +1,11 @@
 #ifndef _MINICACHE_H_
 #define _MINICACHE_H_
 
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
-#include <kernel.h>
+#include <target/sys.h>
 
 /*
  * Generic
  */
-//#define printk printf
 
 
 /*

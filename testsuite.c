@@ -2,9 +2,7 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/sys.h>
 #include <stdio.h>
 #include <lwip/udp.h>
 
@@ -14,7 +12,9 @@
 #include "shfs_cache.h"
 #include "shfs_fio.h"
 #include "shell.h"
-#include "ctldir.h"
+#ifdef HAVE_CTLDIR
+#include <target/ctldir.h>
+#endif
 
 static inline int parse_ipv4(struct ip_addr *out, const char *buf)
 {
@@ -246,12 +246,18 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+#ifdef HAVE_CTLDIR
 int register_testsuite(struct ctldir *cd)
+#else
+int register_testsuite(void)
+#endif
 {
+#ifdef HAVE_CTLDIR
 	/* ctldir entries (ignore errors) */
 	if (cd) {
 		ctldir_register_shcmd(cd, "netdf", shcmd_netdf);
 	}
+#endif
 
 	/* shell commands (ignore errors) */
 	shell_register_cmd("netdf", shcmd_netdf);

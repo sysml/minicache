@@ -2,14 +2,13 @@
  * Copyright 2013 NEC Laboratories Europe
  *                Simon Kuenzer
  */
-
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/lib.h>
+#include <target/sys.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "hexdump.h"
+#include <hexdump.h>
 
 #ifndef min
 #define min(a, b) \

@@ -1,7 +1,7 @@
 RM = rm -f
 CC = gcc
 LD = gcc
-CFLAGS += -O3 -g -Wunused -Wtype-limits
+CFLAGS += -O3 -g -Wunused -Wtype-limits -D__SHFS_TOOLS__
 LDFLAGS +=
 LDLIBS += -luuid -lmhash
 
