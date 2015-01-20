@@ -1161,13 +1161,13 @@ static int actn_info(struct token *token)
 	int ret = 0;
 
 	chk0 = malloc(4096);
-	if (!hdr_config) {
+	if (!chk0) {
 		fatal();
 		ret = -1;
 		goto out;
 	}
 	chk1 = malloc(shfs_vol.chunksize);
-	if (!hdr_config) {
+	if (!chk1) {
 		fatal();
 		ret = -1;
 		goto out_free_chk0;
