@@ -21,13 +21,15 @@ static inline void hash_copy(hash512_t dst, const hash512_t src, uint8_t hlen)
 	register uint64_t *p64_src;
 	register uint8_t i;
 
-	for (i = 0; i < hlen; i += 8) {
+	hlen -= nbleft;
+	i = 0;
+	for (; i < hlen; i += 8) {
 		p64_dst = (uint64_t *) &dst[i];
 		p64_src = (uint64_t *) &src[i];
 		*p64_dst = *p64_src;
 	}
 	if (nbleft) {
-		mask64 = (1 << (nbleft << 3)) - 1;
+		mask64 = ((uint64_t) 1 << (nbleft << 3)) - 1;
 		p64_dst = (uint64_t *) &dst[i];
 		p64_src = (uint64_t *) &src[i];
 		*p64_dst = *p64_src & mask64;
@@ -46,14 +48,16 @@ static inline int hash_compare(const hash512_t h0, const hash512_t h1, uint8_t h
 	register uint64_t *p64_1;
 	register uint8_t i;
 
-	for (i = 0; i < hlen; i += 8) {
+	hlen -= nbleft;
+	i = 0;
+	for (; i < hlen; i += 8) {
 		p64_0 = (uint64_t *) &h0[i];
 		p64_1 = (uint64_t *) &h1[i];
 		if (*p64_0 != *p64_1)
 			return 1;
 	}
 	if (nbleft) {
-		mask64 = (1 << (nbleft << 3)) - 1;
+		mask64 = ((uint64_t) 1 << (nbleft << 3)) - 1;
 		p64_0 = (uint64_t *) &h0[i];
 		p64_1 = (uint64_t *) &h1[i];
 		if ((*p64_0 & mask64) != (*p64_1 & mask64))
@@ -74,13 +78,15 @@ static inline int hash_is_zero(const hash512_t h, uint8_t hlen)
 	register uint64_t *p64;
 	register uint8_t i;
 
-	for (i = 0; i < hlen; i += 8) {
+	hlen -= nbleft;
+	i = 0;
+	for (; i < hlen; i += 8) {
 		p64 = (uint64_t *) &h[i];
 		if (*p64 != 0)
 			return 0;
 	}
 	if (nbleft) {
-		mask64 = (1 << (nbleft << 3)) - 1;
+		mask64 = ((uint64_t) 1 << (nbleft << 3)) - 1;
 		p64 = (uint64_t *) &h[i];
 		if ((*p64 & mask64) != 0)
 			return 0;
