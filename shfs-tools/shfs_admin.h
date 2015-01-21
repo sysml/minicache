@@ -7,7 +7,7 @@
 #include "tools_common.h"
 #include "shfs_defs.h"
 
-#define STR_VERSION "Simple Hash FS (SHFS) Tools: Admin v1.03"
+#define STR_VERSION "Simple Hash FS (SHFS) Tools: Admin"
 
 #define MAX_NB_TRY_BLKDEVS SHFS_MAX_NB_MEMBERS
 

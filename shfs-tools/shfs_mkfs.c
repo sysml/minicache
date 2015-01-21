@@ -37,7 +37,8 @@ static struct option long_opts[] = {
 
 static inline void print_version()
 {
-	printf("%s (build: %s %s)\n", STR_VERSION, __DATE__, __TIME__);
+	printf("%s v%u.%02u (built: %s %s)\n", STR_VERSION, SHFSv1_VERSION1, SHFSv1_VERSION0,
+	       __DATE__, __TIME__);
 }
 
 static void print_usage(char *argv0)
