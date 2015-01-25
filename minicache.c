@@ -1,4 +1,5 @@
-#include <target/minicache.h>
+#include <target/sys.h>
+#include <target/netdev.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +18,6 @@
 #include <lwip/ip_frag.h>
 #include <lwip/init.h>
 #include <lwip/stats.h>
-#include <lwip-net.h>
 
 #include "mempool.h"
 #include "http.h"
@@ -136,9 +136,7 @@ struct mcargs {
     int             stats_bd;
     blkdev_id_t     stats_bd_id;
 
-#ifdef HAVE_CTLDIR
     int             no_ctldir;
-#endif
 
     unsigned int    startup_delay;
 
@@ -362,7 +360,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
 	      }
 	      args.bd_detect = 0; /* disable bd detection */
-	      args.bd_id[args.nb_bds++] = ibd;
+	      blkdev_id_cpy(args.bd_id[args.nb_bds++], ibd);
               break;
          case 'h': /* hide xenstore control entries */
 	      args.no_ctldir = 1;
@@ -378,7 +376,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
 	      }
 	      args.stats_bd = 1; /* enable stats bd */
-	      args.stats_bd_id = ibd;
+	      blkdev_id_cpy(args.stats_bd_id, ibd);
               break;
 #endif
          case 'c': /* number of http connections */
@@ -432,17 +430,17 @@ void app_shutdown(unsigned reason)
 {
     switch (reason) {
     case TARGET_SHTDN_POWEROFF:
-	    printk("Poweroff requested\n", reason);
+	    printk("Poweroff requested\n");
 	    shall_reboot = 0;
 	    shall_shutdown = 1;
 	    break;
     case TARGET_SHTDN_REBOOT:
-	    printk("Reboot requested: %d\n", reason);
+	    printk("Reboot requested\n");
 	    shall_reboot = 1;
 	    shall_shutdown = 1;
 	    break;
     case TARGET_SHTDN_SUSPEND:
-	    printk("Suspend requested: %d\n", reason);
+	    printk("Suspend requested\n");
 	    shall_suspend = 1;
 	    break;
     default:
@@ -675,7 +673,7 @@ int main(int argc, char *argv[])
 #ifdef HAVE_CTLDIR
     register_shfs_tools(cd); /* Note: cd might be NULL */
 #else
-    register_shfs_tools(NULL);
+    register_shfs_tools();
 #endif
 #endif
 
@@ -697,7 +695,7 @@ int main(int argc, char *argv[])
 #ifdef HAVE_CTLDIR
     register_shfs_stats_tools(cd); /* Note: cd might be NULL */
 #else
-    register_shfs_stats_tools(NULL);
+    register_shfs_stats_tools();
 #endif
 
 #endif
@@ -709,7 +707,7 @@ int main(int argc, char *argv[])
 #ifdef HAVE_CTLDIR
     register_testsuite(cd); /* Note: cd might be NULL */
 #else
-    register_testsuite(NULL);
+    register_testsuite();
 #endif
 #endif
 

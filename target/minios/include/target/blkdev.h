@@ -47,9 +47,12 @@ void close_blkdev(struct blkdev *bd);
 #define blkdev_refcount(bd) ((bd)->refcount)
 
 int blkdev_id_parse(const char *id, blkdev_id_t *out);
-void blkdev_id_unparse(blkdev_id_t id, char *out, size_t maxlen);
+#define blkdev_id_unparse(id, out, maxlen) \
+     (snprintf((out), (maxlen), "%u", (id)))
 #define blkdev_id_cmp(id0, id1) \
      ((id0) != (id1))
+#define blkdev_id_cpy(dst, src) \
+     ((dst) = (src))
 #define blkdev_id(bd) ((bd)->id)
 #define blkdev_ioalign(bd) blkdev_ssize((bd))
 

@@ -3,9 +3,13 @@
 #include <stdlib.h>
 #include <target/blkdev.h>
 
-#ifndef container_of
 /* NOTE: This is copied from linux kernel.
  * It probably makes sense to move this to mini-os's kernel.h */
+#ifndef offsetof
+#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+#endif
+
+#ifndef container_of
 /**
  * container_of - cast a member of a structure out to the containing structure
  * @ptr:the pointer to the member.
@@ -25,20 +29,16 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out)
 
   /* get absolute path of file */
   if (realpath(id, *out) == NULL) {
-    dprintf("Could not resolve path %s\n", bd->id);
+    dprintf("Could not resolve path %s\n", id);
     return -errno;
   }
   return 0;
 }
 
-void blkdev_id_unparse(blkdev_id_t id, char *out, size_t maxlen)
-{
-  snprintf(out, maxlen, "%s", id);
-}
-
 struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 {
   struct blkdev *bd;
+  int err;
 
   bd = malloc(sizeof(struct blkdev));
   if (!bd) {
@@ -69,36 +69,37 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
     }
   }
 
-  bd->fd = open(bd->id, mode & (O_RDWR | O_WRONLY));
+  blkdev_id_cpy(bd->dev, id);
+  bd->fd = open(bd->dev, mode & (O_RDWR | O_WRONLY));
   if (bd->fd < 0) {
-    dprintf("Could not open %s\n", bd->id);
+    dprintf("Could not open %s\n", bd->dev);
     goto err_free_bd;
   }
 
   if (fstat(bd->fd, &bd->fd_stat) == -1) {
-    dprintf("Could not retrieve stats from %s\n", bd->id);
+    dprintf("Could not retrieve stats from %s\n", bd->dev);
     goto err_close_fd;
   }
   if (!S_ISBLK(bd->fd_stat.st_mode) && !S_ISREG(bd->fd_stat.st_mode)) {
-    dprintf("%s is not a block device or a regular file\n", bd->id);
+    dprintf("%s is not a block device or a regular file\n", bd->dev);
     errno = ENOTBLK;
     goto err_close_fd;
   }
 
   /* get device sector size in bytes */
-  bd->ssize = fd_stat.st_blksize;
-  dprintf("%s has a block size of %"PRIu32" bytes\n", path, d->ssize);
+  bd->ssize = bd->fd_stat.st_blksize;
+  dprintf("%s has a block size of %"PRIu32" bytes\n", bd->dev, bd->ssize);
 
   /* get device size in bytes */
-  if (S_ISBLK(fd_stat.st_mode)) {
-    err = ioctl(d->fd, BLKGETSIZE64, &d->size);
+  if (S_ISBLK(bd->fd_stat.st_mode)) {
+    err = ioctl(bd->fd, BLKGETSIZE64, &bd->size);
     if (err) {
       unsigned long size32;
 
       dprintf("BLKGETSIZE64 failed. Trying BLKGETSIZE\n");
-      err = ioctl(d->fd, BLKGETSIZE, &size32);
+      err = ioctl(bd->fd, BLKGETSIZE, &size32);
       if (err) {
-	dprintf("Could not query device size from %s\n", path);
+	dprintf("Could not query device size from %s\n", bd->dev);
 	goto err_close_fd;
       }
       bd->size = ((uint64_t) size32) / bd->ssize;
@@ -106,7 +107,7 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   } else {
     bd->size = ((uint64_t) bd->fd_stat.st_size) / bd->ssize;
   }
-  dprintf("%s has a size of %"PRIu64" bytes\n", path, (uint64_t) (bd->size * bd->ssize));
+  dprintf("%s has a size of %"PRIu64" bytes\n", bd->dev, (uint64_t) (bd->size * bd->ssize));
 
   bd->reqpool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _blkdev_req));
   if (!bd->reqpool) {
@@ -164,6 +165,7 @@ void _blkdev_io_cb(io_context_t ctx, struct iocb *aiocb, long res, long res2)
 {
   struct mempool_obj *robj;
   struct _blkdev_req *req;
+  int ret = 0;
 
   req = container_of(aiocb, struct _blkdev_req, aiocb);
   robj = req->p_obj;

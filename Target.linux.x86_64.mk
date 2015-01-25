@@ -78,7 +78,7 @@ endif
 ###########################################################################
 
 CONFIG_CTLDIR = n # ctldir is not supported on linuxapp
-
+CONFIG_SHELL = n # shell is not supported on linuxapp, yet
 
 #################################
 

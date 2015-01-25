@@ -34,11 +34,6 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out)
   return 0;
 }
 
-void blkdev_id_unparse(blkdev_id_t id, char *out, size_t maxlen)
-{
-  snprintf(out, maxlen, "%u", id);
-}
-
 unsigned int detect_blkdevs(blkdev_id_t ids_out[], unsigned int max_nb)
 {
   register unsigned int i = 0;

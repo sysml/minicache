@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <libaio.h>
 #include <semaphore.h>
 #include <mempool.h>
@@ -50,9 +51,12 @@ void close_blkdev(struct blkdev *bd);
 #define blkdev_refcount(bd) ((bd)->refcount)
 
 int blkdev_id_parse(const char *id, blkdev_id_t *out);
-void blkdev_id_unparse(blkdev_id_t id, char *out, size_t maxlen);
+#define blkdev_id_unparse(id, out, maxlen) \
+     (snprintf((out), (maxlen), "%s", (id)))
 #define blkdev_id_cmp(id0, id1) \
      (strncmp((id0), (id1), PATH_MAX))
+#define blkdev_id_cpy(dst, src) \
+     (strncpy((dst), (src), PATH_MAX))
 #define blkdev_id(bd) ((bd)->dev)
 #define blkdev_ioalign(bd) blkdev_ssize((bd))
 

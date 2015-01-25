@@ -17,5 +17,22 @@
 
 #define ASSERT(x) assert((x))
 #define BUG_ON(x) assert(!((x)))
+#define printk(...) printf(__VA_ARGS__)
+
+/* shutdown */
+#define TARGET_SHTDN_POWEROFF 0
+#define TARGET_SHTDN_REBOOT 1
+#define TARGET_SHTDN_SUSPEND 2
+
+#define target_suspend() \
+  do {} while(0)
+
+#define target_halt() \
+  do {} while(0)
+
+#define target_reboot() \
+  do {} while(0)
+
+void app_shutdown(unsigned reason);
 
 #endif /* _SYS_H_ */
