@@ -98,7 +98,7 @@ I recommend to build cosmos with 'xl'.
 Additionally, I recommend to link the cosmos binary to a directory that is
 included in the command search of your shell:
 
-	ln -sv $WORKSPACE/cosmos/dist/bin/cosmos /usr/local/bin/
+    ln -sv $WORKSPACE/cosmos/dist/bin/cosmos /usr/local/bin/
 
 
 ### Download and Build MiniCache
