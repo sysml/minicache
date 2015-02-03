@@ -33,7 +33,7 @@ following:
     cd xen
     git checkout stable-4.4
     ./configure
-    make world
+    make xen tools
     cd ..
 
 Note: If Xen is not installed on your system yet, please install it as well.
@@ -98,7 +98,7 @@ I recommend to build cosmos with 'xl'.
 Additionally, I recommend to link the cosmos binary to a directory that is
 included in the command search of your shell:
 
-    ls -sv $WORKSPACE/cosmos/build/bin/cosmo /usr/local/bin/
+	ln -sv $WORKSPACE/cosmos/dist/bin/cosmos /usr/local/bin/
 
 
 ### Download and Build MiniCache
