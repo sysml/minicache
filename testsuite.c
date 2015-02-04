@@ -192,7 +192,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	shfs_fio_size(f, &fsize);
 
 	buflen = shfs_vol.chunksize;
-	buf = _xmalloc(shfs_vol.chunksize, 8);
+	buf = aligned_alloc(8, shfs_vol.chunksize);
 	if (!buf) {
 		fprintf(cio, "Out of memory\n");
 		ret = -1;
@@ -259,9 +259,11 @@ int register_testsuite(void)
 	}
 #endif
 
+#ifdef HAVE_SHELL
 	/* shell commands (ignore errors) */
 	shell_register_cmd("netdf", shcmd_netdf);
 	shell_register_cmd("ioperf", shcmd_ioperf);
+#endif
 
 	return 0;
 }

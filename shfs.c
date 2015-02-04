@@ -265,14 +265,14 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 			close_blkdev(detected_member[m].bd);
 	}
 
-	xfree(chk0);
+	free(chk0);
 	return 0;
 
  err_close_bds:
 	for (m = 0; m < nb_detected_members; ++m)
 		close_blkdev(detected_member[m].bd);
  err_free_chk0:
-	xfree(chk0);
+	free(chk0);
  err_out:
 	return ret;
 }
@@ -320,7 +320,7 @@ static int load_vol_hconf(void)
 	}
 
  out_free_chk1:
-	xfree(chk1);
+	free(chk1);
  out:
 	return ret;
 }
@@ -464,9 +464,9 @@ static int load_vol_htable(void)
  err_free_chunkcache:
 	for (i = 0; i < shfs_vol.htable_len; ++i) {
 		if (shfs_vol.htable_chunk_cache[i])
-			xfree(shfs_vol.htable_chunk_cache[i]);
+			free(shfs_vol.htable_chunk_cache[i]);
 	}
-	xfree(shfs_vol.htable_chunk_cache);
+	free(shfs_vol.htable_chunk_cache);
  err_out:
 	return ret;
 }

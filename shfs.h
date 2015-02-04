@@ -10,8 +10,9 @@
 #include <target/sys.h>
 #include <target/blkdev.h>
 #include <stdint.h>
-#include <semaphore.h>
-#include <mempool.h>
+
+#include "mempool.h"
+#include "likely.h"
 
 #include "shfs_defs.h"
 #ifdef SHFS_STATS

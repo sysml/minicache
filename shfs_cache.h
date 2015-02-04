@@ -17,10 +17,12 @@
                          * allocating more buffers on demand (via _xmalloc). When
 			 * SHFS_GROW_THRESHOLD is defined, left system memory 
 			 * is checked before the allocation */
+#ifdef __MINIOS__
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* 256KB */
 #else
 #define SHFS_CACHE_GROW_THRESHOLD (1 * 1024 * 1024) /* 1MB */
+#endif
 #endif
 
 struct shfs_cache_entry {

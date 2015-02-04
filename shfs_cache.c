@@ -10,6 +10,7 @@
 
 #define MIN_ALIGN 8
 
+#ifdef SHFS_CACHE_GROW_THRESHOLD
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define shfs_cache_free_mem() \
 	({ struct mallinfo minfo = mallinfo(); \
@@ -19,6 +20,7 @@
 #else
 #define shfs_cache_free_mem() \
 	(mm_free_pages() << PAGE_SHIFT) /* free pages in page allocator */
+#endif
 #endif
 
 #define shfs_cache_notify_retry() \
@@ -88,7 +90,7 @@ int shfs_alloc_cache(void (*cb_retry)(void))
     htlen   = 1 << htorder;
 
     cc_size = sizeof(*cc) + (htlen * sizeof(struct shfs_cache_htel));
-    cc = _xmalloc(cc_size, MIN_ALIGN);
+    cc = aligned_alloc(MIN_ALIGN, cc_size);
     if (!cc) {
 	    ret = -ENOMEM;
 	    goto err_out;
@@ -130,7 +132,7 @@ int shfs_alloc_cache(void (*cb_retry)(void))
     return 0;
 
  err_free_cc:
-    xfree(cc);
+    free(cc);
  err_out:
     return ret;
 }
@@ -160,13 +162,13 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 	return NULL;
 #endif
     /* try to malloc a buffer from heap */
-    buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+    buf = aligned_alloc(shfs_vol.ioalign, shfs_vol.chunksize);
     if (!buf) {
 	return NULL;
     }
-    cce = _xmalloc(sizeof(*cce), MIN_ALIGN);
+    cce = aligned_alloc(MIN_ALIGN, sizeof(*cce));
     if (!cce) {
-	xfree(buf);
+	free(buf);
 	return NULL;
     }
     cce->pobj = NULL;
@@ -186,8 +188,8 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 #ifdef SHFS_CACHE_GROW
 static inline void shfs_cache_put_cce(struct shfs_cache_entry *cce) {
 	if (!cce->pobj) {
-		xfree(cce->buffer);
-		xfree(cce);
+		free(cce->buffer);
+		free(cce);
 	} else {
 		mempool_put(cce->pobj);
 	}
@@ -276,7 +278,7 @@ void shfs_free_cache(void)
     shfs_cache_flush_alist();
     free_mempool(shfs_vol.chunkcache->pool); /* will fail with an assertion
                                               * if objects were not put back to the pool already */
-    xfree(shfs_vol.chunkcache);
+    free(shfs_vol.chunkcache);
     shfs_vol.chunkcache = NULL;
 }
 

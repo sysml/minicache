@@ -35,4 +35,13 @@
 
 void app_shutdown(unsigned reason);
 
+/* scheduling */
+#define msleep(ms) usleep((((ms)) * 1000l))
+
+//#include <sched.h>
+//#define schedule() sched_yield()
+
+#define schedule() \
+  do {} while(0)
+
 #endif /* _SYS_H_ */

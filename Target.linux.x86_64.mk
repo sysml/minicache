@@ -79,6 +79,9 @@ endif
 
 CONFIG_CTLDIR = n # ctldir is not supported on linuxapp
 CONFIG_SHELL = n # shell is not supported on linuxapp, yet
+CONFIG_SHFS_STATS = n # no stats
+
+include Minicache.mk
 
 #################################
 
@@ -175,36 +178,22 @@ ARCHFILES=$(wildcard $(LWIPARCH)/*.c $(LWIPARCH)/netif/tapif.c $(LWIPARCH)/netif
 
 # APPFILES: Applications.
 APPDIRS=.:target/$(TARGET)
-APPFILES=$(addprefix $(BUILDDIR)/,$(MCOBJS))
+APPFILES=$(MCOBJS)
+APPFILESW=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILES)))
+APPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESW:.c=.o)))
 
 # LWIPFILES: All the above.
 LWIPFILES=$(COREFILES) $(CORE4FILES) $(CORE6FILES) $(SNMPFILES) $(APIFILES) $(NETIFFILES) $(ARCHFILES)
 LWIPFILESW=$(wildcard $(LWIPFILES))
-LWIPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(LWIPFILESW:.c=.o)))
+LWIPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(LWIPFILES:.c=.o)))
 
 LWIPLIB=$(BUILDDIR)/liblwip.a
 APPLIB=$(BUILDDIR)/minicache.a
-APPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILES:.c=.o)))
-
-default: all
-
-$(BUILDDIR):
-	$(MKDIR) $@
 
 # set source search path
 VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(APPDIRS)
 
-$(BUILDDIR)/%.o: %.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(BUILDDIR)/%.a: %.o
-	$(AR) $(ARFLAGS) -o $@ $^
-
-.PHONY: all
-all: $(BUILDDIR)/$(MINICACHE_OUT)
-
-.PHONY: build
-build: $(BUILDDIR)/.depend$(BUILDDIR)/$(MINICACHE_OUT)
+#include $(BUILDDIR)/.depend
 
 .PHONY: clean
 clean:
@@ -214,18 +203,29 @@ clean:
 distclean:
 	$(RMDIR) $(BUILDDIR)
 
-$(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPFILES) $(APPFILES)
-	$(CCDEP) $(CFLAGS) -MM $^ > $(BUILDDIR)/.depend || $(RM) $(BUILDDIR)/.depend
+.PHONY: all
+all: $(BUILDDIR)/$(MINICACHE_OUT)
 
-include $(BUILDDIR)/.depend
+.PHONY: build
+build: $(BUILDDIR) $(BUILDDIR)/.depend $(BUILDDIR)/$(MINICACHE_OUT)
+
+$(BUILDDIR):
+	$(MKDIR) $@
+
+$(BUILDDIR)/%.o: %.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILDDIR)/%.a: %.o
+	$(AR) $(ARFLAGS) -o $@ $^
+
+$(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPFILES) $(APPFILES) | $(BUILDDIR)
+	$(CCDEP) $(CFLAGS) -MM $^ > $(BUILDDIR)/.depend || $(RM) $(BUILDDIR)/.depend
 
 $(APPLIB): $(APPOBJS)
 	$(AR) $(ARFLAGS) $(APPLIB) $?
 
 $(LWIPLIB): $(LWIPOBJS)
 	$(AR) $(ARFLAGS) $(LWIPLIB) $?
-
-
 
 .PHONY: $(BUILDDIR)/$(MINICACHE_OUT)
 $(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPLIB) $(APPFILES)

@@ -219,7 +219,7 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 		return -EINVAL;
 
 	/* pick chunk I/O buffer from pool */
-	chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+	chk_buf = aligned_alloc(shfs_vol.ioalign, shfs_vol.chunksize);
 	if (!chk_buf)
 		return -ENOMEM;
 
@@ -246,7 +246,7 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	}
 
  out:
-	xfree(chk_buf);
+	free(chk_buf);
 	return ret;
 }
 

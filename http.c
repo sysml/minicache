@@ -17,7 +17,7 @@
 #endif
 #include "dlist.h"
 
-#ifdef HTTP_STATUS_CMD
+#if defined HAVE_SHELL && defined HTTP_INFO
 #include "shell.h"
 #endif
 
@@ -318,7 +318,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	dlist_init_head(hs->ioretry_chain);
 
 	dprintf("HTTP server %p initialized\n", hs);
-#ifdef HTTP_INFO
+#if defined HAVE_SHELL && defined HTTP_INFO
 	shell_register_cmd("http-info", shcmd_http_info);
 #endif
 	return ret;

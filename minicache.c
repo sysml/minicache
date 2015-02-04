@@ -20,6 +20,7 @@
 #include <lwip/init.h>
 #include <lwip/stats.h>
 
+#include "likely.h"
 #include "mempool.h"
 #include "http.h"
 #ifdef HAVE_SHELL

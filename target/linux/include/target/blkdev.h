@@ -126,7 +126,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 #define blkdev_async_read(bd, start, len, buffer, cb, cb_argp)	  \
 	blkdev_async_io((bd), (start), (len), 0, (buffer), (cb), (cb_argp))
 
-#define blkdev_poll_req(bd) blkfront_aio_poll((bd)->dev);
+#define blkdev_poll_req(bd) do {} while(0) /* TODO */
 
 /**
  * Sync I/O
