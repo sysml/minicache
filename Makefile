@@ -13,5 +13,4 @@ endif
 include Config.mk
 
 # build target specific configuration
-include Minicache.mk
 include Target.$(TARGET).$(ARCH).mk

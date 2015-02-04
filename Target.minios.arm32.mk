@@ -66,6 +66,8 @@ CONFIG_DEBUG_LWIP_MALLOC	?= n
 ######################################
 ## Stub Domain
 ######################################
+include Minicache.mk
+
 stubdom		 = y
 STUBDOM_NAME	 = minicache
 STUBDOM_ROOT	 = $(realpath .)
