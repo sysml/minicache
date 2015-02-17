@@ -107,7 +107,7 @@ CFLAGS=-g -D$(TARGET) -DLWIP_DEBUG $(MCCFLAGS) \
 # -Wunreachable-code
 # -ansi
 # -std=c89
-LDFLAGS=-pthread -lutil
+LDFLAGS=-pthread -lutil -lrt
 ARFLAGS=rs
 
 CONTRIBDIR		 = ../lwip-contrib
@@ -119,8 +119,7 @@ MINICACHE_OUT		?= minicache_$(ARCH)
 
 CFLAGS:=$(CFLAGS) \
 	-I. -Itarget/$(TARGET)/include \
-	-I$(LWIPDIR)/include -I$(LWIPARCH) -I$(LWIPARCH)/include -I$(LWIPDIR) \
-	-laio
+	-I$(LWIPDIR)/include -I$(LWIPARCH) -I$(LWIPARCH)/include -I$(LWIPDIR)
 
 # COREFILES, CORE4FILES: The minimum set of files needed for lwIP.
 COREDIRS=$(LWIPDIR)/core

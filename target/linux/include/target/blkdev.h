@@ -1,14 +1,19 @@
 #ifndef _BLKDEV_H_
 #define _BLKDEV_H_
 
-#include <linux/fs.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <libaio.h>
+#include <unistd.h>
+#include <aio.h>
 #include <semaphore.h>
 #include <mempool.h>
+#include <linux/fs.h>
+
+#ifndef _POSIX_ASYNCHRONOUS_IO
+#error "POSIX_ASYNCHRONOUS_IO is not supported by your target"
+#endif
 
 #define MAX_REQUESTS 1024
 #define DEFAULT_SSIZE 512 /* lower bound for opened files */
@@ -27,7 +32,6 @@ struct blkdev {
   sector_t size;
   uint32_t ssize;
   struct mempool *reqpool;
-  io_context_t ctxp;
 
   int exclusive;
   unsigned int refcount;
@@ -38,7 +42,7 @@ struct blkdev {
 struct _blkdev_req {
   struct mempool_obj *p_obj; /* reference to dependent memory pool object */
   struct blkdev *bd;
-  struct iocb aiocb;
+  struct aiocb aiocb;
   sector_t sector;
   sector_t nb_sectors;
   int write;
@@ -73,13 +77,14 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out);
  *
  * Note: target buffer has to be aligned to device sector size
  */
-void _blkdev_io_cb(io_context_t ctx, struct iocb *iocb, long res, long res2);
+void _blkdev_io_cb(struct aiocb *aiocb, long res, long res2);
 
 static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sector_t len,
                                           int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {
   struct mempool_obj *robj;
   struct _blkdev_req *req;
+  int ret = 0;
 
   robj = mempool_pick(bd->reqpool);
   if (unlikely(!robj))
@@ -90,11 +95,12 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
 
   memset(&req->aiocb, 0, sizeof(req->aiocb));
   req->aiocb.aio_fildes = bd->fd;
-  req->aiocb.aio_lio_opcode = write ? IO_CMD_PWRITE : IO_CMD_PREAD;
-  //req->aiocb.reqprio = 0;
-  req->aiocb.u.c.buf = buffer;
-  req->aiocb.u.c.offset = (off_t) (start * blkdev_ssize(bd));
-  req->aiocb.u.c.nbytes = len * blkdev_ssize(bd);
+  req->aiocb.aio_buf = buffer;
+  req->aiocb.aio_offset = (off_t) (start * blkdev_ssize(bd));
+  req->aiocb.aio_nbytes = len * blkdev_ssize(bd);
+  req->aiocb.aio_reqprio = 0;
+  req->aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
+  req->aiocb.aio_lio_opcode = 0; //write ? LIO_WRITE : LIO_READ;
   //req->aiocb.aio_cb = _blkdev_async_io_cb;
   req->bd = bd;
   req->sector = start;
@@ -103,8 +109,11 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req->cb = cb;
   req->cb_argp = cb_argp;
 
-  blkfront_aio(&(req->aiocb), write);
-  return 0;
+  if (write)
+    ret = aio_write(&req->aiocb);
+  else
+    ret = aio_read(&req->aiocb);
+  return ret;
 }
 #define blkdev_async_write_nocheck(bd, start, len, buffer, cb, cb_argp) \
 	blkdev_async_io_nocheck((bd), (start), (len), 1, (buffer), (cb), (cb_argp))

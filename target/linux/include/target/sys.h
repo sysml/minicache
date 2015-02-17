@@ -41,6 +41,12 @@ void app_shutdown(unsigned reason);
 //#include <sched.h>
 //#define schedule() sched_yield()
 
+/* semaphore */
+#define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphres? */
+#define up(s) sem_post((s))
+#define down(s) sem_wait((s))
+#define trydown(s) sem_wait((s)) /* FIXME */
+
 #define schedule() \
   do {} while(0)
 

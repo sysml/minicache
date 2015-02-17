@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <target/blkdev.h>
 
 /* NOTE: This is copied from linux kernel.
@@ -114,12 +115,6 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
     errno = ENOMEM;
     goto err_close_fd;
   }
-
-  /* initialize libAIO */
-  if (setup_io(MAX_REQUESTS, &bd->ctxp) < 0) {
-    goto err_free_reqpool;
-  }
-
   bd->mode = mode;
   bd->refcount = 1;
   bd->exclusive = !!(mode & O_EXCL);
@@ -154,14 +149,15 @@ void close_blkdev(struct blkdev *bd)
     else
       _open_bd_list = bd->_next;
 
-    BUG_ON(io_destroy(bd->ctxp) < 0);
+    /* TODO: check for enqueued IO */
+
     free_mempool(bd->reqpool);
     close(bd->fd);
     free(bd);
   }
 }
 
-void _blkdev_io_cb(io_context_t ctx, struct iocb *aiocb, long res, long res2)
+void _blkdev_io_cb(struct aiocb *aiocb, long res, long res2)
 {
   struct mempool_obj *robj;
   struct _blkdev_req *req;
@@ -170,6 +166,7 @@ void _blkdev_io_cb(io_context_t ctx, struct iocb *aiocb, long res, long res2)
   req = container_of(aiocb, struct _blkdev_req, aiocb);
   robj = req->p_obj;
 
+  ret = aio_return(aiocb) == aiocb->aio_nbytes ? 0 : -1;
   if (req->cb)
     req->cb(ret, req->cb_argp); /* user callback */
 
