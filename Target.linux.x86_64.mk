@@ -107,7 +107,7 @@ CFLAGS=-g -D$(TARGET) -DLWIP_DEBUG $(MCCFLAGS) \
 # -Wunreachable-code
 # -ansi
 # -std=c89
-LDFLAGS=-pthread -lutil -lrt
+LDFLAGS=-pthread -lrt #-lutil
 ARFLAGS=rs
 
 CONTRIBDIR		 = ../lwip-contrib
@@ -139,12 +139,6 @@ CORE6FILES=$(LWIPDIR)/core/ipv6/dhcp6.c $(LWIPDIR)/core/ipv6/ethip6.c \
 	$(LWIPDIR)/core/ipv6/ip6_addr.c $(LWIPDIR)/core/ipv6/ip6_frag.c \
 	$(LWIPDIR)/core/ipv6/mld6.c $(LWIPDIR)/core/ipv6/nd6.c
 
-# SNMPFILES: Extra SNMPv1 agent
-#SNMPDIRS=$(LWIPDIR)/core/snmp
-#SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
-	$(LWIPDIR)/core/snmp/mib2.c $(LWIPDIR)/core/snmp/mib_structs.c \
-#	$(LWIPDIR)/core/snmp/msg_in.c $(LWIPDIR)/core/snmp/msg_out.c
-
 # APIFILES: The files which implement the sequential and socket APIs.
 APIDIRS=$(LWIPDIR)/api
 APIFILES=$(LWIPDIR)/api/api_lib.c $(LWIPDIR)/api/api_msg.c $(LWIPDIR)/api/err.c \
@@ -171,6 +165,12 @@ NETIFFILES+=$(LWIPDIR)/netif/ppp/auth.c $(LWIPDIR)/netif/ppp/ccp.c \
 	$(LWIPDIR)/netif/ppp/polarssl/des.c $(LWIPDIR)/netif/ppp/polarssl/md4.c \
 	$(LWIPDIR)/netif/ppp/polarssl/md5.c $(LWIPDIR)/netif/ppp/polarssl/sha1.c \
 	$(LWIPARCH)/netif/sio.c
+# SNMPFILES: Extra SNMPv1 agent
+SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
+	$(LWIPDIR)/core/snmp/mib2.c $(LWIPDIR)/core/snmp/mib_structs.c \
+	$(LWIPDIR)/core/snmp/msg_in.c $(LWIPDIR)/core/snmp/msg_out.c \
+	$(LWIPARCH)/lwip_prvmib.c
+SNMPDIRS=$(LWIPDIR)/core/snmp
 
 # ARCHFILES: Architecture specific files.
 ARCHFILES=$(wildcard $(LWIPARCH)/*.c $(LWIPARCH)/netif/tapif.c $(LWIPARCH)/netif/tunif.c $(LWIPARCH)/netif/unixif.c $(LWIPARCH)/netif/list.c $(LWIPARCH)/netif/tcpdump.c)
@@ -192,7 +192,7 @@ APPLIB=$(BUILDDIR)/minicache.a
 # set source search path
 VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(APPDIRS)
 
-#include $(BUILDDIR)/.depend
+include $(BUILDDIR)/.depend
 
 .PHONY: clean
 clean:
@@ -228,4 +228,4 @@ $(LWIPLIB): $(LWIPOBJS)
 
 .PHONY: $(BUILDDIR)/$(MINICACHE_OUT)
 $(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPLIB) $(APPFILES)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT) $(APPLIB) $(LWIPLIB)
+	$(CC) $(APPLIB) $(LWIPLIB) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT)

@@ -172,3 +172,11 @@ void _blkdev_io_cb(struct aiocb *aiocb, long res, long res2)
 
   mempool_put(robj);
 }
+
+void _blkdev_sync_io_cb(int ret, void *argp)
+{
+	struct _blkdev_sync_io_sync *iosync = argp;
+
+	iosync->ret = ret;
+	up(&iosync->sem);
+}

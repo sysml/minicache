@@ -13,11 +13,12 @@
                                        * if 0, CACHE_GROW has to be enabled */
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
 
+#ifdef __MINIOS__
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
                          * allocating more buffers on demand (via _xmalloc). When
 			 * SHFS_GROW_THRESHOLD is defined, left system memory 
 			 * is checked before the allocation */
-#ifdef __MINIOS__
+
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* 256KB */
 #else
