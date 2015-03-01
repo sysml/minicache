@@ -1315,10 +1315,6 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "UP ");
 		if (flags & NETIF_FLAG_BROADCAST)
 			fprintf(cio, "BROADCAST ");
-		if (flags & NETIF_FLAG_POINTTOPOINT)
-			fprintf(cio, "P2P ");
-		if (flags & NETIF_FLAG_DHCP)
-			fprintf(cio, "DHCP ");
 		if (flags & NETIF_FLAG_ETHARP)
 			fprintf(cio, "ARP ");
 		if (flags & NETIF_FLAG_ETHERNET)
