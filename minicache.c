@@ -40,6 +40,17 @@
 
 #include "debug.h"
 
+/* r = a - b */
+#define TIMEVAL_SUB(r, a, b) \
+	do {								\
+		while ((a).tv_usec < (b).tv_usec) {			\
+			(a).tv_usec += (typeof ((a).tv_usec)) 1000000;	\
+			(a).tv_sec--;					\
+		}							\
+		(r).tv_usec = (a).tv_usec - (b).tv_usec;		\
+		(r).tv_sec = (a).tv_sec - (b).tv_sec;			\
+	} while(0)
+
 /* runs (func) a command on a timeout */
 #define TIMED(ts_now, ts_tmr, interval, func)                        \
 	do {                                                         \
@@ -59,12 +70,7 @@
     struct timeval now;				\
 							\
     gettimeofday(&now, NULL);				\
-    if (now.tv_usec < now.tv_usec) {			\
-      now.tv_usec += 1000000l;				\
-      now.tv_sec--;					\
-    }							\
-    (var).tv_sec = now.tv_sec - (var).tv_sec;		\
-    (var).tv_usec = now.tv_usec - (var).tv_usec;	\
+    TIMEVAL_SUB((var), now, (var));			\
   } while(0)
 #define TT_PRINT(desc, var)			\
   printk(" %-32s: %lu.%06lus\n",		\
