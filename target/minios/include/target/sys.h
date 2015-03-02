@@ -7,8 +7,10 @@
 #include <mini-os/lib.h>
 #include <mini-os/kernel.h>
 
-#define aligned_alloc(align, size) \
-        ((void *) _xmalloc((size), (align)))
+#define target_malloc(align, size) \
+  ((void *) _xmalloc((size), (align)))
+#define target_free(ptr) \
+  xfree(ptr)
 
 /* semaphores */
 #include <mini-os/semaphore.h>

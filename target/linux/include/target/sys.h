@@ -1,6 +1,7 @@
 #ifndef _SYS_H_
 #define _SYS_H_
 
+/* #include <stdio.h> */
 #include <stdlib.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -9,6 +10,11 @@
 
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1<<(PAGE_SHIFT))
+
+#define target_malloc(align, size) \
+  malloc(size)
+#define target_free(ptr) \
+  free(ptr)
 
 #define local_irq_save(flags) \
   (flags = 0)
@@ -25,27 +31,32 @@
 #define TARGET_SHTDN_SUSPEND 2
 
 #define target_suspend() \
-  do {} while(0)
+  do { \
+    printk("WARNING: 'suspend' is not supported by platform; ignore\n"); \
+  } while(0)
 
 #define target_halt() \
-  do {} while(0)
+  exit(0)
 
 #define target_reboot() \
-  do {} while(0)
+  do { \
+    printk("WARNING: 'reboot' is not supported by platform; use 'halt'\n"); \
+    target_halt(); \
+  } while(0)
 
 void app_shutdown(unsigned reason);
 
 /* scheduling */
 #define msleep(ms) usleep((((ms)) * 1000l))
 
-//#include <sched.h>
-//#define schedule() sched_yield()
+/* #include <sched.h>
+ * #define schedule() sched_yield() */
 
 /* semaphore */
 #define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphres? */
 #define up(s) sem_post((s))
 #define down(s) sem_wait((s))
-#define trydown(s) sem_wait((s)) /* FIXME */
+#define trydown(s) down((s)) /* FIXME */
 
 #define schedule() \
   do {} while(0)

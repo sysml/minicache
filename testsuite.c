@@ -32,8 +32,6 @@ static inline int parse_ipv4(struct ip_addr *out, const char *buf)
 	return 0;
 }
 
-
-
 static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 {
 	SHFS_FD f;
@@ -192,7 +190,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	shfs_fio_size(f, &fsize);
 
 	buflen = shfs_vol.chunksize;
-	buf = aligned_alloc(8, shfs_vol.chunksize);
+	buf = target_malloc(8, shfs_vol.chunksize);
 	if (!buf) {
 		fprintf(cio, "Out of memory\n");
 		ret = -1;
@@ -240,6 +238,8 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "(%lu B/s)\n", bps);
 		}
 	}
+
+	target_free(buf);
  out_close_f:
 	shfs_fio_close(f);
  out:

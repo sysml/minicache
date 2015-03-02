@@ -89,7 +89,7 @@ struct ring *alloc_ring(uint32_t size)
 
     ASSERT(size > 0 && POWER_OF_2(size));
 
-    r = aligned_alloc(CACHELINE_SIZE, h_size + (sizeof(void *) * size));
+    r = target_malloc(CACHELINE_SIZE, h_size + (sizeof(void *) * size));
     if (!r) {
         errno = ENOMEM;
         return NULL;
@@ -104,5 +104,5 @@ struct ring *alloc_ring(uint32_t size)
 
 void free_ring(struct ring *r)
 {
-    free(r);
+    target_free(r);
 }

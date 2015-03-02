@@ -90,7 +90,7 @@ int shfs_alloc_cache(void (*cb_retry)(void))
     htlen   = 1 << htorder;
 
     cc_size = sizeof(*cc) + (htlen * sizeof(struct shfs_cache_htel));
-    cc = aligned_alloc(MIN_ALIGN, cc_size);
+    cc = target_malloc(MIN_ALIGN, cc_size);
     if (!cc) {
 	    ret = -ENOMEM;
 	    goto err_out;
@@ -132,7 +132,7 @@ int shfs_alloc_cache(void (*cb_retry)(void))
     return 0;
 
  err_free_cc:
-    free(cc);
+    target_free(cc);
  err_out:
     return ret;
 }
@@ -162,13 +162,13 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 	return NULL;
 #endif
     /* try to malloc a buffer from heap */
-    buf = aligned_alloc(shfs_vol.ioalign, shfs_vol.chunksize);
+    buf = target_malloc(shfs_vol.ioalign, shfs_vol.chunksize);
     if (!buf) {
 	return NULL;
     }
-    cce = aligned_alloc(MIN_ALIGN, sizeof(*cce));
+    cce = target_malloc(MIN_ALIGN, sizeof(*cce));
     if (!cce) {
-	free(buf);
+	target_free(buf);
 	return NULL;
     }
     cce->pobj = NULL;
@@ -188,8 +188,8 @@ static inline struct shfs_cache_entry *shfs_cache_pick_cce(void) {
 #ifdef SHFS_CACHE_GROW
 static inline void shfs_cache_put_cce(struct shfs_cache_entry *cce) {
 	if (!cce->pobj) {
-		free(cce->buffer);
-		free(cce);
+		target_free(cce->buffer);
+		target_free(cce);
 	} else {
 		mempool_put(cce->pobj);
 	}
@@ -278,7 +278,7 @@ void shfs_free_cache(void)
     shfs_cache_flush_alist();
     free_mempool(shfs_vol.chunkcache->pool); /* will fail with an assertion
                                               * if objects were not put back to the pool already */
-    free(shfs_vol.chunkcache);
+    target_free(shfs_vol.chunkcache);
     shfs_vol.chunkcache = NULL;
 }
 

@@ -73,7 +73,7 @@ struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data
   o_size = align_up(o_size, obj_data_align);
 
   /* allocate pool */
-  p = aligned_alloc(max(PAGE_SIZE, obj_data_align), h_size + (o_size * nb_objs));
+  p = target_malloc(max(PAGE_SIZE, obj_data_align), h_size + (o_size * nb_objs));
   if (!p) {
 	errno = ENOMEM;
 	goto error;
@@ -144,7 +144,7 @@ struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data
   return p;
 
  error_free_p:
-  free(p);
+  target_free(p);
  error:
   return NULL;
 }
@@ -154,6 +154,6 @@ void free_mempool(struct mempool *p)
   if (p) {
 	BUG_ON(ring_count(p->free_objs) != p->nb_objs); /* some objects of this pool may be still in use */
 	free_ring(p->free_objs);
-	free(p);
+	target_free(p);
   }
 }

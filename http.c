@@ -261,7 +261,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	err_t err;
 	int ret = 0;
 
-	hs = aligned_alloc(CACHELINE_SIZE, sizeof(*hs));
+	hs = target_malloc(CACHELINE_SIZE, sizeof(*hs));
 	if (!hs) {
 		ret = -ENOMEM;
 		goto err_out;
@@ -330,7 +330,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
  err_free_sesspool:
 	free_mempool(hs->sess_pool);
  err_free_hs:
-	free(hs);
+	target_free(hs);
  err_out:
 	return ret;
 }
@@ -348,7 +348,7 @@ void exit_http(void)
 	tcp_close(hs->tpcb);
 	free_mempool(hs->req_pool);
 	free_mempool(hs->sess_pool);
-	free(hs);
+	target_free(hs);
 	hs = NULL;
 }
 

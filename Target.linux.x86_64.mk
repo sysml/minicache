@@ -80,6 +80,10 @@ endif
 CONFIG_CTLDIR = n # ctldir is not supported on linuxapp
 CONFIG_SHELL = n # shell is not supported on linuxapp, yet
 CONFIG_SHFS_STATS = n # no stats
+CONFIG_TESTSUITE = n # no testuite
+
+#CONFIG_MINICACHE_MINDER_PRINT = y
+
 
 include Minicache.mk
 
@@ -95,7 +99,7 @@ TOUCH		 = touch
 CCDEP=gcc
 CC=gcc
 
-CFLAGS=-g -D$(TARGET) -DLWIP_DEBUG $(MCCFLAGS) \
+CFLAGS=-g -D$(TARGET) $(MCCFLAGS) \
 	-Wparentheses -Wsequence-point -Wswitch-default \
 	-Wundef -Wpointer-arith -Wbad-function-cast \
 	-Wwrite-strings -Wold-style-definition \
