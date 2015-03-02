@@ -70,7 +70,7 @@ struct tunif {
 /* Forward declarations. */
 static void  tunif_input(struct netif *netif);
 static err_t tunif_output(struct netif *netif, struct pbuf *p,
-			       ip_addr_t *ipaddr);
+                          const ip_addr_t *ipaddr);
 
 static void tunif_thread(void *data);
 
@@ -241,7 +241,7 @@ tunif_thread(void *arg)
 /*-----------------------------------------------------------------------------------*/
 static err_t
 tunif_output(struct netif *netif, struct pbuf *p,
-		  ip_addr_t *ipaddr)
+             const ip_addr_t *ipaddr)
 {
   struct tunif *tunif;
   LWIP_UNUSED_ARG(ipaddr);

@@ -282,7 +282,7 @@ unixif_thread2(void *arg)
 static void unixif_output_timeout(void *arg);
 
 static err_t
-unixif_output(struct netif *netif, struct pbuf *p, ip_addr_t *ipaddr)
+unixif_output(struct netif *netif, struct pbuf *p, const ip_addr_t *ipaddr)
 {
   struct unixif *unixif;
   struct unixif_buf *buf;
