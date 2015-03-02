@@ -1319,6 +1319,8 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "ARP ");
 		if (flags & NETIF_FLAG_ETHERNET)
 			fprintf(cio, "ETHERNET ");
+		if (netif->dhcp)
+			fprintf(cio, "DHCP ");
 		fprintf(cio, "MTU:%u\n", netif->mtu);
 	        /* ip addr */
 		if (is_up) {
