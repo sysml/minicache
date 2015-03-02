@@ -40,15 +40,16 @@
 
 #include "debug.h"
 
-/* r = a - b */
-#define TIMEVAL_SUB(r, a, b) \
-	do {								\
-		while ((a).tv_usec < (b).tv_usec) {			\
-			(a).tv_usec += (typeof ((a).tv_usec)) 1000000;	\
-			(a).tv_sec--;					\
-		}							\
-		(r).tv_usec = (a).tv_usec - (b).tv_usec;		\
-		(r).tv_sec = (a).tv_sec - (b).tv_sec;			\
+/* r = a - b on struct timeval */
+#define TV_SUB(r, a, b)							\
+	do {									\
+		if ((a)->tv_usec < (b)->tv_usec) {				\
+			(r)->tv_sec  = (a)->tv_sec  - (b)->tv_sec - 1;		\
+			(r)->tv_usec = (a)->tv_usec - (b)->tv_usec + 1000000;	\
+		} else {							\
+			(r)->tv_sec  = (a)->tv_sec  - (b)->tv_sec;		\
+			(r)->tv_usec = (a)->tv_usec - (b)->tv_usec;		\
+		}								\
 	} while(0)
 
 /* runs (func) a command on a timeout */
@@ -63,24 +64,34 @@
 
 /* boot time tracing helper */
 #ifdef TRACE_BOOTTIME
+#ifndef __MINIOS__
 #define TT_DECLARE(var) struct timeval (var)
 #define TT_START(var) gettimeofday(&(var), NULL)
 #define TT_END(var) \
-  do {							\
-    struct timeval now;				\
-							\
-    gettimeofday(&now, NULL);				\
-    TIMEVAL_SUB((var), now, (var));			\
+  do {						\
+    struct timeval now;			\
+						\
+    gettimeofday(&now, NULL);			\
+    TV_SUB(&(var), &now, &(var));		\
   } while(0)
 #define TT_PRINT(desc, var)			\
-  printk(" %-32s: %lu.%06lus\n",		\
-	 (desc), (var).tv_sec, (var).tv_usec);
-#else
+  printk(" %-32s: %ld.%06lds\n",		\
+    (desc), (var).tv_sec, (var).tv_usec);
+#else /*__MINIOS__ */
+#define TT_DECLARE(var) uint64_t (var)
+#define TT_START(var) do { (var) = NOW(); } while(0)
+#define TT_END(var) do { (var) = (NOW() - (var)); } while(0)
+#define TT_PRINT(desc, var)			\
+  printk(" %-32s: %"PRIu64".%06"PRIu64"s\n",		\
+	 (desc),				\
+	 (var) / 1000000000l,			\
+	 ((var) / 1000l) % 1000000l);
+#endif /*__MINIOS__ */
+#else /* TRACE_BOOTTIME */
 #define TT_DECLARE(var) while(0) {}
 #define TT_START(var) while(0) {}
 #define TT_END(var) while(0) {}
-#endif
-
+#endif /* TRACE_BOOTTIME */
 
 #ifdef CONFIG_MINDER_PRINT
 #define MINDER_INTERVAL 500
