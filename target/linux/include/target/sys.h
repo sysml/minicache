@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <semaphore.h>
 #include <assert.h>
+#include <sys/time.h>
 
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1<<(PAGE_SHIFT))
@@ -60,5 +61,14 @@ void app_shutdown(unsigned reason);
 
 #define schedule() \
   do {} while(0)
+
+#define NOW() ({ \
+	uint64_t r;						\
+	struct timeval now;					\
+	gettimeofday(&now, NULL);				\
+	r = now.tv_usec * 1000 + now.tv_sec * 1000000000l;	\
+	r; })
+
+#define NSEC_TO_MSEC(ns) ((ns) / 1000000l)
 
 #endif /* _SYS_H_ */

@@ -82,7 +82,7 @@ CONFIG_SHELL = n # shell is not supported on linuxapp, yet
 CONFIG_SHFS_STATS = n # no stats
 CONFIG_TESTSUITE = n # no testuite
 
-#CONFIG_MINICACHE_MINDER_PRINT = y
+CONFIG_MINICACHE_MINDER_PRINT = y
 
 
 include Minicache.mk
