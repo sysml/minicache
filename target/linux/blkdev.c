@@ -39,6 +39,7 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out)
 struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 {
   struct blkdev *bd;
+  struct blkdev *bdo;
   int err;
 
   bd = malloc(sizeof(struct blkdev));
@@ -48,25 +49,25 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   }  
 
   /* search in blkdev list if device is already open */
-  for (bd = _open_bd_list; bd != NULL; bd = bd->_next) {
-    if (blkdev_id_cmp(blkdev_id(bd), id) == 0) {
+  for (bdo = _open_bd_list; bdo != NULL; bdo = bdo->_next) {
+    if (blkdev_id_cmp(blkdev_id(bdo), id) == 0) {
       /* found: device is already open,
        *  now we check if it was/shall be opened
        *  exclusively and requested permissions
        *  are available */
       if (mode & O_EXCL ||
-	  bd->exclusive) {
+	  bdo->exclusive) {
 	errno = EBUSY;
 	goto err;
       }
-      if (((mode & O_WRONLY) && !(bd->mode & (O_WRONLY | O_RDWR))) ||
-	  ((mode & O_RDWR) && !(bd->mode & O_RDWR))) {
+      if (((mode & O_WRONLY) && !(bdo->mode & (O_WRONLY | O_RDWR))) ||
+	  ((mode & O_RDWR) && !(bdo->mode & O_RDWR))) {
 	errno = EACCES;
 	goto err;
       }
    
-      ++bd->refcount;
-      return bd;
+      ++bdo->refcount;
+      return bdo;
     }
   }
 
