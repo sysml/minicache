@@ -1,11 +1,7 @@
 #ifndef _DEBUG_H_
 #define _DEBUG_H_
 
-#ifdef __MINIOS__
-#include <mini-os/os.h>
-#else
-#include <stdio.h>
-#endif
+#include <target/sys.h>
 #include <sys/time.h>
 
 extern struct timeval __debug_tsref;
@@ -22,8 +18,8 @@ extern struct timeval __debug_tsref;
 /**
  * dprintf(): prints a debug message to stdout
  */
-#define dprintf(fmt, ...)	\
-	do { \
+#define dprintf(fmt, ...)					\
+	do {							\
 	    struct timeval now;				\
 	    unsigned long mins, secs, usecs;			\
 	    							\
@@ -42,7 +38,7 @@ extern struct timeval __debug_tsref;
 	    							\
 	    __debug_printf("[%lum%02lu.%06lus] ", mins, secs, usecs); \
 	    __debug_printf("%s:%4d: %s(): ", __FILE__, __LINE__, __FUNCTION__); \
-	    __debug_printf((fmt), ##__VA_ARGS__); \
+	    __debug_printf((fmt), ##__VA_ARGS__);		\
 	} while(0)
 
 /**

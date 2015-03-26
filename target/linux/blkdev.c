@@ -39,37 +39,39 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out)
 struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 {
   struct blkdev *bd;
-  struct blkdev *bdo;
   int err;
 
-  bd = malloc(sizeof(struct blkdev));
-  if (!bd) {
-    errno = ENOMEM;
-    goto err;
-  }  
+  /* TODO: replace id with a unique path */
 
   /* search in blkdev list if device is already open */
-  for (bdo = _open_bd_list; bdo != NULL; bdo = bdo->_next) {
-    if (blkdev_id_cmp(blkdev_id(bdo), id) == 0) {
+  for (bd = _open_bd_list; bd != NULL; bd = bd->_next) {
+    if (blkdev_id_cmp(blkdev_id(bd), id) == 0) {
       /* found: device is already open,
        *  now we check if it was/shall be opened
        *  exclusively and requested permissions
        *  are available */
       if (mode & O_EXCL ||
-	  bdo->exclusive) {
+	  bd->exclusive) {
 	errno = EBUSY;
 	goto err;
       }
-      if (((mode & O_WRONLY) && !(bdo->mode & (O_WRONLY | O_RDWR))) ||
-	  ((mode & O_RDWR) && !(bdo->mode & O_RDWR))) {
+      if (((mode & O_WRONLY) && !(bd->mode & (O_WRONLY | O_RDWR))) ||
+	  ((mode & O_RDWR) && !(bd->mode & O_RDWR))) {
 	errno = EACCES;
 	goto err;
       }
    
-      ++bdo->refcount;
-      return bdo;
+      ++bd->refcount;
+      return bd;
     }
   }
+
+  /* device is not opened yet */
+  bd = malloc(sizeof(struct blkdev));
+  if (!bd) {
+    errno = ENOMEM;
+    goto err;
+  }  
 
   blkdev_id_cpy(bd->dev, id);
   bd->fd = open(bd->dev, mode & (O_RDWR | O_WRONLY));
@@ -119,6 +121,8 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   bd->mode = mode;
   bd->refcount = 1;
   bd->exclusive = !!(mode & O_EXCL);
+  bd->reqq_head = NULL;
+  bd->reqq_tail = NULL;
 
   /* link new element to the head of _open_bd_list */
   bd->_prev = NULL;
@@ -158,20 +162,48 @@ void close_blkdev(struct blkdev *bd)
   }
 }
 
-void _blkdev_io_cb(struct aiocb *aiocb, long res, long res2)
+static inline void _blkdev_finalize_req(struct _blkdev_req *req)
 {
   struct mempool_obj *robj;
-  struct _blkdev_req *req;
   int ret = 0;
 
-  req = container_of(aiocb, struct _blkdev_req, aiocb);
   robj = req->p_obj;
 
-  ret = aio_return(aiocb) == aiocb->aio_nbytes ? 0 : -1;
+  dprintf("Finalizing request %p\n", req);
+  ret = (aio_return(&req->aiocb) == req->aiocb.aio_nbytes) ? 0 : -1;
   if (req->cb)
     req->cb(ret, req->cb_argp); /* user callback */
 
   mempool_put(robj);
+}
+
+void blkdev_poll_req(struct blkdev *bd)
+{
+  struct _blkdev_req *req;
+  struct _blkdev_req *req_next;
+
+  req = bd->reqq_head;
+  while (req) {
+    req_next = req->_next;
+    
+    dprintf("Checking request %p for completion\n", req);
+    if (aio_error(&req->aiocb) != EINPROGRESS) {
+      /* aio has completed
+       * dequeue it from list and finalize it */
+      if (req->_next)
+	req->_next->_prev = req->_prev;
+      else
+	bd->reqq_tail = req->_prev;
+      if (req->_prev)
+	req->_prev->_next = req->_next;
+      else
+	bd->reqq_head = req->_next;
+      
+      _blkdev_finalize_req(req);
+    }
+
+    req = req_next;
+  }
 }
 
 void _blkdev_sync_io_cb(int ret, void *argp)
@@ -179,5 +211,5 @@ void _blkdev_sync_io_cb(int ret, void *argp)
 	struct _blkdev_sync_io_sync *iosync = argp;
 
 	iosync->ret = ret;
-	up(&iosync->sem);
+	iosync->done = 1;
 }

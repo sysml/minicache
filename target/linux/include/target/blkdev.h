@@ -11,6 +11,9 @@
 #include <mempool.h>
 #include <linux/fs.h>
 
+#define ENABLE_DEBUG
+#include <debug.h>
+
 #ifndef _POSIX_ASYNCHRONOUS_IO
 #error "POSIX_ASYNCHRONOUS_IO is not supported by your target"
 #endif
@@ -32,9 +35,12 @@ struct blkdev {
   sector_t size;
   uint32_t ssize;
   struct mempool *reqpool;
+  struct _blkdev_req *reqq_head;
+  struct _blkdev_req *reqq_tail;
 
   int exclusive;
   unsigned int refcount;
+
   struct blkdev *_next;
   struct blkdev *_prev;
 };
@@ -48,6 +54,9 @@ struct _blkdev_req {
   int write;
   blkdev_aiocb_t *cb;
   void *cb_argp;
+
+  struct _blkdev_req *_next;
+  struct _blkdev_req *_prev;
 };
 
 struct blkdev *open_blkdev(blkdev_id_t id, int mode);
@@ -101,7 +110,6 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req->aiocb.aio_reqprio = 0;
   req->aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
   req->aiocb.aio_lio_opcode = 0; //write ? LIO_WRITE : LIO_READ;
-  //req->aiocb.aio_cb = _blkdev_async_io_cb;
   req->bd = bd;
   req->sector = start;
   req->nb_sectors = len;
@@ -109,6 +117,16 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req->cb = cb;
   req->cb_argp = cb_argp;
 
+  /* enqueue request to the tail of reqq */
+  req->_next = NULL;
+  req->_prev = bd->reqq_tail;
+  if (req->_prev)
+	req->_prev->_next = req;
+  else
+	bd->reqq_head = req;
+  bd->reqq_tail = req;
+
+  /* send AIO request */
   if (write)
     ret = aio_write(&req->aiocb);
   else
@@ -135,7 +153,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 #define blkdev_async_read(bd, start, len, buffer, cb, cb_argp)	  \
 	blkdev_async_io((bd), (start), (len), 0, (buffer), (cb), (cb_argp))
 
-#define blkdev_poll_req(bd) do {} while(0) /* TODO */
+void blkdev_poll_req(struct blkdev *bd);
 
 /**
  * Sync I/O
@@ -143,7 +161,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 void _blkdev_sync_io_cb(int ret, void *argp);
 
 struct _blkdev_sync_io_sync {
-	sem_t sem;
+	int done;
 	int ret;
 };
 
@@ -153,7 +171,7 @@ static inline int blkdev_sync_io_nocheck(struct blkdev *bd, sector_t start, sect
 	struct _blkdev_sync_io_sync iosync;
 	int ret;
 
-	init_SEMAPHORE(&iosync.sem, 0);
+	iosync.done = 0;
 	ret = blkdev_async_io_nocheck(bd, start, len, write, target,
 	                              _blkdev_sync_io_cb, &iosync);
 	while (ret == -EAGAIN) {
@@ -168,7 +186,7 @@ static inline int blkdev_sync_io_nocheck(struct blkdev *bd, sector_t start, sect
 
 	/* wait for I/O completion */
 	blkdev_poll_req(bd);
-	while (trydown(&iosync.sem) == 0) {
+	while (!iosync.done) {
 		schedule(); /* yield CPU */
 		blkdev_poll_req(bd);
 	}
@@ -186,7 +204,7 @@ static inline int blkdev_sync_io(struct blkdev *bd, sector_t start, sector_t len
 	struct _blkdev_sync_io_sync iosync;
 	int ret;
 
-	init_SEMAPHORE(&iosync.sem, 0);
+	iosync.done = 0;
 	ret = blkdev_async_io(bd, start, len, write, target,
 	                      _blkdev_sync_io_cb, &iosync);
 	while (ret == -EAGAIN) {
@@ -201,7 +219,7 @@ static inline int blkdev_sync_io(struct blkdev *bd, sector_t start, sector_t len
 
 	/* wait for I/O completion */
 	blkdev_poll_req(bd);
-	while (trydown(&iosync.sem) == 0) {
+	while (!iosync.done) {
 		schedule(); /* yield CPU */
 		blkdev_poll_req(bd);
 	}

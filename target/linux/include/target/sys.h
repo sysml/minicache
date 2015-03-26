@@ -1,7 +1,7 @@
 #ifndef _SYS_H_
 #define _SYS_H_
 
-/* #include <stdio.h> */
+#include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
 #include <limits.h>
