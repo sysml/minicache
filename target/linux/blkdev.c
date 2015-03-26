@@ -4,7 +4,9 @@
 #include <sys/stat.h>
 #include <target/blkdev.h>
 
-//#define ENABLE_DEBUG
+#ifdef BLKDEV_DEBUG
+#define ENABLE_DEBUG
+#endif
 #include <debug.h>
 
 /* NOTE: This is copied from linux kernel.

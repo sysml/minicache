@@ -99,7 +99,7 @@ TOUCH		 = touch
 CCDEP=gcc
 CC=gcc
 
-CFLAGS=-g -D$(TARGET) $(MCCFLAGS) \
+CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 	-Wparentheses -Wsequence-point -Wswitch-default \
 	-Wundef -Wpointer-arith -Wbad-function-cast \
 	-Wwrite-strings -Wold-style-definition \
