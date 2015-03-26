@@ -11,9 +11,6 @@
 #include <mempool.h>
 #include <linux/fs.h>
 
-#define ENABLE_DEBUG
-#include <debug.h>
-
 #ifndef _POSIX_ASYNCHRONOUS_IO
 #error "POSIX_ASYNCHRONOUS_IO is not supported by your target"
 #endif

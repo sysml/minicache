@@ -363,7 +363,7 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
 	return -1;
     }
     sh->cmd_func[i] = func;
-    dprintf("Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
+    printd("Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
 
@@ -378,13 +378,13 @@ void shell_unregister_cmd(const char *cmd)
         free(sh->cmd_str[i]);
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
-        dprintf("Command %i ('%s') unregistered\n", i, cmd);
+        printd("Command %i ('%s') unregistered\n", i, cmd);
     }
 }
 
 static void sh_telnet_negotiation(FILE *cio, uint8_t cmd, uint8_t arg, struct shell_sess *sess)
 {
-	dprintf("Negotiation commands are unsupported for now, ignoring...\n");
+	printd("Negotiation commands are unsupported for now, ignoring...\n");
 }
 
 static int sh_exec(FILE *cio, char *argb, size_t argb_len)
@@ -503,7 +503,7 @@ respawn:
 			/* we don't support subnegotiations: ignore */
 			in_tsn = 0;
 			in_tsn_sb = 0;
-			dprintf("Ignored telnet subnegotiation\n");
+			printd("Ignored telnet subnegotiation\n");
 		    }
 		    continue; /* ignore subnegotiation characters */
 	        }
@@ -513,7 +513,7 @@ respawn:
 		    in_tsn_sb = 1;
 	        } else if (tsnb_p == 2) { /* command completed */
 		    in_tsn = 0;
-		    dprintf("Received telnet negotiation command: %02X %02X\n",
+		    printd("Received telnet negotiation command: %02X %02X\n",
 		           tsnb[0], tsnb[1]);
 		    sh_telnet_negotiation(sess->cio, tsnb[0], tsnb[1], sess);
 	        }
@@ -544,7 +544,7 @@ respawn:
                 argb_p++;
                 break;
             default:
-	        dprintf("Ignoring non-ASCII/control character: %02x\n",
+	        printd("Ignoring non-ASCII/control character: %02x\n",
 	                (unsigned char) argb[argb_p]);
 	        break;
             }
@@ -626,7 +626,7 @@ static err_t shlsess_accept(void)
     }
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-    dprintf("Local session opened (%s)\n", sess->name);
+    printd("Local session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
@@ -652,7 +652,7 @@ static void shlsess_close(struct shell_sess *sess)
     /* close console descriptor */
     fclose(sess->cio);
 
-    dprintf("Local session closed (%s)\n", sess->name);
+    printd("Local session closed (%s)\n", sess->name);
     xfree(sess);
 }
 
@@ -686,10 +686,10 @@ retry:
     }
     /*
 #ifdef SHELL_DEBUG
-    dprintf("Received %u bytes from client: '", avail);
+    printd("Received %u bytes from client: '", avail);
     for (i = 0; i < avail; i++)
-	    dprintf("%02x:", (unsigned char) buf[i]);
-    dprintf("'\n");
+	    printd("%02x:", (unsigned char) buf[i]);
+    printd("'\n");
 #endif
     */
     return (ssize_t) avail;
@@ -703,10 +703,10 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
     uint16_t avail, sendlen;
     /*
 #ifdef SHELL_DEBUG
-    dprintf("Sending %u bytes to client: '", len);
+    printd("Sending %u bytes to client: '", len);
     for (i = 0; i < len; i++)
-	dprintf("%c", buf[i]);
-    dprintf("'\n");
+	printd("%c", buf[i]);
+    printd("'\n");
     fflush(stdout);
     i = 0;
 #endif
@@ -808,7 +808,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-    dprintf("Remote session opened (%s)\n", sess->name);
+    printd("Remote session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
@@ -850,7 +850,7 @@ static void shrsess_close(struct shell_sess *sess)
     } /* on SSS_KILLING tpcb is not touched */
 
     /* release memory */
-    dprintf("Remote session closed (%s)\n", sess->name);
+    printd("Remote session closed (%s)\n", sess->name);
     xfree(sess);
 }
 

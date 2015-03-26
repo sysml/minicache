@@ -4,6 +4,9 @@
 #include <sys/stat.h>
 #include <target/blkdev.h>
 
+//#define ENABLE_DEBUG
+#include <debug.h>
+
 /* NOTE: This is copied from linux kernel.
  * It probably makes sense to move this to mini-os's kernel.h */
 #ifndef offsetof
@@ -30,7 +33,7 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out)
 
   /* get absolute path of file */
   if (realpath(id, *out) == NULL) {
-    dprintf("Could not resolve path %s\n", id);
+    printd("Could not resolve path %s\n", id);
     return -errno;
   }
   return 0;
@@ -76,23 +79,23 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   blkdev_id_cpy(bd->dev, id);
   bd->fd = open(bd->dev, mode & (O_RDWR | O_WRONLY));
   if (bd->fd < 0) {
-    dprintf("Could not open %s\n", bd->dev);
+    printd("Could not open %s\n", bd->dev);
     goto err_free_bd;
   }
 
   if (fstat(bd->fd, &bd->fd_stat) == -1) {
-    dprintf("Could not retrieve stats from %s\n", bd->dev);
+    printd("Could not retrieve stats from %s\n", bd->dev);
     goto err_close_fd;
   }
   if (!S_ISBLK(bd->fd_stat.st_mode) && !S_ISREG(bd->fd_stat.st_mode)) {
-    dprintf("%s is not a block device or a regular file\n", bd->dev);
+    printd("%s is not a block device or a regular file\n", bd->dev);
     errno = ENOTBLK;
     goto err_close_fd;
   }
 
   /* get device sector size in bytes */
   bd->ssize = bd->fd_stat.st_blksize;
-  dprintf("%s has a block size of %"PRIu32" bytes\n", bd->dev, bd->ssize);
+  printd("%s has a block size of %"PRIu32" bytes\n", bd->dev, bd->ssize);
 
   /* get device size in bytes */
   if (S_ISBLK(bd->fd_stat.st_mode)) {
@@ -100,10 +103,10 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
     if (err) {
       unsigned long size32;
 
-      dprintf("BLKGETSIZE64 failed. Trying BLKGETSIZE\n");
+      printd("BLKGETSIZE64 failed. Trying BLKGETSIZE\n");
       err = ioctl(bd->fd, BLKGETSIZE, &size32);
       if (err) {
-	dprintf("Could not query device size from %s\n", bd->dev);
+	printd("Could not query device size from %s\n", bd->dev);
 	goto err_close_fd;
       }
       bd->size = ((uint64_t) size32) / bd->ssize;
@@ -111,7 +114,7 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   } else {
     bd->size = ((uint64_t) bd->fd_stat.st_size) / bd->ssize;
   }
-  dprintf("%s has a size of %"PRIu64" bytes\n", bd->dev, (uint64_t) (bd->size * bd->ssize));
+  printd("%s has a size of %"PRIu64" bytes\n", bd->dev, (uint64_t) (bd->size * bd->ssize));
 
   bd->reqpool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _blkdev_req));
   if (!bd->reqpool) {
@@ -169,7 +172,7 @@ static inline void _blkdev_finalize_req(struct _blkdev_req *req)
 
   robj = req->p_obj;
 
-  dprintf("Finalizing request %p\n", req);
+  printd("Finalizing request %p\n", req);
   ret = (aio_return(&req->aiocb) == req->aiocb.aio_nbytes) ? 0 : -1;
   if (req->cb)
     req->cb(ret, req->cb_argp); /* user callback */
@@ -186,7 +189,7 @@ void blkdev_poll_req(struct blkdev *bd)
   while (req) {
     req_next = req->_next;
     
-    dprintf("Checking request %p for completion\n", req);
+    printd("Checking request %p for completion\n", req);
     if (aio_error(&req->aiocb) != EINPROGRESS) {
       /* aio has completed
        * dequeue it from list and finalize it */

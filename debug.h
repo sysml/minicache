@@ -13,12 +13,12 @@ extern struct timeval __debug_tsref;
 #define __debug_printf(fmt, ...) printk((fmt), ##__VA_ARGS__)
 #else
 #define __debug_printf(fmt, ...) printf((fmt), ##__VA_ARGS__)
-#endif
+#endif /* __MINIOS__ */
 
 /**
- * dprintf(): prints a debug message to stdout
+ * printd(): prints a debug message to stdout
  */
-#define dprintf(fmt, ...)					\
+#define printd(fmt, ...)					\
 	do {							\
 	    struct timeval now;				\
 	    unsigned long mins, secs, usecs;			\
@@ -70,7 +70,7 @@ extern struct timeval __debug_tsref;
 
 #else /* ENABLE_DEBUG */
 
-#define dprintf(fmt, ...) do {} while(0)
+#define printd(fmt, ...) do {} while(0)
 #define get_caller() 0xDEADC0DE
 
 #endif /* ENABLE_DEBUG */
