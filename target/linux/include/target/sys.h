@@ -55,9 +55,9 @@ void app_shutdown(unsigned reason);
 
 /* semaphore */
 #define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphres? */
-#define up(s) sem_post((s))
-#define down(s) sem_wait((s))
-#define trydown(s) down((s)) /* FIXME */
+#define up(s) (sem_post((s)) == 0 ? 1 : 0)
+#define down(s) (sem_wait((s)) == 0 ? 1 : 0)
+#define trydown(s) (sem_trywait((s)) == 0 ? 1 : 0)
 
 #define schedule() \
   do {} while(0)
