@@ -111,7 +111,7 @@ CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 # -Wunreachable-code
 # -ansi
 # -std=c89
-LDFLAGS=-pthread -lrt #-lutil
+LDFLAGS+=-pthread -lrt #-lutil
 ARFLAGS=rs
 
 CONTRIBDIR		 = ../lwip-contrib
