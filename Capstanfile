@@ -4,5 +4,6 @@ cmdline: /minicache_x86_64.so -i 172.64.255.13/24
 files:
  /minicache_x86_64.so: build/minicache_x86_64.so
  /home/skuenzer/Workspace/minicache-arm/minicache/build/liblwip.so: build/liblwip.so
+ /usr/lib/libpcap.so.0.8: /usr/lib/x86_64-linux-gnu/libpcap.so.0.8
  #/lib/libpthread.so.0: /lib/x86_64-linux-gnu/libpthread.so.0
  #/demo.shfs: ../../minicache/shfs-demo/demo.shfs

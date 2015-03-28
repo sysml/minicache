@@ -179,8 +179,9 @@ ARCHFILES+=$(wildcard $(LWIPARCH)/netif/tapif.c)
 CFLAGS+=-DCONFIG_TAPIF
 else
 ARCHDIRS=$(LWIPARCH)/netif
-ARCHFILES+=$(wildcard $(LWIPARCH)/netif/pcapif.c $(LWIPARCH)/netif/pcapif_helper.c)
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/pcapif.c)
 CFLAGS+=-DCONFIG_PCAPIF
+LDFLAGS+=-lpcap
 endif
 
 # APPFILES: Applications.
