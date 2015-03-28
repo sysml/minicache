@@ -41,8 +41,7 @@
 ###########################################################################
 
 TARGET=linux
-CFLAGS+=-fPIC
-LDFLAGS+=-shared
-MINICACHE_OUT=minicache_$(ARCH).so
+CFLAGS+=-D__OSV__
+BUILDSO=y
 
 include Target.$(TARGET).$(ARCH).mk

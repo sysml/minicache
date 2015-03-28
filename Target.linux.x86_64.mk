@@ -114,12 +114,20 @@ CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 LDFLAGS+=-pthread -lrt #-lutil
 ARFLAGS=rs
 
+ifeq ($(BUILDSO),y)
+CFLAGS+=-fPIC -DLWIP_DNS_API_DECLARE_H_ERRNO=0
+endif
+
 CONTRIBDIR		 = ../lwip-contrib
 LWIPDIR		?= $(LWIP_ROOT)/src
 MINICACHE_ROOT		?= $(realpath .)
 LWIPARCH		 = $(MINICACHE_ROOT)/target/$(TARGET)
 BUILDDIR		?= $(MINICACHE_ROOT)/build
+ifneq ($(BUILDSO),y)
 MINICACHE_OUT		?= minicache_$(ARCH)
+else
+MINICACHE_OUT		?= minicache_$(ARCH).so
+endif
 
 CFLAGS:=$(CFLAGS) \
 	-I. -Itarget/$(TARGET)/include \
@@ -190,8 +198,12 @@ LWIPFILES=$(COREFILES) $(CORE4FILES) $(CORE6FILES) $(SNMPFILES) $(APIFILES) $(NE
 LWIPFILESW=$(wildcard $(LWIPFILES))
 LWIPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(LWIPFILES:.c=.o)))
 
+ifneq ($(BUILDSO),y)
 LWIPLIB=$(BUILDDIR)/liblwip.a
 APPLIB=$(BUILDDIR)/minicache.a
+else
+LWIPLIB=$(BUILDDIR)/liblwip.so
+endif
 
 # set source search path
 VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(APPDIRS)
@@ -224,12 +236,20 @@ $(BUILDDIR)/%.a: %.o
 $(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPFILES) $(APPFILES) | $(BUILDDIR)
 	$(CCDEP) $(CFLAGS) -MM $^ > $(BUILDDIR)/.depend || $(RM) $(BUILDDIR)/.depend
 
-$(APPLIB): $(APPOBJS)
-	$(AR) $(ARFLAGS) $(APPLIB) $?
-
+.PHONY: $(BUILDDIR)/$(MINICACHE_OUT)
+ifneq ($(BUILDSO),y)
 $(LWIPLIB): $(LWIPOBJS)
 	$(AR) $(ARFLAGS) $(LWIPLIB) $?
 
-.PHONY: $(BUILDDIR)/$(MINICACHE_OUT)
+$(APPLIB): $(APPOBJS)
+	$(AR) $(ARFLAGS) $(APPLIB) $?
+
 $(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPLIB) $(APPFILES)
 	$(CC) $(APPLIB) $(LWIPLIB) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT)
+else
+$(LWIPLIB): $(LWIPOBJS)
+	$(CC) $(LDFLAGS) $? -shared -o $(LWIPLIB)
+
+$(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPOBJS) $(APPFILES)
+	$(CC) $(APPOBJS) -l:$(LWIPLIB) $(LDFLAGS) -shared -o $(BUILDDIR)/$(MINICACHE_OUT)
+endif

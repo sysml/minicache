@@ -31,13 +31,19 @@
 #define LWIP_DHCP 1
 #define LWIP_SOCKET 1 /* required by lib/sys.c */
 #define LWIP_IGMP 1
-#define LWIP_DNS 1
+//#define LWIP_DNS 1 /* causes h_errno issue */
 #ifndef CONFIG_LWIP_MINIMAL
 #define LWIP_SNMP 1
 #define LWIP_PPP 1
 #define LWIP_SLIP 1
 #define LWIP_AUTOIP 1
 #endif
+
+/*
+ * DNS options
+ */
+//#define LWIP_DNS_API_DECLARE_H_ERRNO 0
+//#include <netdb.h>
 
 /*
  * Pool options
