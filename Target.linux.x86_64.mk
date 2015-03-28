@@ -159,24 +159,11 @@ APIFILES=$(LWIPDIR)/api/api_lib.c $(LWIPDIR)/api/api_msg.c $(LWIPDIR)/api/err.c 
 
 # NETIFFILES: Files implementing various generic network interface functions.'
 NETIFDIRS=$(LWIPDIR)/netif
-NETIFFILES=$(LWIPDIR)/netif/etharp.c $(LWIPDIR)/netif/slipif.c
+NETIFFILES=$(LWIPDIR)/netif/etharp.c
 
-# NETIFFILES: Add PPP netif
-NETIFDIRS+=:$(LWIPDIR)/netif/ppp:$(LWIPDIR)/netif/ppp/polarssl:$(LWIPARCH)/netif
-NETIFFILES+=$(LWIPDIR)/netif/ppp/auth.c $(LWIPDIR)/netif/ppp/ccp.c \
-	$(LWIPDIR)/netif/ppp/chap-md5.c $(LWIPDIR)/netif/ppp/chap_ms.c \
-	$(LWIPDIR)/netif/ppp/chap-new.c $(LWIPDIR)/netif/ppp/demand.c \
-	$(LWIPDIR)/netif/ppp/eap.c $(LWIPDIR)/netif/ppp/ecp.c \
-	$(LWIPDIR)/netif/ppp/eui64.c $(LWIPDIR)/netif/ppp/fsm.c \
-	$(LWIPDIR)/netif/ppp/ipcp.c $(LWIPDIR)/netif/ppp/ipv6cp.c \
-	$(LWIPDIR)/netif/ppp/lcp.c $(LWIPDIR)/netif/ppp/magic.c \
-	$(LWIPDIR)/netif/ppp/multilink.c $(LWIPDIR)/netif/ppp/ppp.c \
-	$(LWIPDIR)/netif/ppp/pppcrypt.c $(LWIPDIR)/netif/ppp/pppoe.c \
-	$(LWIPDIR)/netif/ppp/pppol2tp.c $(LWIPDIR)/netif/ppp/upap.c \
-	$(LWIPDIR)/netif/ppp/utils.c $(LWIPDIR)/netif/ppp/vj.c \
-	$(LWIPDIR)/netif/ppp/polarssl/des.c $(LWIPDIR)/netif/ppp/polarssl/md4.c \
-	$(LWIPDIR)/netif/ppp/polarssl/md5.c $(LWIPDIR)/netif/ppp/polarssl/sha1.c \
-	$(LWIPARCH)/netif/sio.c
+# NETIFFILES: Add SLIP netif
+NETIFFILES+=$(LWIPDIR)/netif/slipif.c
+
 # SNMPFILES: Extra SNMPv1 agent
 SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
 	$(LWIPDIR)/core/snmp/mib2.c $(LWIPDIR)/core/snmp/mib_structs.c \
@@ -185,7 +172,16 @@ SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
 SNMPDIRS=$(LWIPDIR)/core/snmp
 
 # ARCHFILES: Architecture specific files.
-ARCHFILES=$(wildcard $(LWIPARCH)/*.c $(LWIPARCH)/netif/tapif.c $(LWIPARCH)/netif/tunif.c $(LWIPARCH)/netif/unixif.c $(LWIPARCH)/netif/list.c $(LWIPARCH)/netif/tcpdump.c)
+ARCHDIRS=$(LWIPARCH)/netif
+ARCHFILES=$(wildcard $(LWIPARCH)/*.c) # $(LWIPARCH)/netif/sio.c $(LWIPARCH)/netif/fifo.c)
+ifneq ($(CONFIG_PCAPIF),y)
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/tapif.c)
+CFLAGS+=-DCONFIG_TAPIF
+else
+ARCHDIRS=$(LWIPARCH)/netif
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/pcapif.c $(LWIPARCH)/netif/pcapif_helper.c)
+CFLAGS+=-DCONFIG_PCAPIF
+endif
 
 # APPFILES: Applications.
 APPDIRS=.:target/$(TARGET)
@@ -206,7 +202,7 @@ LWIPLIB=$(BUILDDIR)/liblwip.so
 endif
 
 # set source search path
-VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(APPDIRS)
+VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(ARCHDIRS):$(APPDIRS)
 
 include $(BUILDDIR)/.depend
 
