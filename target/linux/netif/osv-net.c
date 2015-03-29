@@ -82,6 +82,7 @@
 
 #include <netif/osv-net.h>
 
+#include "likely.h"
 #include "lwip/def.h"
 #include "lwip/mem.h"
 #include "lwip/pbuf.h"
@@ -159,10 +160,10 @@ static inline err_t osvnetif_transmit(struct netif *netif, struct pbuf *p)
  * @return
  *  NULL when a pbuf could not be allocated; the pbuf otherwise
  */
-static inline struct pbuf *osvnetif_mkpbuf(unsigned char *data, int len)
+static struct pbuf *osvnetif_mkpbuf(const unsigned char *data, int len)
 {
     struct pbuf *p, *q;
-    unsigned char *cur;
+    const unsigned char *cur;
 
     p = pbuf_alloc(PBUF_RAW, len + ETH_PAD_SIZE, PBUF_POOL);
     if (unlikely(!p))
@@ -186,6 +187,11 @@ static inline struct pbuf *osvnetif_mkpbuf(unsigned char *data, int len)
 #endif
 
     return p;
+}
+
+static void osvnetif_droppbuf(struct pbuf *p)
+{
+  pbuf_free(p);
 }
 
 /**
@@ -263,20 +269,9 @@ static inline void osvnetif_input(struct pbuf *p, struct netif *netif)
  * @param argp
  *  pointer to netif
  */
-static void osvnetif_rx_handler(void *data, int len, void *argp)
+static void osvnetif_rx_handler(struct pbuf *p, void *argp)
 {
     struct netif *netif = argp;
-    struct pbuf *p;
-
-    p = osvnetif_mkpbuf(data, len);
-    if (unlikely(!p)) {
-        LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_rx_handler: %c%c: ERROR: "
-				  "Packet dropped: Out of pbufs\n",
-				  netif->name[0], netif->name[1]));
-        LINK_STATS_INC(link.memerr);
-        LINK_STATS_INC(link.drop);
-        return;
-    }
     LINK_STATS_INC(link.recv);
     osvnetif_input(p, netif);
 }
@@ -375,10 +370,16 @@ err_t osvnetif_init(struct netif *netif)
 	  /* use vif_id to open an specific NIC interface */
 	  char ifname[16];
 	  snprintf(ifname, sizeof(ifname), "eth%u", nfi->vif_id);
-	  nfi->dev = open_onio(ifname, osvnetif_rx_handler, netif);
+	  nfi->dev = open_onio(ifname,
+			       osvnetif_mkpbuf,
+			       osvnetif_droppbuf,
+			       osvnetif_rx_handler, netif);
 	} else {
 	    /* open eth0 interface */
-	    nfi->dev = open_onio(NULL, osvnetif_rx_handler, netif);
+	  nfi->dev = open_onio(NULL,
+			       osvnetif_mkpbuf,
+			       osvnetif_droppbuf,
+			       osvnetif_rx_handler, netif);
 	}
 	if (!nfi->dev) {
 	    LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_init: "
