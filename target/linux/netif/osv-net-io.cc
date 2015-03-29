@@ -58,6 +58,7 @@ static inline int onio_pf_hook(
   size_t pktlen;
   const unsigned char *pktbuf;
   struct pbuf *p;
+  struct ip *ip = NULL;
 
   printf("Called hook for mbuf %p dir %d (dev %u: %s)\n",
 	 *m, dir, ifn->if_index, ifn->if_xname);
@@ -72,30 +73,39 @@ static inline int onio_pf_hook(
 
   /* incoming dev is our hooked dev? */
   if (dev->ifn != ifn)
-    return 1;
+    return 0; /* packet is returned */
+
+  /* --------------------------------------------- */
+  /* starting from here we will consume the packet */
 
   /*
    * We are called at the IP level, therefore the mbuf has already been
    * adjusted to point to the IP header.
    */
+  /* revert number convertions in IP header done by BSD stack */
+  ip = mtod(*m, struct ip *);
+  ip->ip_len = htons(ip->ip_len);
+  ip->ip_off = htons(ip->ip_off);
+
+  /* revert pointing mbuf to ethernet frame */
   pktlen = (*m)->m_hdr.mh_len + ETHER_HDR_LEN;
-  pktbuf = ((const unsigned char *) (*m)->m_hdr.mh_data) - ETHER_HDR_LEN;
+  pktbuf = mtod(*m, const unsigned char *) - ETHER_HDR_LEN;
 
   /* copy packet buffer to an lwIP buffer, enqueue it to rx ring */
   p = dev->mk_pbuf(pktbuf, pktlen);
   if (!p) {
     /* pbuf could not be allocated: drop */
-    return 0;
+    return 1;
   }
 
   if (!dev->rxring->push(p)) {
     /* ring is full: drop */
     dev->drop_pbuf(p);
-    return 0;
+    return 1;
   }
 
   printf("Packet consumed (%u bytes at %p)\n", pktlen, pktbuf);
-  return 0;
+  return 1;
 }
 
 onio *open_onio(const char *ifname,
@@ -167,12 +177,12 @@ onio *open_onio(const char *ifname,
   } else {
     printf("open_onio: Device %s does not have a hardware address. Use a hard-coded one.\n", dev->ifn->if_xname);
     /* bzero(dev->hw_addr, ETHER_ADDR_LEN); */
-    dev->hw_addr[0]=0x00;
-    dev->hw_addr[1]=0xAA;
-    dev->hw_addr[2]=0xBB;
-    dev->hw_addr[3]=0xCC;
-    dev->hw_addr[4]=0xDD;
-    dev->hw_addr[5]=0xEE;
+    dev->hw_addr[0]=0x52;
+    dev->hw_addr[1]=0x54;
+    dev->hw_addr[2]=0x00;
+    dev->hw_addr[3]=0x88;
+    dev->hw_addr[4]=0x8e;
+    dev->hw_addr[5]=0x59;
   }
   printf("open_onio: Hardware address: %02X:%02X:%02X:%02X:%02X:%02X\n",
 	 dev->hw_addr[0], dev->hw_addr[1], dev->hw_addr[2],
@@ -220,7 +230,36 @@ void onio_poll(onio *dev)
 
 int onio_transmit(onio *dev, void *buf, size_t len)
 {
-  return -1;
+  struct mbuf *m = NULL;
+  int ret;
+
+  printf("onio_transmit: Going to send out %lu bytes on %s\n",
+	 len, dev->ifn->if_xname);
+
+  /* allocate mbuf */
+  m = m_getjcl(M_NOWAIT, MT_DATA, M_PKTHDR, MCLBYTES); /* 2048 bytes */
+  if (!m) {
+    printf("onio_transmit: Could not allocate mbuf!\n");
+    return -1;
+  }
+
+  /* copy data */
+  memcpy(mtod(m, void *), buf, len);
+  m->M_dat.MH.MH_pkthdr.csum_flags = 0; /* no CHKSUM offload */
+  m->M_dat.MH.MH_pkthdr.len = m->m_hdr.mh_len = len;
+
+  /* transmit directly over Ethernet */
+  if (dev->ifn->if_addr &&
+      dev->ifn->if_addrlen &&
+      dev->ifn->if_type == IFT_ETHER) {
+    ret = dev->ifn->if_transmit(dev->ifn, m);
+  } else {
+    printf("onio_transmit: %s is not an Ethernet device. Dropping packet!\n",
+	   dev->ifn->if_xname);
+    m_free(m);
+  }
+
+  return ret;
 }
 
 size_t onio_get_hwaddr(onio *dev, void *addr_out, size_t maxlen)

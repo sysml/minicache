@@ -89,6 +89,8 @@
 #include <lwip/stats.h>
 #include <lwip/snmp.h>
 
+#include <hexdump.h>
+
 #define OSVNETIF_NPREFIX 'o'
 #define OSVNETIF_SPEED 10000000000ul     /* 10 GBit/s */
 #define OSVNETIF_MTU 1500
@@ -185,6 +187,8 @@ static struct pbuf *osvnetif_mkpbuf(const unsigned char *data, int len)
 #if ETH_PAD_SIZE
     pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
 #endif
+
+    printh(data, len);
 
     return p;
 }
