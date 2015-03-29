@@ -41,8 +41,6 @@
 ###########################################################################
 
 TARGET=linux
-CFLAGS+=-D__OSV__
-CONFIG_PCAPIF=y
-BUILDSO=y
+CONFIG_OSVAPP=y
 
 include Target.$(TARGET).$(ARCH).mk

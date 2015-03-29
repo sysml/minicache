@@ -498,7 +498,9 @@ int main(int argc, char *argv[])
     uint64_t ts_tcp = 0;
     uint64_t ts_etharp = 0;
     uint64_t ts_ipreass = 0;
+#if LWIP_DNS
     uint64_t ts_dns = 0;
+#endif
     uint64_t ts_dhcp_fine = 0;
     uint64_t ts_dhcp_coarse = 0;
 #endif /* CONFIG_LWIP_NOTHREADS */
@@ -794,7 +796,7 @@ int main(int argc, char *argv[])
 
 #ifdef CONFIG_LWIP_NOTHREADS
         /* NIC handling loop (single threaded lwip) */
-	netfrontif_poll(&netif);
+	target_netif_poll(&netif);
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
@@ -805,7 +807,9 @@ int main(int argc, char *argv[])
         TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
         TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
         TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
+#if LWIP_DNS
         TIMED(now, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
+#endif
         if (args.dhclient) {
 	        TIMED(now, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
 	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());

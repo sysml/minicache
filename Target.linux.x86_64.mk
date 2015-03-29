@@ -75,6 +75,50 @@ ifndef LWIP_ROOT
 $(error "Please define LWIP_ROOT")
 endif
 
+ifeq ($(CONFIG_OSVAPP),y)
+ifndef OSV_ROOT
+$(error "Please define OSV_ROOT")
+endif
+
+BUILDSO=y
+CONFIG_OSVNET=y
+CONFIG_OSVBLK=y
+CINCLUDES+=-I$(OSV_ROOT)/arch/x64 -I$(OSV_ROOT) -I$(OSV_ROOT)/include
+CINCLUDES+=-isystem $(OSV_ROOT)/include/glibc-compat
+glibcbase     = $(OSV_ROOT)/external/x64/glibc.bin
+gccbase       = $(OSV_ROOT)/external/x64/gcc.bin
+miscbase      = $(OSV_ROOT)/external/x64/misc.bin
+gcc-inc-base  = $(dir $(shell find $(gccbase)/ -name vector | grep -v -e debug/vector$$ -e profile/vector$$))
+gcc-inc-base2 = $(dir $(shell find $(gccbase)/ -name unwind.h))
+gcc-inc-base3 = $(dir $(shell dirname `find $(gccbase)/ -name c++config.h | grep -v /32/`))
+CINCLUDES+=-isystem $(gcc-inc-base) \
+           -isystem $(gcc-inc-base3)
+CINCLUDES+=-isystem $(OSV_ROOT)/external/x64/acpica/source/include \
+           -isystem $(OSV_ROOT)/external/x64/misc.bin/usr/include \
+           -isystem $(OSV_ROOT)/include/api \
+           -isystem $(OSV_ROOT)/include/api/x64
+# must be after include/api, since it includes some libc-style headers:
+CINCLUDES+=-isystem $(gcc-inc-base2) \
+           -isystem gen/include \
+           $(post-includes-bsd)
+OSV_BUILD_MODE=release
+CINCLUDES+=-I$(OSV_ROOT)/build/$(OSV_BUILD_MODE)/gen/include/
+
+post-includes-bsd += -isystem $(OSV_ROOT)/bsd/sys
+# For acessing machine/ in cpp xen drivers
+post-includes-bsd += -isystem $(OSV_ROOT)/bsd/
+post-includes-bsd += -isystem $(OSV_ROOT)/bsd/x64
+#autodepend = -MD -MT $@ -MP
+
+common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL \
+	-include $(OSV_ROOT)/compiler/include/intrinsics.hh -Wformat=0 \
+	-Wno-format-security -O3 -DNDEBUG -DCONF_debug_memory=0 \
+	-D__OSV__
+CFLAGS+=$(common)
+CXXFLAGS+=-std=gnu++11 $(common)
+LDFLAGS+=$(autodepend)
+endif
+
 ###########################################################################
 
 CONFIG_CTLDIR = n # ctldir is not supported on linuxapp
@@ -98,12 +142,15 @@ TOUCH		 = touch
 
 CCDEP=gcc
 CC=gcc
+CXX=g++
+LD=$(CC)
 
 CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 	-Wparentheses -Wsequence-point -Wswitch-default \
 	-Wundef -Wpointer-arith -Wbad-function-cast \
 	-Wwrite-strings -Wold-style-definition \
-	-Wmissing-prototypes -Wredundant-decls -Wno-address # -Wextra -Wnested-externs -Wall -Wshadow
+	-Wmissing-prototypes -Wredundant-decls -Wno-address
+# -Wextra -Wnested-externs -Wall -Wshadow
 # -pedantic \
 
 # not used for now but interesting:
@@ -116,6 +163,7 @@ ARFLAGS=rs
 
 ifeq ($(BUILDSO),y)
 CFLAGS+=-fPIC -DLWIP_DNS_API_DECLARE_H_ERRNO=0
+CXXFLAGS+=-fPIC -DLWIP_DNS_API_DECLARE_H_ERRNO=0
 endif
 
 CONTRIBDIR		 = ../lwip-contrib
@@ -129,9 +177,14 @@ else
 MINICACHE_OUT		?= minicache_$(ARCH).so
 endif
 
-CFLAGS:=$(CFLAGS) \
-	-I. -Itarget/$(TARGET)/include \
-	-I$(LWIPDIR)/include -I$(LWIPARCH) -I$(LWIPARCH)/include -I$(LWIPDIR)
+CINCLUDES+=-I. \
+	-Itarget/$(TARGET)/include \
+	-I$(LWIPDIR)/include \
+	-I$(LWIPARCH) \
+	-I$(LWIPARCH)/include \
+	-I$(LWIPDIR)
+CFLAGS+=$(CINCLUDES)
+CXXFLAGS+=$(CINCLUDES)
 
 # COREFILES, CORE4FILES: The minimum set of files needed for lwIP.
 COREDIRS=$(LWIPDIR)/core
@@ -171,29 +224,40 @@ SNMPFILES=$(LWIPDIR)/core/snmp/asn1_dec.c $(LWIPDIR)/core/snmp/asn1_enc.c \
 	$(LWIPARCH)/lwip_prvmib.c
 SNMPDIRS=$(LWIPDIR)/core/snmp
 
-# ARCHFILES: Architecture specific files.
 ARCHDIRS=$(LWIPARCH)/netif
-ARCHFILES=$(wildcard $(LWIPARCH)/*.c) # $(LWIPARCH)/netif/sio.c $(LWIPARCH)/netif/fifo.c)
-ifneq ($(CONFIG_PCAPIF),y)
-ARCHFILES+=$(wildcard $(LWIPARCH)/netif/tapif.c)
-CFLAGS+=-DCONFIG_TAPIF
-else
-ARCHDIRS=$(LWIPARCH)/netif
+#ARCHFILES=$(wildcard $(LWIPARCH)/*.c) # $(LWIPARCH)/netif/sio.c $(LWIPARCH)/netif/fifo.c)
+# lwIP device driver
+ifeq ($(CONFIG_PCAPIF),y)
 ARCHFILES+=$(wildcard $(LWIPARCH)/netif/pcapif.c)
 CFLAGS+=-DCONFIG_PCAPIF
 LDFLAGS+=-lpcap
+else 
+ifeq ($(CONFIG_OSVNET),y)
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/osv-net.c)
+ARCHFILESXX+=$(wildcard $(LWIPARCH)/netif/osv-net-io.cc)
+CFLAGS+=-DCONFIG_OSVNET
+else
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/tapif.c)
+CFLAGS+=-DCONFIG_TAPIF
+endif
 endif
 
 # APPFILES: Applications.
 APPDIRS=.:target/$(TARGET)
-APPFILES=$(MCOBJS)
-APPFILESW=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILES)))
-APPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESW:.c=.o)))
+APPFILES  =$(MCOBJS) target/$(TARGET)/sys_arch.c
+APPFILESXX=$(MCOBJSXX)
+APPFILESW  =$(addprefix $(BUILDDIR)/,$(notdir $(APPFILES)))
+APPFILESWXX=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESXX)))
+APPOBJS =$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESW:.c=.o)))
+APPOBJS+=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESWXX:.cc=.o)))
 
 # LWIPFILES: All the above.
-LWIPFILES=$(COREFILES) $(CORE4FILES) $(CORE6FILES) $(SNMPFILES) $(APIFILES) $(NETIFFILES) $(ARCHFILES)
+LWIPFILES  =$(COREFILES) $(CORE4FILES) $(CORE6FILES) $(SNMPFILES) $(APIFILES) $(NETIFFILES) $(ARCHFILES)
+LWIPFILESXX=$(COREFILESXX) $(CORE4FILESXX) $(CORE6FILESXX) $(SNMPFILESXX) $(APIFILESXX) $(NETIFFILESXX) $(ARCHFILESXX)
 LWIPFILESW=$(wildcard $(LWIPFILES))
-LWIPOBJS=$(addprefix $(BUILDDIR)/,$(notdir $(LWIPFILES:.c=.o)))
+LWIPFILESWXX=$(wildcard $(LWIPFILESXX))
+LWIPOBJS =$(addprefix $(BUILDDIR)/,$(notdir $(LWIPFILES:.c=.o)))
+LWIPOBJS+=$(addprefix $(BUILDDIR)/,$(notdir $(LWIPFILESXX:.cc=.o)))
 
 ifneq ($(BUILDSO),y)
 LWIPLIB=$(BUILDDIR)/liblwip.a
@@ -224,14 +288,17 @@ build: $(BUILDDIR) $(BUILDDIR)/.depend $(BUILDDIR)/$(MINICACHE_OUT)
 $(BUILDDIR):
 	$(MKDIR) $@
 
+$(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPFILES) $(APPFILES) | $(BUILDDIR)
+	$(CCDEP) $(CFLAGS) -MM $^ > $(BUILDDIR)/.depend || $(RM) $(BUILDDIR)/.depend
+
+$(BUILDDIR)/%.o: %.cc | $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
 $(BUILDDIR)/%.o: %.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILDDIR)/%.a: %.o
 	$(AR) $(ARFLAGS) -o $@ $^
-
-$(BUILDDIR)/.depend: $(BUILDDIR) $(LWIPFILES) $(APPFILES) | $(BUILDDIR)
-	$(CCDEP) $(CFLAGS) -MM $^ > $(BUILDDIR)/.depend || $(RM) $(BUILDDIR)/.depend
 
 .PHONY: $(BUILDDIR)/$(MINICACHE_OUT)
 ifneq ($(BUILDSO),y)
@@ -242,11 +309,11 @@ $(APPLIB): $(APPOBJS)
 	$(AR) $(ARFLAGS) $(APPLIB) $?
 
 $(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPLIB) $(APPFILES)
-	$(CC) $(APPLIB) $(LWIPLIB) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT)
+	$(LD) $(APPLIB) $(LWIPLIB) $(LDFLAGS) -o $(BUILDDIR)/$(MINICACHE_OUT)
 else
 $(LWIPLIB): $(LWIPOBJS)
-	$(CC) $(LDFLAGS) $? -shared -o $(LWIPLIB)
+	$(LD) $(LDFLAGS) $? -shared -o $(LWIPLIB)
 
 $(BUILDDIR)/$(MINICACHE_OUT): $(BUILDDIR)/.depend $(LWIPLIB) $(APPOBJS) $(APPFILES)
-	$(CC) $(APPOBJS) -l:$(LWIPLIB) $(LDFLAGS) -shared -o $(BUILDDIR)/$(MINICACHE_OUT)
+	$(LD) $(APPOBJS) $(LDFLAGS) -l:$(LWIPLIB) -shared -o $(BUILDDIR)/$(MINICACHE_OUT)
 endif

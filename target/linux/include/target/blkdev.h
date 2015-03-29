@@ -9,7 +9,12 @@
 #include <aio.h>
 #include <semaphore.h>
 #include <mempool.h>
+#ifdef __OSV__
+#include <sys/mount.h>
+#include <sys/stat.h>
+#else
 #include <linux/fs.h>
+#endif
 
 #ifndef _POSIX_ASYNCHRONOUS_IO
 #error "POSIX_ASYNCHRONOUS_IO is not supported by your target"
