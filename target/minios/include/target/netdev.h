@@ -5,5 +5,7 @@
 
 #define target_netif_init \
   netfrontif_init
+#define target_netif_poll \
+  netfrontif_poll
 
 #endif /* _NETDEV_H_ */
