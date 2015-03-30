@@ -93,7 +93,9 @@ struct tapif {
 /* Forward declarations. */
 static void  tapif_input(struct netif *netif);
 
+#ifndef CONFIG_LWIP_NOTHREADS
 static void tapif_thread(void *data);
+#endif
 
 /*-----------------------------------------------------------------------------------*/
 static void
@@ -155,7 +157,9 @@ low_level_init(struct netif *netif)
 
   LWIP_DEBUGF(TAPIF_DEBUG, ("tapif_init: system(\"%s\");\n", buf));
   system(buf);
+#ifndef CONFIG_LWIP_NOTHREADS
   sys_thread_new("tapif_thread", tapif_thread, netif, DEFAULT_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
+#endif
 
 }
 /*-----------------------------------------------------------------------------------*/
@@ -253,32 +257,41 @@ low_level_input(struct tapif *tapif)
   return p;
 }
 /*-----------------------------------------------------------------------------------*/
+static inline void
+_tapif_poll(struct netif *netif, struct timeval *timeout)
+{
+  struct tapif *tapif = (struct tapif *)netif->state;
+  fd_set fdset;
+
+  FD_ZERO(&fdset);
+  FD_SET(tapif->fd, &fdset);
+
+  /* Wait for a packet to arrive and handle it */
+  if (select(tapif->fd + 1, &fdset, NULL, NULL, timeout))
+    tapif_input(netif);
+}
+
+#ifdef CONFIG_LWIP_NOTHREADS
+void
+tapif_poll(struct netif *netif)
+{
+  struct timeval zero = { 0, 0 }; /* do not block */
+  _tapif_poll(netif, &zero);
+}
+
+#else
+
 static void
 tapif_thread(void *arg)
 {
-  struct netif *netif;
-  struct tapif *tapif;
-  fd_set fdset;
-  int ret;
-
-  netif = (struct netif *)arg;
-  tapif = (struct tapif *)netif->state;
+  struct netif *netif = (struct netif *)arg;
 
   while(1) {
-    FD_ZERO(&fdset);
-    FD_SET(tapif->fd, &fdset);
-
-    /* Wait for a packet to arrive. */
-    ret = select(tapif->fd + 1, &fdset, NULL, NULL, NULL);
-
-    if(ret == 1) {
-      /* Handle incoming packet. */
-      tapif_input(netif);
-    } else if(ret == -1) {
-      perror("tapif_thread: select");
-    }
+    _tapif_poll(netif, NULL);
   }
 }
+#endif
+
 /*-----------------------------------------------------------------------------------*/
 /*
  * tapif_input():

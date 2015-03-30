@@ -620,10 +620,17 @@ int main(int argc, char *argv[])
      * network interface initialization
      * ----------------------------------- */
     TT_START(tt_netifadd);
+    /* NOTE: IP-level devices are currently only
+     * supported in non-threaded env */
 #ifdef CONFIG_LWIP_NOTHREADS
+#ifdef CONFIG_LWIP_IPDEV
+    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                      target_netif_init, ip_input);
+#else
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                       target_netif_init, ethernet_input);
-#else
+#endif
+#else /* CONFIG_LWIP_NOTHREADS */
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                       target_netif_init, tcpip_input);
 #endif /* CONFIG_LWIP_NOTHREADS */

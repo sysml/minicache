@@ -7,6 +7,7 @@
   osvnetif_init
 #define target_netif_poll \
   osvnetif_poll
+#define CONFIG_LWIP_IPDEV
 
 #elif defined CONFIG_PCAPIF
 #include <netif/pcapif.h>
@@ -17,6 +18,8 @@
 #include <netif/tapif.h>
 #define target_netif_init \
   tapif_init
+#define target_netif_poll \
+  tapif_poll
 
 #endif
 

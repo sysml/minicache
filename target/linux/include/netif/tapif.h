@@ -36,4 +36,16 @@
 
 err_t tapif_init(struct netif *netif);
 
+#ifdef CONFIG_LWIP_NOTHREADS
+/* NIC I/O handling: has to be called periodically
+ * to get received by the lwIP stack.
+ *
+ * Note: On threaded configuration, this call
+ * is executed by a thread created for the device.
+ * In this case, it has just to be ensured that this
+ * thread get scheduled frequently.
+ */
+void tapif_poll(struct netif *netif);
+#endif
+
 #endif /* LWIP_TAPIF_H */
