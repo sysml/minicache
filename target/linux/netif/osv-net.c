@@ -174,11 +174,6 @@ static struct pbuf *osvnetif_mkpbuf(const unsigned char *data, int len)
     return p;
 }
 
-static void osvnetif_droppbuf(struct pbuf *p)
-{
-  pbuf_free(p);
-}
-
 /**
  * Passes a pbuf to the lwIP stack for further processing.
  * The packet type is determined and checked before passing.
@@ -334,13 +329,11 @@ err_t osvnetif_init(struct netif *netif)
 	  snprintf(ifname, sizeof(ifname), "eth%u", nfi->vif_id);
 	  nfi->dev = open_onio(ifname,
 			       osvnetif_mkpbuf,
-			       osvnetif_droppbuf,
 			       osvnetif_rx_handler, netif);
 	} else {
 	    /* open eth0 interface */
 	  nfi->dev = open_onio(NULL,
 			       osvnetif_mkpbuf,
-			       osvnetif_droppbuf,
 			       osvnetif_rx_handler, netif);
 	}
 	if (!nfi->dev) {

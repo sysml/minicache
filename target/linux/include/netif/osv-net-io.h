@@ -18,7 +18,6 @@ typedef struct _onio onio;
 /* if name==NULL, first available device is opened */
 onio *open_onio(const char *ifname,
 		struct pbuf *(*mk_pbuf)(const unsigned char *, int),
-		void (*free_pbuf)(struct pbuf *),
 		void (*rxcb)(struct pbuf *, void *), void *rxcb_argp);
 void close_onio(onio *dev);
 

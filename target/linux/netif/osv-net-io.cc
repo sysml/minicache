@@ -13,10 +13,6 @@
 #include <osv/types.h>
 
 #include <lockfree/ring.hh>
-//#include <osv/debug.hh>
-//#include <osv/clock.hh>
-//#include <osv/ilog2.hh>
-//#include <osv/mempool.hh>
 
 #include <bsd/porting/netport.h>
 #include <bsd/sys/net/if_var.h>
@@ -37,15 +33,14 @@
 
 using namespace std;
 /* spsc = single producer, single consumer */
-using pbuf_ring_t = ring_spsc<struct pbuf *,1024>;
+using mbuf_ring_t = ring_spsc<struct mbuf *,1024>;
 
 struct _onio {
   struct ifnet *ifn;
   unsigned char hw_addr[ETHER_ADDR_LEN];
-  pbuf_ring_t* rxring;
+  mbuf_ring_t* rxring;
 
   struct pbuf *(*mk_pbuf)(const unsigned char *, int);
-  void (*drop_pbuf)(struct pbuf *);
   void (*rxcb)(struct pbuf *, void *);
   void *rxcb_argp;
 };
@@ -54,9 +49,7 @@ static inline int onio_pf_hook(
     void *argv, struct mbuf **m, struct ifnet *ifn, int dir, struct inpcb *inp)
 {
   struct _onio *dev = (struct _onio *) argv;
-  size_t pktlen;
-  const unsigned char *pktbuf;
-  struct pbuf *p;
+  struct mbuf *m2;
   struct ip *ip = NULL;
 
   //printf("Called hook for mbuf %p dir %d (dev %u: %s)\n",
@@ -75,29 +68,24 @@ static inline int onio_pf_hook(
   ip->ip_len = htons(ip->ip_len);
   ip->ip_off = htons(ip->ip_off);
 
-  pktlen = (*m)->m_hdr.mh_len;
-  pktbuf = mtod(*m, const unsigned char *);
-
-  /* copy packet buffer to an lwIP buffer, enqueue it to rx ring */
-  p = dev->mk_pbuf(pktbuf, pktlen);
-  if (!p) {
-    /* pbuf could not be allocated: drop */
+  /* increase refcount of packet and enqueue it */
+  m2 = m_copypacket(*m, M_NOWAIT);
+  if (!m2) {
+    /* drop packet */
     return 1;
   }
 
-  if (!dev->rxring->push(p)) {
-    /* ring is full: drop */
-    dev->drop_pbuf(p);
+  if (!dev->rxring->push(m2)) {
+    /* drop packet */
+    m_freem(m2);
     return 1;
   }
 
-  //printf("IP Packet consumed (%u bytes at %p)\n", pktlen, pktbuf);
   return 1;
 }
 
 onio *open_onio(const char *ifname,
 		struct pbuf *(*mk_pbuf)(const unsigned char *, int),
-		void (*drop_pbuf)(struct pbuf *),
 		void (*rxcb)(struct pbuf *, void *), void *rxcb_argp)
 {
   struct ifnet *ifp;
@@ -107,12 +95,11 @@ onio *open_onio(const char *ifname,
   if (!dev)
     goto err_out;
 
-  dev->rxring = new pbuf_ring_t();
+  dev->rxring = new mbuf_ring_t();
   if (!dev->rxring)
     goto err_free_rxring;
 
   dev->mk_pbuf = mk_pbuf;
-  dev->drop_pbuf = drop_pbuf;
   dev->rxcb = rxcb;
   dev->rxcb_argp = rxcb_argp;
 
@@ -200,14 +187,14 @@ onio *open_onio(const char *ifname,
 
 void close_onio(onio *dev)
 {
-  struct pbuf *p;
+  struct mbuf *m;
 
   pfil_remove_hook(onio_pf_hook, (void*) dev, PFIL_IN | PFIL_WAITOK,
 		   &V_inet_pfil_hook);
   printf("open_onio: PF receive hook removed\n");
 
-  while(dev->rxring->pop(p))
-    dev->drop_pbuf(p);
+  while(dev->rxring->pop(m))
+  m_freem(m);
   delete dev->rxring;
   free(dev);
 }
@@ -215,9 +202,26 @@ void close_onio(onio *dev)
 void onio_poll(onio *dev)
 {
   struct pbuf *p;
+  struct mbuf *m;
 
-  while(dev->rxring->pop(p))
+  size_t pktlen;
+  const unsigned char *pktbuf;
+
+  while(dev->rxring->pop(m)) {
+    pktlen = m->m_hdr.mh_len;
+    pktbuf = mtod(m, const unsigned char *);
+
+    /* copy packet buffer to an lwIP buffer, enqueue it to rx ring */
+    p = dev->mk_pbuf(pktbuf, pktlen);
+    if (!p) {
+      /* pbuf could not be allocated: drop */
+      m_freem(m);
+      continue;
+    }
+
     dev->rxcb(p, dev->rxcb_argp);
+    m_freem(m);
+  }
 }
 
 int onio_transmit(onio *dev, void *buf, size_t len)
@@ -240,7 +244,6 @@ int onio_transmit(onio *dev, void *buf, size_t len)
    *       -> mnakes sure that PREPEND will not allocate further memory */
   memcpy(mtod(m, unsigned char *), buf, len);
   m->M_dat.MH.MH_pkthdr.csum_flags = 0; /* no CHKSUM offload */
-  //m->M_dat.MH.MH_pkthdr.csum_flags = CSUM_TSO;
   m->M_dat.MH.MH_pkthdr.len = m->m_hdr.mh_len = len;
 
   /* set destination IP on bsd_socketaddr */
