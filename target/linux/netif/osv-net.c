@@ -92,8 +92,8 @@
 #include <hexdump.h>
 
 #define OSVNETIF_NPREFIX 'o'
-#define OSVNETIF_SPEED 10000000000ul     /* 10 GBit/s */
-#define OSVNETIF_MTU 1500
+#define OSVNETIF_SPEED 0ul     /* 0 for unknown */
+#define OSVNETIF_MTU 1400
 
 /**
  * Helper macro
@@ -117,7 +117,8 @@
  * @return
  *  ERR_OK when the packet could be sent; an err_t value otherwise
  */
-static inline err_t osvnetif_transmit(struct netif *netif, struct pbuf *p)
+static err_t osvnetif_output(struct netif *netif, struct pbuf *p,
+			     const ip_addr_t *ipaddr)
 {
     struct osvnetif *nfi = netif->state;
     struct pbuf *q;
@@ -127,11 +128,6 @@ static inline err_t osvnetif_transmit(struct netif *netif, struct pbuf *p)
 			      "Transmitting %u bytes\n",
 			      netif->name[0], netif->name[1],
 			      p->tot_len));
-
-#if ETH_PAD_SIZE
-    pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
-#endif
-
     if (!p->next) {
         /* fast case: no further buffer allocation needed */
         onio_transmit(nfi->dev, (unsigned char *) p->payload, p->len);
@@ -143,11 +139,6 @@ static inline err_t osvnetif_transmit(struct netif *netif, struct pbuf *p)
 
         onio_transmit(nfi->dev, data, p->tot_len);
     }
-
-#if ETH_PAD_SIZE
-    pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
-#endif
-
     LINK_STATS_INC(link.xmit);
     return ERR_OK;
 }
@@ -167,13 +158,9 @@ static struct pbuf *osvnetif_mkpbuf(const unsigned char *data, int len)
     struct pbuf *p, *q;
     const unsigned char *cur;
 
-    p = pbuf_alloc(PBUF_RAW, len + ETH_PAD_SIZE, PBUF_POOL);
+    p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
     if (unlikely(!p))
         return NULL;
-
-#if ETH_PAD_SIZE
-    pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
-#endif
 
     if (likely(!p->next)) {
         /* fast path */
@@ -183,12 +170,6 @@ static struct pbuf *osvnetif_mkpbuf(const unsigned char *data, int len)
         for(q = p, cur = data; q != NULL; cur += q->len, q = q->next)
             MEMCPY(q->payload, cur, q->len);
     }
-
-#if ETH_PAD_SIZE
-    pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
-#endif
-
-    printh(data, len);
 
     return p;
 }
@@ -212,7 +193,6 @@ static void osvnetif_droppbuf(struct pbuf *p)
  */
 static inline void osvnetif_input(struct pbuf *p, struct netif *netif)
 {
-    struct eth_hdr *ethhdr;
     err_t err;
 
     LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_input: %c%c: "
@@ -220,45 +200,23 @@ static inline void osvnetif_input(struct pbuf *p, struct netif *netif)
 			      netif->name[0], netif->name[1],
 			      p->tot_len));
 
-    ethhdr = p->payload;
-    switch (htons(ethhdr->type)) {
-    /* IP or ARP packet? */
-    case ETHTYPE_IP:
-#if IPV6_SUPPORT
-    case ETHTYPE_IPV6:
-#endif
-    case ETHTYPE_ARP:
-#if PPPOE_SUPPORT
-    case ETHTYPE_PPPOEDISC:
-    case ETHTYPE_PPPOE:
-#endif
     /* packet will be sent to lwIP stack for processing */
     /* Note: On threaded configuration packet buffer will be enqueued on
      *  a mailbox. The lwIP thread will do the packet processing when it gets
      *  scheduled. */
-        err = netif->input(p, netif);
-	if (unlikely(err != ERR_OK)) {
+    err = netif->input(p, netif);
+    if (unlikely(err != ERR_OK)) {
 #ifndef CONFIG_LWIP_NOTHREADS
-	    if (err == ERR_MEM)
-	        LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_input: %c%c: ERROR %d: "
-					  "Could not post packet to lwIP thread. Packet dropped\n",
-					  netif->name[0], netif->name[1], err));
-	    else
+      if (err == ERR_MEM)
+	LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_input: %c%c: ERROR %d: "
+				  "Could not post packet to lwIP thread. Packet dropped\n",
+				  netif->name[0], netif->name[1], err));
+      else
 #endif /* CONFIG_LWIP_NOTHREADS */
-	    LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_input: %c%c: ERROR %d: "
-				      "Packet dropped\n",
-				      netif->name[0], netif->name[1], err));
-	    pbuf_free(p);
-	}
-	break;
-
-    default:
-        LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_input: %c%c: ERROR: "
-				  "Dropped packet with unknown type 0x%04x\n",
-				  netif->name[0], netif->name[1],
-				  htons(ethhdr->type)));
-	pbuf_free(p);
-	break;
+	LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_input: %c%c: ERROR %d: "
+				  "Packet dropped\n",
+				  netif->name[0], netif->name[1], err));
+      pbuf_free(p);
     }
 }
 
@@ -397,48 +355,24 @@ err_t osvnetif_init(struct netif *netif)
     netif->name[1] = '0' + osvnetif_id;
     osvnetif_id++;
 
-    /* We directly use etharp_output() here to save a function call.
-     * Instead, there could be function declared that calls etharp_output()
-     * only if there is a link is available... */
-    netif->output = etharp_output;
-    netif->linkoutput = osvnetif_transmit;
+    /* We send IP packets directly (ARP is done by OSv) */
+    netif->output =  osvnetif_output;
+    netif->linkoutput = NULL;
 #if LWIP_NETIF_REMOVE_CALLBACK
     netif->remove_callback = osvnetif_exit;
 #endif /* CONFIG_NETIF_REMOVE_CALLBACK */
 
-    /* Hardware address */
-    if (nfi->_hwaddr_is_private) {
-	if (onio_get_hwaddr(nfi->dev, &nfi->hwaddr, ETHARP_HWADDR_LEN) != ETHARP_HWADDR_LEN) {
-	    LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_init: %c%c: "
-				      "Could not retrieve hardware address\n",
-				      netif->name[0], netif->name[1]));
-	    goto err_close_onio;
-	}
-    } else {
-	LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_init: %c%c: "
-				  "Overwriting hardware address\n",
-				  netif->name[0], netif->name[1]));
-    }
-    SMEMCPY(&netif->hwaddr, &nfi->hwaddr, ETHARP_HWADDR_LEN);
-    netif->hwaddr_len = ETHARP_HWADDR_LEN;
-    LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_init: %c%c: hardware address: "
-			      "%02x:%02x:%02x:%02x:%02x:%02x\n",
-			      netif->name[0], netif->name[1],
-			      netif->hwaddr[0],
-			      netif->hwaddr[1],
-			      netif->hwaddr[2],
-			      netif->hwaddr[3],
-			      netif->hwaddr[4],
-			      netif->hwaddr[5]));
+    /* No hardware address support */
+    netif->hwaddr_len = 0;
 
     /* Initialize the snmp variables and counters inside the struct netif.
      * The last argument is the link speed, in units of bits per second. */
-    NETIF_INIT_SNMP(netif, snmp_ifType_ethernet_csmacd, OSVNETIF_SPEED);
+    NETIF_INIT_SNMP(netif, snmp_ifType_ppp, OSVNETIF_SPEED);
     LWIP_DEBUGF(NETIF_DEBUG, ("osvnetif_init: %c%c: Link speed: %llu bps\n",
 			      netif->name[0], netif->name[1], OSVNETIF_SPEED));
 
     /* Device capabilities */
-    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
+    netif->flags = NETIF_FLAG_LINK_UP;
 
     /* Maximum transfer unit */
     netif->mtu = OSVNETIF_MTU;
