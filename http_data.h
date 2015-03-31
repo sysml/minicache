@@ -206,7 +206,14 @@ static const char _http_testfile[] = \
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /* 1456 bytes */
+#ifdef HTTP_TESTFILE_LEN
+#if (HTTP_TESTFILE_LEN > 1456)
+#error "Testfile length too large (maximum is 1456 bytes)"
+#endif
+static const uint64_t _http_testfile_len = HTTP_TESTFILE_LEN;
+#else
 static const uint64_t _http_testfile_len = sizeof(_http_testfile) - 1;
+#endif
 #endif
 
 #endif /* _HTTP_DATA_H_ */
