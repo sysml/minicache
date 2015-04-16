@@ -226,9 +226,9 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	htable_size_chks     = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, chunksize);
 	htable_size          = CHUNKS_TO_BYTES(htable_size_chks, chunksize);
 
-	printf("SHFS version:       0x%02x%02x\n",
-	       hdr_common->version[1],
-	       hdr_common->version[0]);
+	printf("SHFS version:      %2x.%02x\n",
+	       hdr_common->version[0],
+	       hdr_common->version[1]);
 	strncpy(volname, hdr_common->vol_name, 16);
 	volname[17] = '\0';
 	printf("Volume name:        %s\n", volname);

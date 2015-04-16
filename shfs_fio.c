@@ -186,7 +186,7 @@ void shfs_fio_size(SHFS_FD f, uint64_t *out)
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 	struct shfs_hentry *hentry = bentry->hentry;
 
-	*out = hentry->len;
+	*out = SHFS_HENTRY_ISLINK(hentry) ? 0 : hentry->f_attr.len;
 }
 
 void shfs_fio_hash(SHFS_FD f, hash512_t out)
@@ -213,9 +213,13 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	uint64_t rlen;
 	int ret = 0;
 
+	/* check if entry is link to remote file */
+	if (SHFS_HENTRY_ISLINK(hentry))
+		return -EINVAL;
+
 	/* check boundaries */
-	if ((offset > hentry->len) ||
-	    ((offset + len) > hentry->len))
+	if ((offset > hentry->f_attr.len) ||
+	    ((offset + len) > hentry->f_attr.len))
 		return -EINVAL;
 
 	/* pick chunk I/O buffer from pool */
@@ -266,9 +270,13 @@ int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	uint64_t rlen;
 	int ret = 0;
 
+	/* check if entry is link to remote file */
+	if (SHFS_HENTRY_ISLINK(hentry))
+		return -EINVAL;
+
 	/* check boundaries */
-	if ((offset > hentry->len) ||
-	    ((offset + len) > hentry->len))
+	if ((offset > hentry->f_attr.len) ||
+	    ((offset + len) > hentry->f_attr.len))
 		return -EINVAL;
 
 	/* perform the I/O chunk-wise */

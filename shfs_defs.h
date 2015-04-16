@@ -84,8 +84,8 @@ typedef uint64_t strp_t;
 #define SHFS_MAGIC1 'H'
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
-#define SHFSv1_VERSION1 0x01
-#define SHFSv1_VERSION0 0x06
+#define SHFS_MAJOR 0x02
+#define SHFS_MINOR 0x00
 
 /* member_stripemode */
 #define SHFS_SM_INDEPENDENT 0x0
@@ -105,7 +105,7 @@ struct shfs_hdr_common {
 	uuid_t             member_uuid; /* this disk */
 	uint8_t            member_count;
 	struct {           /* uuid's of all members */
-		uuid_t    uuid;
+		uuid_t     uuid;
 	}                  member[SHFS_MAX_NB_MEMBERS];
 } __attribute__((packed));
 
@@ -131,17 +131,33 @@ struct shfs_hdr_config {
 /* hentry flags */
 #define SHFS_EFLAG_HIDDEN    0x1
 #define SHFS_EFLAG_DEFAULT   0x8
+#define SHFS_EFLAG_RLINK     0x4
 
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */
-	chk_t              chunk;
-	uint64_t           offset; /* byte offset, usually 0 */
-	uint64_t           len; /* length (bytes) */
-	char               mime[64]; /* internet media type */
+
+	union {
+		/* SHFS_EFLAG_LINK not set */
+		struct {
+			chk_t     chunk;
+			uint64_t  offset; /* byte offset, usually 0 */
+			uint64_t  len; /* length (bytes) */
+		} f_attr __attribute__((packed));
+
+		/* SHFS_EFLAG_LINK set */
+		struct {
+			uint8_t   rip[4]; /* remote IPv4 address */
+			uint16_t  rport;
+			char      rpath[56];
+			uint8_t   type;
+		} l_attr __attribute__((packed));
+	};
+
+	char               mime[32]; /* internet media type */
 	uint64_t           ts_creation;
 	uint8_t            flags;
+	char               encoding[16]; /* set on pre-encoded content */
 	char               name[64];
-	char               encoding[16]; /* set on pre-encoded */
 } __attribute__((packed));
 
 #define SHFS_MIN_CHUNKSIZE 4096
@@ -169,6 +185,8 @@ struct shfs_hentry {
 	((hentry)->flags & (SHFS_EFLAG_HIDDEN))
 #define SHFS_HENTRY_ISDEFAULT(hentry) \
 	((hentry)->flags & (SHFS_EFLAG_DEFAULT))
+#define SHFS_HENTRY_ISLINK(hentry) \
+	((hentry)->flags & (SHFS_EFLAG_RLINK))
 
 #ifndef __SHFS_TOOLS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)

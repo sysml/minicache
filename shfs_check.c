@@ -23,9 +23,9 @@ int shfs_detect_hdr0(void *chk0) {
 		return -1;
 
 	/* Check for compatible version */
-	if (hdr_common->version[0] != SHFSv1_VERSION0)
+	if (hdr_common->version[0] != SHFS_MAJOR)
 		return -2;
-	if (hdr_common->version[1] != SHFSv1_VERSION1)
+	if (hdr_common->version[1] != SHFS_MINOR)
 		return -2;
 
 	/* Check Endianess */

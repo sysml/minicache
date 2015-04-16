@@ -718,10 +718,16 @@ static int reload_vol_htable(void) {
 					else if (SHFS_HENTRY_ISDEFAULT(nhentry))
 						shfs_vol.def_bentry = bentry;
 				}
-			} else if (chentry->chunk  != nhentry->chunk  ||
-			           chentry->offset != nhentry->offset ||
-			           chentry->len    != nhentry->len    ||
-				   chentry->flags  != nhentry->flags) {
+			} else if (chentry->flags != nhentry->flags ||
+				   (SHFS_HENTRY_ISLINK(chentry) && (
+				   chentry->f_attr.chunk  != nhentry->f_attr.chunk  ||
+				   chentry->f_attr.offset != nhentry->f_attr.offset ||
+				   chentry->f_attr.len    != nhentry->f_attr.len)) ||
+				   (!SHFS_HENTRY_ISLINK(chentry) && (
+				   chentry->l_attr.rip    != nhentry->l_attr.rip  ||
+				   chentry->l_attr.rport  != nhentry->l_attr.rport ||
+				   chentry->l_attr.rpath  != nhentry->l_attr.rpath || 
+				   chentry->l_attr.type   != nhentry->l_attr.type))) {
 				/* in this case, at most the file location has been moved
 				 *
 				 * Note: This is usually a bad thing but happens

@@ -45,7 +45,7 @@ static struct option long_opts[] = {
 
 static inline void print_version()
 {
-	printf("%s v%u.%02u (built: %s %s)\n", STR_VERSION, SHFSv1_VERSION1, SHFSv1_VERSION0,
+	printf("%s v%u.%02u (built: %s %s)\n", STR_VERSION, SHFS_MAJOR, SHFS_MINOR,
 	       __DATE__, __TIME__);
 }
 
@@ -545,8 +545,8 @@ static void load_vol_alist(void)
 			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 			 + bentry->hentry_htoffset);
 		shfs_alist_register(shfs_vol.al,
-		                    hentry->chunk,
-		                    DIV_ROUND_UP(hentry->offset + hentry->len,
+		                    hentry->f_attr.chunk,
+		                    DIV_ROUND_UP(hentry->f_attr.offset + hentry->f_attr.len,
 		                                 shfs_vol.chunksize));
 	}
 }
@@ -819,9 +819,9 @@ static int actn_addfile(struct token *j)
 		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 		 + bentry->hentry_htoffset);
 	hash_copy(hentry->hash, fhash, shfs_vol.hlen);
-	hentry->chunk = cchk;
-	hentry->offset = 0;
-	hentry->len = (uint64_t) fsize;
+	hentry->f_attr.chunk = cchk;
+	hentry->f_attr.offset = 0;
+	hentry->f_attr.len = (uint64_t) fsize;
 	hentry->ts_creation = gettimestamp_s();
 	hentry->flags = 0;
 	memset(hentry->mime, 0, sizeof(hentry->mime));
@@ -922,8 +922,8 @@ static int actn_rmfile(struct token *token)
 
 	/* release container */
 	dprintf(D_L0, "Releasing container...\n");
-	ret = shfs_alist_unregister(shfs_vol.al, hentry->chunk,
-	                            DIV_ROUND_UP(hentry->len + hentry->offset,
+	ret = shfs_alist_unregister(shfs_vol.al, hentry->f_attr.chunk,
+	                            DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset,
 	                                         shfs_vol.chunksize));
 	if (ret < 0) {
 		eprintf("Could not release container\n");
@@ -980,9 +980,9 @@ static int actn_catfile(struct token *token)
 		 + bentry->hentry_htoffset);
 
 	fflush(stdout);
-	c = hentry->chunk;
-	off = hentry->offset;
-	left = hentry->len;
+	c = hentry->f_attr.chunk;
+	off = hentry->f_attr.offset;
+	left = hentry->f_attr.len;
 
 	while (left) {
 		ret = sync_read_chunk(&shfs_vol.s, c, 1, buf);
@@ -1128,8 +1128,8 @@ static int actn_ls(struct token *token)
 		if (shfs_vol.hlen <= 32)
 			printf("%-64s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
-			       hentry->chunk,
-			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       hentry->f_attr.chunk,
+			       DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
 			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
 			       '-', /* reserved for future use */
 			       '-', /* reserved for future use */
@@ -1140,8 +1140,8 @@ static int actn_ls(struct token *token)
 		else
 			printf("%-128s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
-			       hentry->chunk,
-			       DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+			       hentry->f_attr.chunk,
+			       DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
 			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
 			       '-', /* reserved for future use */
 			       '-', /* reserved for future use */

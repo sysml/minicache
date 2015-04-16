@@ -30,24 +30,24 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out);
 void shfs_fio_size(SHFS_FD f, uint64_t *out);
 /* file container size in chunks */
 #define shfs_fio_size_chks(f) \
-	(DIV_ROUND_UP(((f)->hentry->offset + (f)->hentry->len), shfs_vol.chunksize))
+	(DIV_ROUND_UP(((f)->hentry->f_attr.offset + (f)->hentry->f_attr.len), shfs_vol.chunksize))
 
 /* volume chunk address of file chunk address */
 #define shfs_volchk_fchk(f, fchk) \
-	((f)->hentry->chunk + (fchk))
+	((f)->hentry->f_attr.chunk + (fchk))
 
 /* volume chunk address of file byte offset */
 #define shfs_volchk_foff(f, foff) \
-	(((f)->hentry->offset + (foff)) / shfs_vol.chunksize + (f)->hentry->chunk)
+	(((f)->hentry->f_attr.offset + (foff)) / shfs_vol.chunksize + (f)->hentry->f_attr.chunk)
 /* byte offset in volume chunk of file byte offset */
 #define shfs_volchkoff_foff(f, foff) \
-	(((f)->hentry->offset + (foff)) % shfs_vol.chunksize)
+	(((f)->hentry->f_attr.offset + (foff)) % shfs_vol.chunksize)
 
 /* Check macros to test if a address is within file bounds */
 #define shfs_is_fchk_in_bound(f, fchk) \
 	(shfs_fio_size_chks((f)) > (fchk))
 #define shfs_is_foff_in_bound(f, foff) \
-	((f)->hentry->len > (foff))
+	((f)->hentry->f_attr.len > (foff))
 
 /*
  * Simple but synchronous file read

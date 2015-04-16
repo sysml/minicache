@@ -48,8 +48,8 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		fprintf(cio, "%c%s %12"PRIchk" %12"PRIchk" %-24s %-16s %s\n",
 		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
-		        hentry->chunk,
-		        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
+		        hentry->f_attr.chunk,
+		        DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
 		        str_mime,
 		        str_date,
 		        str_name);
@@ -76,7 +76,7 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 		bentry = el->private;
 		if (bentry->refcount > 0) {
 			hash_unparse(*el->h, shfs_vol.hlen, str_hash);
-			fprintf(cio, "%c%s %12"PRIchk"\n",
+			fprintf(cio, "%c%s %12"PRIu8"\n",
 			        SHFS_HASH_INDICATOR_PREFIX,
 			        str_hash,
 			        bentry->refcount);
@@ -116,16 +116,16 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 				fsize);
 		else if (fsize < (1024ll * 1024ll))
 			fprintf(cio, "%"PRIu64".%01"PRIu64" KiB\n",
-				fsize / (1024ll),
-				(fsize / (1024ll / 10)) % 10);
+				fsize / 1024,
+				((fsize / 1024) / 10) % 10);
 		else if (fsize < (1024ll * 1024ll * 1024ll))
 			fprintf(cio, "%"PRIu64".%02"PRIu64" MiB\n",
-				fsize / (1024ll * 1024ll),
-				(fsize / ((1024ll * 1024ll) / 100)) % 100);
+				fsize / (1024 * 1024),
+				(fsize / ((1024 * 1024) / 100)) % 100);
 		else
 			fprintf(cio, "%"PRIu64".%02"PRIu64" GiB\n",
-				fsize / (1024ll * 1024ll * 1024ll),
-				(fsize / ((1024ll * 1024ll * 1024ll) / 100)) % 100);
+				fsize / (1024 * 1024 * 1024),
+				(fsize / ((1024 * 1024 * 1024) / 100)) % 100);
 
 		shfs_fio_close(f);
 	}
@@ -414,9 +414,9 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 		goto out;
 	}
 
-	fprintf(cio, "SHFS version:       0x%02x%02x\n",
-	        SHFSv1_VERSION1,
-	        SHFSv1_VERSION0);
+	fprintf(cio, "SHFS version:       %2x.%02x\n",
+	        SHFS_MAJOR,
+	        SHFS_MINOR);
 	fprintf(cio, "Volume name:        %s\n", shfs_vol.volname);
 	uuid_unparse(shfs_vol.uuid, str_uuid);
 	fprintf(cio, "Volume UUID:        %s\n", str_uuid);
@@ -427,7 +427,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	        shfs_vol.chunksize / 1024);
 	fprintf(cio, "Volume size:        %"PRIchk" KiB\n",
 	        CHUNKS_TO_BYTES(shfs_vol.volsize, shfs_vol.chunksize) / 1024);
-	fprintf(cio, "Hash table:         %"PRIu32" entries in %ld buckets\n" \
+	fprintf(cio, "Hash table:         %"PRIu32" entries in %"PRIu32" buckets\n" \
 	        "                    %"PRIchk" chunks (%"PRIchk" KiB)\n" \
 	        "                    %s\n",
 	        shfs_vol.htable_nb_entries, shfs_vol.htable_nb_buckets,
