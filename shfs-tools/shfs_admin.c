@@ -8,12 +8,23 @@
 #include <libgen.h>
 #include <signal.h>
 
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <uuid/uuid.h>
 #include <mhash.h>
 
 #include "shfs_admin.h"
 #include "shfs_btable.h"
 #include "shfs_alloc.h"
+#include "http_parser.h"
+
+#ifndef INET_ADDRLEN
+#define INET_ADDRLEN 4
+#endif
+
+#ifndef INET6_ADDRLEN
+#define INET6_ADDRLEN 16
+#endif
 
 unsigned int verbosity = 0;
 int force = 0;
@@ -23,7 +34,7 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:r:c:d:Cm:n:D:li";
+const char *short_opts = "h?vVfa:u:r:c:d:Cm:n:D:li";
 
 static struct option long_opts[] = {
 	{"help",		no_argument,		NULL,	'h'},
@@ -31,6 +42,7 @@ static struct option long_opts[] = {
 	{"verbose",		no_argument,		NULL,	'v'},
 	{"force",		no_argument,		NULL,	'f'},
 	{"add-obj",		required_argument,	NULL,	'a'},
+	{"add-lnk",		required_argument,	NULL,	'u'},
 	{"rm-obj",		required_argument,	NULL,	'r'},
 	{"cat-obj",		required_argument,	NULL,	'c'},
 	{"set-default",		required_argument,	NULL,	'd'},
@@ -60,7 +72,8 @@ static void print_usage(char *argv0)
 	printf("  -v, --verbose                increases verbosity level (max. %d times)\n", D_MAX);
 	printf("  -f, --force                  suppresses warnings and user questions\n");
 	printf("  -a, --add-obj [FILE]         adds FILE as object to the volume\n");
-	printf("  For each add-obj token:\n");
+	printf("  -u, --add-lnk [URL]          adds URL as remote link to the volume\n");
+	printf("  For each add-obj, add-ref token:\n");
 	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	printf("    -n, --name [NAME]          sets an additional name for the object\n");
 	printf("    -D, --digest [HASH]        sets the HASH digest for the object\n");
@@ -177,8 +190,14 @@ static int parse_args(int argc, char **argv, struct args *args)
 			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
 				die();
 			break;
+		case 'u': /* add-lnk */
+			ctoken = args_add_token(ctoken, args);
+			ctoken->action = ADDLNK;
+			if (parse_args_setval_str(&ctoken->path, optarg) < 0)
+				die();
+			break;
 		case 'm': /* mime */
-			if (!ctoken || ctoken->action != ADDOBJ) {
+			if (!ctoken || (ctoken->action != ADDOBJ && ctoken->action != ADDLNK)) {
 				eprintf("Please set mime after an add-obj token\n");
 				return -EINVAL;
 			}
@@ -186,7 +205,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 				die();
 			break;
 		case 'n': /* name */
-			if (!ctoken || ctoken->action != ADDOBJ) {
+			if (!ctoken || (ctoken->action != ADDOBJ && ctoken->action != ADDLNK)) {
 				eprintf("Please set name after an add-obj token\n");
 				return -EINVAL;
 			}
@@ -194,7 +213,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 				die();
 			break;
 		case 'D': /* digest */
-			if (!ctoken || ctoken->action != ADDOBJ) {
+			if (!ctoken || (ctoken->action != ADDOBJ && ctoken->action != ADDLNK)) {
 				eprintf("Please set digest after an add-obj token\n");
 				return -EINVAL;
 			}
@@ -894,6 +913,202 @@ static int actn_addfile(struct token *j)
 	return ret;
 }
 
+static inline int hntosaddr(const char *hn, size_t hn_len, int ai_family, struct sockaddr *out)
+{
+	char node[hn_len + 1];
+	struct addrinfo hints;
+	struct addrinfo *result;
+	int gai_ret;
+
+	strncpy(node, hn, hn_len);
+	node[hn_len] = '\0';
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = ai_family ? ai_family : AF_UNSPEC;
+	hints.ai_socktype = 0;
+	hints.ai_flags = 0;
+	hints.ai_protocol = 0;
+	hints.ai_canonname = NULL;
+	hints.ai_addr = NULL;
+	hints.ai_next = NULL;
+
+	gai_ret = getaddrinfo(node, NULL, &hints, &result);
+	if (gai_ret) {
+		eprintf("Could not resolve hostname %s: %s\n", node, gai_strerror(gai_ret));
+		return -ENOENT;
+	}
+	if (!result[0].ai_addr) {
+		eprintf("Could not resolve hostname %s: No address associated with hostname\n", node);
+		return -ENOENT;
+	}
+
+	memcpy(out, result[0].ai_addr, sizeof(*out));
+	freeaddrinfo(result);
+	return 0;
+}
+
+static int actn_addlink(struct token *j)
+{
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	char str_hash[(shfs_vol.hlen * 2) + 1];
+	char str_ip[INET_ADDRSTRLEN];
+	struct sockaddr_in rhost_saddr;
+	struct in_addr *rhost_ip;
+	struct http_parser_url u;
+	hash512_t fhash;
+	MHASH td;
+	int ret;
+
+	ret = -EINVAL;
+
+	/* parse URL (and resolve hostname to IPv4) */
+	dprintf(D_L0, "Parsing %s...\n", j->path);
+	if (http_parser_parse_url(j->path, strlen(j->path), 0, &u) != 0) {
+		eprintf("Could not parse URL: %s\n", j->path);
+		goto err;
+	}
+
+	/* check URL */
+	if ((u.field_set & (1 << UF_SCHEMA))
+	    && (strncmp("http:", j->path + u.field_data[UF_SCHEMA].off,
+			u.field_data[UF_SCHEMA].len) != 0)) {
+		eprintf("Schema is not http in URL: %s\n", j->path);
+		goto err;
+	}
+	if (!(u.field_set & (1 << UF_HOST))) {
+		eprintf("Hostname not set in URL: %s\n", j->path);
+		goto err;
+	}
+	if (!(u.field_set & (1 << UF_PORT))) {
+		u.port = 80; /* default port */
+	}
+	if ((u.field_set & (1 << UF_FRAGMENT)) &&
+	    (u.field_data[UF_FRAGMENT].len > 0)) {
+		eprintf("Fragments are not supported in URL: %s\n", j->path);
+		goto err;
+	}
+	if ((u.field_set & (1 << UF_USERINFO)) &&
+	    (u.field_data[UF_USERINFO].len > 0)) {
+		eprintf("User infos are not supported in URL: %s\n", j->path);
+		goto err;
+	}
+	if ((u.field_set & (1 << UF_QUERY)) &&
+	    (u.field_data[UF_QUERY].len > 0)) {
+		eprintf("Query is not supported in URL: %s\n", j->path);
+		goto err;
+	}
+	if ((u.field_set & (1 << UF_MAX)) &&
+	    (u.field_data[UF_MAX].len > 0)) {
+		eprintf("Max is not supported in URL: %s\n", j->path);
+		goto err;
+	}
+	if ((u.field_set & (1 << UF_PATH)) &&
+	    (u.field_data[UF_PATH].len > sizeof(hentry->l_attr.rpath))) {
+		eprintf("Path in URL is longer than by SHFS: %s\n", j->path);
+		goto err;
+	}
+
+	/* get remote host IPv4 */
+	dprintf(D_L0, "Quering host address for %s...\n", j->path);
+	if (hntosaddr(j->path + u.field_data[UF_HOST].off,
+		     u.field_data[UF_HOST].len,
+		      AF_INET, (struct sockaddr *) &rhost_saddr) < 0)
+		goto err;
+	rhost_ip = &rhost_saddr.sin_addr;
+
+	inet_ntop(AF_INET, rhost_ip, str_ip, INET_ADDRSTRLEN);
+	dprintf(D_L1, "Going to add the following remote entry:\n");
+	dprintf(D_L1, " Host: %s\n", str_ip);
+	dprintf(D_L1, " Port: %u\n", u.port);
+	if (u.field_data[UF_PATH].len > 1)
+		dprintf(D_L0, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
+	else
+		dprintf(D_L0, " Path: /\n");
+	dprintf(D_L0, " Type: REDIRECT\n");
+
+	/* calculate hash */
+	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
+		if (j->optstr2)
+			eprintf("Volume does not support manual hash digests. Ignoring specified digest for %s\n", j->path);
+
+		dprintf(D_L0, "Calculating hash of URL...\n");
+		td = mhash_init(shfs_mhash_type(shfs_vol.hfunc, shfs_vol.hlen));
+		if (td == MHASH_FAILED) {
+			eprintf("Could not initialize hash algorithm\n");
+			ret = -1;
+			goto err;
+		}
+		mhash(td, j->path, strlen(j->path));
+		mhash_deinit(td, &fhash);
+	} else {
+		if (!j->optstr2) {
+			eprintf("Missing required hash digest for %s\n", j->path);
+			ret = -1;
+			goto err;
+		}
+		if (hash_parse(j->optstr2, fhash, shfs_vol.hlen) != 0) {
+			eprintf("Could not parse specified hash digest %s for %s\n", j->optstr2, j->path);
+			ret = -1;
+			goto err;
+		}
+	}
+	if (verbosity >= D_L0) {
+		str_hash[(shfs_vol.hlen * 2)] = '\0';
+		hash_unparse(fhash, shfs_vol.hlen, str_hash);
+		printf("Hash for %s is: %s\n",
+		       j->path,
+		       str_hash);
+	}
+
+	/* find place in hash list and add entry
+	 * (still in-memory, will be written to device on umount) */
+	dprintf(D_L0, "Trying to add a hash table entry...\n");
+	bentry = shfs_btable_lookup(shfs_vol.bt, fhash);
+	if (bentry) {
+		eprintf("An entry with the same hash already exists\n");
+		ret = -1;
+		goto err;
+	}
+	bentry = shfs_btable_addentry(shfs_vol.bt, fhash);
+	if (!bentry) {
+		eprintf("Target bucket of hash table is full\n");
+		ret = -1;
+		goto err;
+	}
+	hentry = (struct shfs_hentry *)
+		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+		 + bentry->hentry_htoffset);
+	hash_copy(hentry->hash, fhash, shfs_vol.hlen);
+	hentry->flags = SHFS_EFLAG_RLINK;
+	memcpy(hentry->l_attr.rip, &rhost_ip->s_addr, INET_ADDRLEN);
+	hentry->l_attr.rport = u.port;
+	hentry->l_attr.type = SHFS_RLTYPE_REDIRECT;
+	if (u.field_set & (1 << UF_PATH) &&
+	    u.field_data[UF_PATH].len > 1) {
+		strncpy(hentry->l_attr.rpath,
+			j->path + u.field_data[1 << UF_PATH].off + 1,
+			sizeof(hentry->l_attr.rpath));
+	} else {
+		hentry->l_attr.rpath[0] = '\0';
+	}
+	hentry->ts_creation = gettimestamp_s();
+	memset(hentry->mime, 0, sizeof(hentry->mime));
+	memset(hentry->name, 0, sizeof(hentry->name));
+	memset(hentry->encoding, 0, sizeof(hentry->encoding));
+	if (j->optstr0) /* mime */
+		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
+	if (j->optstr1) /* filename */
+		strncpy(hentry->name, j->optstr1, sizeof(hentry->name));
+	else
+		strncpy(hentry->name, basename(j->path), sizeof(hentry->name));
+	shfs_vol.htable_chunk_cache_state[bentry->hentry_htchunk] |= CCS_MODIFIED;
+	return 0;
+
+ err:
+	return ret;
+}
+
 static int actn_rmfile(struct token *token)
 {
 	struct shfs_bentry *bentry;
@@ -1128,10 +1343,10 @@ static int actn_ls(struct token *token)
 		if (shfs_vol.hlen <= 32)
 			printf("%-64s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
-			       hentry->f_attr.chunk,
-			       DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? hentry->f_attr.chunk : 0,
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize) : 0,
 			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
-			       '-', /* reserved for future use */
+			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
 			       '-', /* reserved for future use */
 			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
 			       str_mime,
@@ -1140,10 +1355,10 @@ static int actn_ls(struct token *token)
 		else
 			printf("%-128s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
-			       hentry->f_attr.chunk,
-			       DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? hentry->f_attr.chunk : 0,
+			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize) : 0,
 			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
-			       '-', /* reserved for future use */
+			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
 			       '-', /* reserved for future use */
 			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
 			       str_mime,
@@ -1248,6 +1463,10 @@ int main(int argc, char **argv)
 		case ADDOBJ:
 			dprintf(D_L0, "*** Token %u: add-obj\n", i);
 			ret = actn_addfile(ctoken);
+			break;
+		case ADDLNK:
+			dprintf(D_L0, "*** Token %u: add-lnk\n", i);
+			ret = actn_addlink(ctoken);
 			break;
 		case RMOBJ:
 			dprintf(D_L0, "*** Token %u: rm-obj\n", i);

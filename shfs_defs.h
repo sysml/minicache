@@ -133,6 +133,11 @@ struct shfs_hdr_config {
 #define SHFS_EFLAG_DEFAULT   0x8
 #define SHFS_EFLAG_RLINK     0x4
 
+/* l_attr.type */
+#define SHFS_RLTYPE_REDIRECT   0x0
+#define SHFS_RLTYPE_STREAM_MPG 0x1
+#define SHFS_RLTYPE_STREAM_MKV 0x2
+
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */
 

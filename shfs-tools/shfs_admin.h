@@ -14,6 +14,7 @@
 enum action {
 	NONE = 0,
 	ADDOBJ,
+	ADDLNK,
 	RMOBJ,
 	CATOBJ,
 	SETDEFOBJ,

@@ -28,6 +28,9 @@ void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen); /* null-termination is 
 void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_hash(SHFS_FD f, hash512_t out);
 void shfs_fio_size(SHFS_FD f, uint64_t *out);
+#define shfs_fio_islink(f) \
+	(SHFS_HENTRY_ISLINK((f)->hentry))
+
 /* file container size in chunks */
 #define shfs_fio_size_chks(f) \
 	(DIV_ROUND_UP(((f)->hentry->f_attr.offset + (f)->hentry->f_attr.len), shfs_vol.chunksize))

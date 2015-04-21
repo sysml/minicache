@@ -15,7 +15,7 @@ default: all
 
 shfs_mkfs: shfs_mkfs.o tools_common.o
 
-shfs_admin: shfs_admin.o htable.o tools_common.o shfs_alloc.o shfs_check.o
+shfs_admin: shfs_admin.o htable.o tools_common.o shfs_alloc.o shfs_check.o http_parser.o
 
 all: shfs_mkfs shfs_admin
 

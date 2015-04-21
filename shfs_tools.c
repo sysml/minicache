@@ -45,11 +45,15 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
-		fprintf(cio, "%c%s %12"PRIchk" %12"PRIchk" %-24s %-16s %s\n",
+		fprintf(cio, "%c%s %12"PRIchk" %12"PRIchk" %c%c%c%c %-24s %-16s %s\n",
 		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
-		        hentry->f_attr.chunk,
-		        DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
+		        SHFS_HENTRY_ISLINK(hentry) ? 0 : hentry->f_attr.chunk,
+		        SHFS_HENTRY_ISLINK(hentry) ? 0 : DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
+		        SHFS_HENTRY_ISDEFAULT(hentry) ? 'D' : '-',
+		        SHFS_HENTRY_ISLINK(hentry) ? 'L' : '-',
+		        '-',
+		        SHFS_HENTRY_ISHIDDEN(hentry) ? 'H' : '-',
 		        str_mime,
 		        str_date,
 		        str_name);
@@ -108,24 +112,28 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 			return -1;
 		}
 		shfs_fio_mime(f, str_mime, sizeof(str_mime));
-		shfs_fio_size(f, &fsize);
-
 		fprintf(cio, "%s: %s, ", argv[i], str_mime);
-		if (fsize < 1024ll)
-			fprintf(cio, "%"PRIu64" B\n",
-				fsize);
-		else if (fsize < (1024ll * 1024ll))
-			fprintf(cio, "%"PRIu64".%01"PRIu64" KiB\n",
-				fsize / 1024,
-				((fsize / 1024) / 10) % 10);
-		else if (fsize < (1024ll * 1024ll * 1024ll))
-			fprintf(cio, "%"PRIu64".%02"PRIu64" MiB\n",
-				fsize / (1024 * 1024),
-				(fsize / ((1024 * 1024) / 100)) % 100);
-		else
-			fprintf(cio, "%"PRIu64".%02"PRIu64" GiB\n",
-				fsize / (1024 * 1024 * 1024),
-				(fsize / ((1024 * 1024 * 1024) / 100)) % 100);
+
+		if (shfs_fio_islink(f)) {
+			fprintf(cio, "Remote link\n");
+		} else {
+			shfs_fio_size(f, &fsize);
+			if (fsize < 1024ll)
+				fprintf(cio, "%"PRIu64" B\n",
+					fsize);
+			else if (fsize < (1024ll * 1024ll))
+				fprintf(cio, "%"PRIu64".%01"PRIu64" KiB\n",
+					fsize / 1024,
+					((fsize / 1024) / 10) % 10);
+			else if (fsize < (1024ll * 1024ll * 1024ll))
+				fprintf(cio, "%"PRIu64".%02"PRIu64" MiB\n",
+					fsize / (1024 * 1024),
+					(fsize / ((1024 * 1024) / 100)) % 100);
+			else
+				fprintf(cio, "%"PRIu64".%02"PRIu64" GiB\n",
+					fsize / (1024 * 1024 * 1024),
+					(fsize / ((1024 * 1024 * 1024) / 100)) % 100);
+		}
 
 		shfs_fio_close(f);
 	}
