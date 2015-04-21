@@ -1343,8 +1343,8 @@ static int actn_ls(struct token *token)
 		if (shfs_vol.hlen <= 32)
 			printf("%-64s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
-			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? hentry->f_attr.chunk : 0,
-			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize) : 0,
+			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : hentry->f_attr.chunk,
+			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
 			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
 			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
 			       '-', /* reserved for future use */
@@ -1355,8 +1355,8 @@ static int actn_ls(struct token *token)
 		else
 			printf("%-128s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
 			       str_hash,
-			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? hentry->f_attr.chunk : 0,
-			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize) : 0,
+			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : hentry->f_attr.chunk,
+			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
 			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
 			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
 			       '-', /* reserved for future use */
