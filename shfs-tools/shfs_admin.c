@@ -34,7 +34,7 @@ static struct vol_info shfs_vol;
 /******************************************************************************
  * ARGUMENT PARSING                                                           *
  ******************************************************************************/
-const char *short_opts = "h?vVfa:u:r:c:d:Cm:n:D:li";
+const char *short_opts = "h?vVfa:u:r:c:d:Cm:n:t:D:li";
 
 static struct option long_opts[] = {
 	{"help",		no_argument,		NULL,	'h'},
@@ -50,6 +50,7 @@ static struct option long_opts[] = {
 	{"mime",		required_argument,	NULL,	'm'},
 	{"name",		required_argument,	NULL,	'n'},
 	{"digest",		required_argument,	NULL,	'D'},
+	{"type",		required_argument,	NULL,	't'},
 	{"ls",			no_argument,            NULL,	'l'},
 	{"info",		no_argument,            NULL,	'i'},
 	{NULL, 0, NULL, 0} /* end of list */
@@ -73,13 +74,15 @@ static void print_usage(char *argv0)
 	printf("  -f, --force                  suppresses warnings and user questions\n");
 	printf("  -a, --add-obj [FILE]         adds FILE as object to the volume\n");
 	printf("  -u, --add-lnk [URL]          adds URL as remote link to the volume\n");
-	printf("  For each add-obj, add-ref token:\n");
+	printf("  For each add-obj, add-lnk token:\n");
 	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	printf("    -n, --name [NAME]          sets an additional name for the object\n");
 	printf("    -D, --digest [HASH]        sets the HASH digest for the object\n");
 	printf("                                (only available when volume is formatted with "
 	                                        "hash function 'Manual')\n");
 	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
+	printf("  For each add-lnk token:\n");
+	printf("    -t, --type [TYPE]          sets the type for a linked object\n");
 	printf("  -r, --rm-obj [HASH]          removes an object from the volume\n");
 	printf("  -c, --cat-obj [HASH]         exports an object to stdout\n");
 	printf("  -d, --set-default [HASH]     sets the object with HASH as default\n");
@@ -134,6 +137,20 @@ static inline struct token *args_add_token(struct token *ltoken, struct args *ar
 		args->tokens = ntoken;
 
 	return ntoken;
+}
+
+
+static inline int parse_args_set_ltype(enum ltype *out, const char *arg)
+{
+	if (strcasecmp("redirect", arg) == 0) {
+		*out = LREDIRECT;
+		return 0;
+	}
+	if (strcasecmp("mpeg", arg) == 0) {
+		*out = LMPEG;
+		return 0;
+	}
+	return -EINVAL;
 }
 
 static int parse_args(int argc, char **argv, struct args *args)
@@ -219,6 +236,16 @@ static int parse_args(int argc, char **argv, struct args *args)
 			}
 			if (parse_args_setval_str(&ctoken->optstr2, optarg) < 0)
 				die();
+			break;
+		case 't': /* type */
+			if (!ctoken || (ctoken->action != ADDLNK)) {
+				eprintf("Please set type after an add-lnk token\n");
+				return -EINVAL;
+			}
+			if (parse_args_set_ltype(&ctoken->optltype, optarg) < 0) {
+				eprintf("Type '%s' is invalid and not supported\n", optarg);
+				return -EINVAL;
+			}
 			break;
 		case 'r': /* rm-obj */
 			ctoken = args_add_token(ctoken, args);
@@ -1025,7 +1052,7 @@ static int actn_addlink(struct token *j)
 		dprintf(D_L0, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
 	else
 		dprintf(D_L0, " Path: /\n");
-	dprintf(D_L0, " Type: REDIRECT\n");
+	dprintf(D_L0, " Type: %s\n", j->optltype == LMPEG ? "Relative clone (MPEG)" : "Redirect");
 
 	/* calculate hash */
 	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
@@ -1083,7 +1110,14 @@ static int actn_addlink(struct token *j)
 	hentry->flags = SHFS_EFLAG_RLINK;
 	memcpy(hentry->l_attr.rip, &rhost_ip->s_addr, INET_ADDRLEN);
 	hentry->l_attr.rport = u.port;
-	hentry->l_attr.type = SHFS_RLTYPE_REDIRECT;
+	switch(j->optltype) {
+	case LMPEG:
+		hentry->l_attr.type = SHFS_RLTYPE_RELACLONE_MPEG;
+		break;
+	default:
+		hentry->l_attr.type = SHFS_RLTYPE_REDIRECT;
+		break;
+	}
 	if (u.field_set & (1 << UF_PATH) &&
 	    u.field_data[UF_PATH].len > 1) {
 		strncpy(hentry->l_attr.rpath,
@@ -1313,23 +1347,18 @@ static int actn_ls(struct token *token)
 	str_date[0] = '\0';
 
 	if (shfs_vol.hlen <= 32)
-		printf("%-64s %12s %12s %5s %-24s %-16s %s\n",
-		       "Hash",
-		       "At (chk)",
-		       "Size (chk)",
-		       "Flags",
-		       "MIME",
-		       "Added",
-		       "Name");
+		printf("%-64s ", "Hash");
 	else
-		printf("%-128s %12s %12s %5s %-24s %-16s %s\n",
-		       "Hash",
-		       "At (chk)",
-		       "Size (chk)",
-		       "Flags",
-		       "MIME",
-		       "Added",
-		       "Name");
+		printf("%-128s ", "Hash");
+	printf("%12s %12s %5s %5s %-24s %-16s %s\n",
+	       "At (chk)",
+	       "Size (chk)",
+	       "Flags",
+	       "LType",
+	       "MIME",
+	       "Added",
+	       "Name");
+
 	foreach_htable_el(shfs_vol.bt, el) {
 		bentry = el->private;
 		hentry = (struct shfs_hentry *)
@@ -1340,30 +1369,44 @@ static int actn_ls(struct token *token)
 		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
+
 		if (shfs_vol.hlen <= 32)
-			printf("%-64s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
-			       str_hash,
-			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : hentry->f_attr.chunk,
-			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
-			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
-			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
-			       '-', /* reserved for future use */
-			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
-			       str_mime,
-			       str_date,
-			       str_name);
+			printf("%-64s ", str_hash);
 		else
-			printf("%-128s %12"PRIchk" %12"PRIchk"  %c%c%c%c %-24s %-16s %s\n",
-			       str_hash,
-			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : hentry->f_attr.chunk,
-			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 0 : DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
-			       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
-			       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
-			       '-', /* reserved for future use */
-			       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-',
-			       str_mime,
-			       str_date,
-			       str_name);
+			printf("%-128s ", str_hash);
+
+		if (hentry->flags & SHFS_EFLAG_RLINK)
+			printf("                          ");
+		else
+			printf("%12"PRIchk" %12"PRIchk" ",
+			       hentry->f_attr.chunk,
+			       DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize));
+
+		printf("  %c%c%c ",
+		       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
+		       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+		       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-');
+
+		if (hentry->flags & SHFS_EFLAG_RLINK) {
+			switch(hentry->l_attr.type) {
+			case SHFS_RLTYPE_RELACLONE_MPEG:
+				printf("%5s ", "rlmpg");
+				break;
+			case SHFS_RLTYPE_ABSCLONE:
+				printf("%5s ", "abscl");
+				break;
+			default: /* SHFS_RLTYPE_REDIRECT */
+				printf("%5s ", "redir");
+				break;
+			}
+		} else {
+			printf("      ");
+		}
+
+		printf("%-24s %-16s %s\n",
+		       str_mime,
+		       str_date,
+		       str_name);
 	}
 	return 0;
 }

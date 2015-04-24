@@ -23,6 +23,11 @@ enum action {
 	SHOWINFO
 };
 
+enum ltype {
+	LREDIRECT = 0,
+	LMPEG,
+};
+
 struct token {
 	struct token *next;
 
@@ -31,6 +36,7 @@ struct token {
 	char *optstr0;
 	char *optstr1;
 	char *optstr2;
+	enum ltype optltype;
 };
 
 struct args {
