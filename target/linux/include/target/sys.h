@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <pth.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <semaphore.h>
@@ -54,17 +55,19 @@ void app_shutdown(unsigned reason);
 /* scheduling */
 #define msleep(ms) usleep((((ms)) * 1000l))
 
-/* #include <sched.h>
- * #define schedule() sched_yield() */
+#define thread pth
+#define schedule() \
+	pth_yield(NULL)
+#define create_thread(name, func, argp) \
+	pth_spawn(PTH_ATTR_DEFAULT, (void * (*)(void *)) (func), (argp))
+#define exit_thread() \
+	pth_exit(NULL)
 
 /* semaphore */
 #define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphres? */
 #define up(s) (sem_post((s)) == 0 ? 1 : 0)
 #define down(s) (sem_wait((s)) == 0 ? 1 : 0)
 #define trydown(s) (sem_trywait((s)) == 0 ? 1 : 0)
-
-#define schedule() \
-  do {} while(0)
 
 #define NOW() ({ \
 	uint64_t r;						\
@@ -74,5 +77,11 @@ void app_shutdown(unsigned reason);
 	r; })
 
 #define NSEC_TO_MSEC(ns) ((ns) / 1000000l)
+
+/* env init/exit */
+#define target_init() \
+	pth_init()
+#define target_exit() \
+	pth_exit(NULL)
 
 #endif /* _SYS_H_ */

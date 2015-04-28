@@ -518,6 +518,7 @@ int main(int argc, char *argv[])
 #ifdef SHFS_STATS
     TT_DECLARE(tt_statsdev);
 #endif
+    target_init();
 
     TT_START(tt_boot);
     init_debug();
@@ -873,5 +874,6 @@ int main(int argc, char *argv[])
         target_reboot();
     target_halt();
 
+    target_exit();
     return 0;
 }

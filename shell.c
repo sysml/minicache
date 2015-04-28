@@ -4,16 +4,13 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
-#include <mini-os/wait.h>
-#include <kernel.h>
+#include <target/sys.h>
 #include <errno.h>
 #include <sched.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
+#include "likely.h"
 
 #ifdef SHELL_DEBUG
 #define ENABLE_DEBUG
@@ -187,7 +184,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     int32_t i;
     err_t err;
 
-    sh = _xmalloc(sizeof(*sh), PAGE_SIZE);
+    sh = malloc(sizeof(*sh));
     if (!sh) {
         errno = ENOMEM;
         goto err_out;
@@ -265,7 +262,7 @@ err_free_tcp:
         tcp_close(sh->tpcb);
 #endif
 err_free_sh:
-    xfree(sh);
+    free(sh);
 err_out:
     return -1;
 }
@@ -301,7 +298,7 @@ void exit_shell(void)
         if(sh->cmd_str[i])
             free(sh->cmd_str[i]);
     }
-    xfree(sh);
+    free(sh);
 }
 
 static int32_t shell_get_free_sess_id(void)
@@ -590,7 +587,7 @@ static err_t shlsess_accept(void)
         err = ERR_MEM;
         goto err_out;
     }
-    sess = _xmalloc(sizeof(*sess), PAGE_SIZE);
+    sess = malloc(sizeof(*sess));
     if (!sess) {
         err = ERR_MEM;
         goto err_out;
@@ -630,11 +627,11 @@ static err_t shlsess_accept(void)
     return ERR_OK;
 
 err_free_prompt:
-    xfree(sess->prompt);
+    free(sess->prompt);
 err_close_cons:
     close(sess->cons_fd);
 err_free_sess:
-    xfree(sess);
+    free(sess);
 err_out:
     return err;
 }
@@ -647,13 +644,13 @@ static void shlsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    xfree(sess->prompt);
+    free(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
 
     printd("Local session closed (%s)\n", sess->name);
-    xfree(sess);
+    free(sess);
 }
 
 
@@ -755,7 +752,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
         err = ERR_MEM;
         goto err_out;
     }
-    sess = _xmalloc(sizeof(*sess), PAGE_SIZE);
+    sess = malloc(sizeof(*sess));
     if (!sess) {
         err = ERR_MEM;
         goto err_out;
@@ -777,10 +774,17 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
     sess->cio_rxbuf_ridx = 0;
     sess->cio_rxbuf_widx = 0;
+#ifndef __MINIOS__
+    sess->cio = fopencookie(sess, "r+",
+                        shrsess_cio_read,
+                        shrsess_cio_write,
+                        NULL, NULL);
+#else
     sess->cio = funopen(sess,
                         shrsess_cio_read,
                         shrsess_cio_write,
                         NULL, NULL);
+#endif
     if (!sess->cio) {
 	err = ERR_MEM;
 	goto err_free_prompt;
@@ -812,9 +816,9 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     return ERR_OK;
 
 err_free_prompt:
-    xfree(sess->prompt);
+    free(sess->prompt);
 err_free_sess:
-    xfree(sess);
+    free(sess);
 err_out:
     return err;
 }
@@ -829,7 +833,7 @@ static void shrsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    xfree(sess->prompt);
+    free(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
@@ -851,7 +855,7 @@ static void shrsess_close(struct shell_sess *sess)
 
     /* release memory */
     printd("Remote session closed (%s)\n", sess->name);
-    xfree(sess);
+    free(sess);
 }
 
 static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
