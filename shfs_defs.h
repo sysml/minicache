@@ -74,6 +74,18 @@ typedef uint64_t strp_t;
        __a > __b ? __a : __b; })
 #endif
 
+struct shfs_host {
+	uint8_t type; /* name or address */
+	union {
+		char      name[32]; /* hostname */
+		uint8_t   addr[32]; /* address (e.g., IPv4, IPv6) */
+	};
+} __attribute__((packed));
+
+#define SHFS_HOST_TYPE_NAME 0x00
+#define SHFS_HOST_TYPE_IPV4 0x01
+#define SHFS_HOST_TYPE_IPV6 0x02 /* not supported yet */
+
 /**
  * Common SHFS header
  * (on chunk no. 0)
@@ -85,7 +97,7 @@ typedef uint64_t strp_t;
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
 #define SHFS_MAJOR 0x02
-#define SHFS_MINOR 0x00
+#define SHFS_MINOR 0x01
 
 /* member_stripemode */
 #define SHFS_SM_INDEPENDENT 0x0
@@ -131,12 +143,12 @@ struct shfs_hdr_config {
 /* hentry flags */
 #define SHFS_EFLAG_HIDDEN    0x1
 #define SHFS_EFLAG_DEFAULT   0x8
-#define SHFS_EFLAG_RLINK     0x4
+#define SHFS_EFLAG_LINK      0x4
 
 /* l_attr.type */
-#define SHFS_RLTYPE_REDIRECT       0x0
-#define SHFS_RLTYPE_ABSCLONE       0x1
-#define SHFS_RLTYPE_RELACLONE_MPEG 0x2
+#define SHFS_LTYPE_REDIRECT       0x0
+#define SHFS_LTYPE_ABSCLONE       0x1
+#define SHFS_LTYPE_RELACLONE_MPEG 0x2
 
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */
@@ -146,22 +158,23 @@ struct shfs_hentry {
 		struct {
 			chk_t     chunk;
 			uint64_t  offset; /* byte offset, usually 0 */
-			uint64_t  len; /* length (bytes) */
+			uint64_t  len;    /* length (bytes) */
+
+			char      mime[32]; /* internet media type */
+			char      encoding[16]; /* set on pre-encoded content */
 		} f_attr __attribute__((packed));
 
 		/* SHFS_EFLAG_LINK set */
 		struct {
-			uint8_t   rip[4]; /* remote IPv4 address */
-			uint16_t  rport;
-			char      rpath[56];
-			uint8_t   type;
+			struct shfs_host rhost; /* remote host */
+			uint16_t         rport;
+			char             rpath[64 + 7];
+			uint8_t          type;
 		} l_attr __attribute__((packed));
 	};
 
-	char               mime[32]; /* internet media type */
 	uint64_t           ts_creation;
 	uint8_t            flags;
-	char               encoding[16]; /* set on pre-encoded content */
 	char               name[64];
 } __attribute__((packed));
 
@@ -191,7 +204,15 @@ struct shfs_hentry {
 #define SHFS_HENTRY_ISDEFAULT(hentry) \
 	((hentry)->flags & (SHFS_EFLAG_DEFAULT))
 #define SHFS_HENTRY_ISLINK(hentry) \
-	((hentry)->flags & (SHFS_EFLAG_RLINK))
+	((hentry)->flags & (SHFS_EFLAG_LINK))
+
+#define SHFS_HENTRY_LINKATTR(hentry) \
+	((hentry)->l_attr)
+#define SHFS_HENTRY_FILEATTR(hentry) \
+	((hentry)->f_attr)
+
+#define SHFS_HENTRY_LINK_TYPE(hentry) \
+	((SHFS_HENTRY_LINKATTR((hentry))).type)
 
 #ifndef __SHFS_TOOLS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)

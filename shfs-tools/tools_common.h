@@ -110,4 +110,6 @@ static inline size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint
 	return strftime(s, slen, fmt, tm);
 }
 
+size_t strshfshost(char *s, size_t slen, struct shfs_host *h);
+
 #endif /* _TOOLS_COMMON_ */

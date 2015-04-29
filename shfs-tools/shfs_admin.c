@@ -75,11 +75,12 @@ static void print_usage(char *argv0)
 	printf("  -a, --add-obj [FILE]         adds FILE as object to the volume\n");
 	printf("  -u, --add-lnk [URL]          adds URL as remote link to the volume\n");
 	printf("  For each add-obj, add-lnk token:\n");
-	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	printf("    -n, --name [NAME]          sets an additional name for the object\n");
 	printf("    -D, --digest [HASH]        sets the HASH digest for the object\n");
 	printf("                                (only available when volume is formatted with "
 	                                        "hash function 'Manual')\n");
+	printf("  For each add-obj token:\n");
+	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
 	printf("  For each add-lnk token:\n");
 	printf("    -t, --type [TYPE]          sets the type for a linked object\n");
@@ -214,7 +215,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 				die();
 			break;
 		case 'm': /* mime */
-			if (!ctoken || (ctoken->action != ADDOBJ && ctoken->action != ADDLNK)) {
+			if (!ctoken || (ctoken->action != ADDOBJ)) {
 				eprintf("Please set mime after an add-obj token\n");
 				return -EINVAL;
 			}
@@ -223,7 +224,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 			break;
 		case 'n': /* name */
 			if (!ctoken || (ctoken->action != ADDOBJ && ctoken->action != ADDLNK)) {
-				eprintf("Please set name after an add-obj token\n");
+				eprintf("Please set name after an add-obj, add-lnk token\n");
 				return -EINVAL;
 			}
 			if (parse_args_setval_str(&ctoken->optstr1, optarg) < 0)
@@ -231,7 +232,7 @@ static int parse_args(int argc, char **argv, struct args *args)
 			break;
 		case 'D': /* digest */
 			if (!ctoken || (ctoken->action != ADDOBJ && ctoken->action != ADDLNK)) {
-				eprintf("Please set digest after an add-obj token\n");
+				eprintf("Please set digest after an add-obj, add-lnk token\n");
 				return -EINVAL;
 			}
 			if (parse_args_setval_str(&ctoken->optstr2, optarg) < 0)
@@ -870,11 +871,11 @@ static int actn_addfile(struct token *j)
 	hentry->f_attr.len = (uint64_t) fsize;
 	hentry->ts_creation = gettimestamp_s();
 	hentry->flags = 0;
-	memset(hentry->mime, 0, sizeof(hentry->mime));
+	memset(hentry->f_attr.mime, 0, sizeof(hentry->f_attr.mime));
+	memset(hentry->f_attr.encoding, 0, sizeof(hentry->f_attr.encoding));  /* currently unused */
 	memset(hentry->name, 0, sizeof(hentry->name));
-	memset(hentry->encoding, 0, sizeof(hentry->encoding));
 	if (j->optstr0) /* mime */
-		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
+		strncpy(hentry->f_attr.mime, j->optstr0, sizeof(hentry->f_attr.mime));
 	if (j->optstr1) /* filename */
 		strncpy(hentry->name, j->optstr1, sizeof(hentry->name));
 	else
@@ -940,15 +941,11 @@ static int actn_addfile(struct token *j)
 	return ret;
 }
 
-static inline int hntosaddr(const char *hn, size_t hn_len, int ai_family, struct sockaddr *out)
+static inline int hntosaddr(const char *hn, int ai_family, struct sockaddr *out)
 {
-	char node[hn_len + 1];
 	struct addrinfo hints;
 	struct addrinfo *result;
 	int gai_ret;
-
-	strncpy(node, hn, hn_len);
-	node[hn_len] = '\0';
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = ai_family ? ai_family : AF_UNSPEC;
@@ -959,13 +956,14 @@ static inline int hntosaddr(const char *hn, size_t hn_len, int ai_family, struct
 	hints.ai_addr = NULL;
 	hints.ai_next = NULL;
 
-	gai_ret = getaddrinfo(node, NULL, &hints, &result);
+	dprintf(D_L1, "getaddrinfo '%s'...\n", hn);
+	gai_ret = getaddrinfo(hn, NULL, &hints, &result);
 	if (gai_ret) {
-		eprintf("Could not resolve hostname %s: %s\n", node, gai_strerror(gai_ret));
+		eprintf("Could not resolve hostname %s: %s\n", hn, gai_strerror(gai_ret));
 		return -ENOENT;
 	}
 	if (!result[0].ai_addr) {
-		eprintf("Could not resolve hostname %s: No address associated with hostname\n", node);
+		eprintf("Could not resolve hostname %s: No address associated with hostname\n", hn);
 		return -ENOENT;
 	}
 
@@ -974,14 +972,70 @@ static inline int hntosaddr(const char *hn, size_t hn_len, int ai_family, struct
 	return 0;
 }
 
+/* when type is set to SHFS_HOST_TYPE_NAME, this function does actually a type auto-detection first */
+static inline int hntoshfshost(const char *hn, size_t hn_len, uint8_t type, struct shfs_host *out)
+{
+	char node[hn_len + 1];
+
+	/* create a terminated string from *hn */
+	strncpy(node, hn, hn_len);
+	node[hn_len] = '\0';
+
+	if (type == SHFS_HOST_TYPE_NAME || type == SHFS_HOST_TYPE_IPV4) {
+		int ip[4];
+
+		/* check if name is already a valid IPv4 address */
+		if ((sscanf(node, "%d.%d.%d.%d",
+			    &ip[0], &ip[1], &ip[2], &ip[3]) == 4) &&
+		    (ip[0] > 0 && ip[0] < 256) &&
+		    (ip[1] > 0 && ip[1] < 256) &&
+		    (ip[2] > 0 && ip[2] < 256) &&
+		    (ip[3] > 0 && ip[3] < 256)) {
+			out->addr[0] = (uint8_t) ip[0];
+			out->addr[1] = (uint8_t) ip[1];
+			out->addr[2] = (uint8_t) ip[2];
+			out->addr[3] = (uint8_t) ip[3];
+			out->type    = SHFS_HOST_TYPE_IPV4;
+			return 0;
+		}
+	}
+
+	if (type == SHFS_HOST_TYPE_IPV4) {
+		struct sockaddr_in rhost_saddr;
+		struct in_addr *rhost_ip;
+
+		/* do a DNS query */
+		if (hntosaddr(node, AF_INET, (struct sockaddr *) &rhost_saddr) < 0)
+			return -ENOENT;
+		rhost_ip = &rhost_saddr.sin_addr;
+
+		memcpy(out->addr, &rhost_ip->s_addr, INET_ADDRLEN);
+		out->type = SHFS_HOST_TYPE_IPV4;
+		return 0;
+	}
+
+	if (type == SHFS_HOST_TYPE_NAME) {
+		/* copy hostname */
+		if (hn_len > sizeof(out->name))
+			return -ENOSPC; /* target buffer is too small */
+
+		memcpy(out->name, node, hn_len);
+		if (hn_len < sizeof(out->name))
+			out->name[hn_len] = '\0';
+		out->type = SHFS_HOST_TYPE_NAME;
+		return 0;
+	}
+
+	return EINVAL;
+}
+
 static int actn_addlink(struct token *j)
 {
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
+	struct shfs_host rhost;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
-	char str_ip[INET_ADDRSTRLEN];
-	struct sockaddr_in rhost_saddr;
-	struct in_addr *rhost_ip;
+	char str_rhost[sizeof(rhost.name) + 1];
 	struct http_parser_url u;
 	hash512_t fhash;
 	MHASH td;
@@ -1000,7 +1054,7 @@ static int actn_addlink(struct token *j)
 	if ((u.field_set & (1 << UF_SCHEMA))
 	    && (strncmp("http:", j->path + u.field_data[UF_SCHEMA].off,
 			u.field_data[UF_SCHEMA].len) != 0)) {
-		eprintf("Schema is not http in URL: %s\n", j->path);
+		eprintf("Unsupported schema in URL: %s\n", j->path);
 		goto err;
 	}
 	if (!(u.field_set & (1 << UF_HOST))) {
@@ -1035,24 +1089,23 @@ static int actn_addlink(struct token *j)
 		eprintf("Path in URL is longer than by SHFS: %s\n", j->path);
 		goto err;
 	}
-
-	/* get remote host IPv4 */
 	dprintf(D_L0, "Quering host address for %s...\n", j->path);
-	if (hntosaddr(j->path + u.field_data[UF_HOST].off,
-		     u.field_data[UF_HOST].len,
-		      AF_INET, (struct sockaddr *) &rhost_saddr) < 0)
+	if ((ret = hntoshfshost(j->path + u.field_data[UF_HOST].off,
+				u.field_data[UF_HOST].len,
+				SHFS_HOST_TYPE_NAME, &rhost)) < 0) {
+		eprintf("Hostname query failed: %s\n", j->path, strerror(-ret));
 		goto err;
-	rhost_ip = &rhost_saddr.sin_addr;
+	}
+	strshfshost(str_rhost, sizeof(str_rhost), &rhost);
 
-	inet_ntop(AF_INET, rhost_ip, str_ip, INET_ADDRSTRLEN);
 	dprintf(D_L1, "Going to add the following remote entry:\n");
-	dprintf(D_L1, " Host: %s\n", str_ip);
+	dprintf(D_L1, " Host: %s\n", str_rhost);
 	dprintf(D_L1, " Port: %u\n", u.port);
 	if (u.field_data[UF_PATH].len > 1)
-		dprintf(D_L0, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
+		dprintf(D_L1, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
 	else
-		dprintf(D_L0, " Path: /\n");
-	dprintf(D_L0, " Type: %s\n", j->optltype == LMPEG ? "Relative clone (MPEG)" : "Redirect");
+		dprintf(D_L1, " Path: /\n");
+	dprintf(D_L1, " Type: %s\n", j->optltype == LMPEG ? "Relative clone (MPEG)" : "Redirect");
 
 	/* calculate hash */
 	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
@@ -1107,17 +1160,17 @@ static int actn_addlink(struct token *j)
 		((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
 		 + bentry->hentry_htoffset);
 	hash_copy(hentry->hash, fhash, shfs_vol.hlen);
-	hentry->flags = SHFS_EFLAG_RLINK;
-	memcpy(hentry->l_attr.rip, &rhost_ip->s_addr, INET_ADDRLEN);
+	hentry->flags = SHFS_EFLAG_LINK;
 	hentry->l_attr.rport = u.port;
 	switch(j->optltype) {
 	case LMPEG:
-		hentry->l_attr.type = SHFS_RLTYPE_RELACLONE_MPEG;
+		hentry->l_attr.type = SHFS_LTYPE_RELACLONE_MPEG;
 		break;
 	default:
-		hentry->l_attr.type = SHFS_RLTYPE_REDIRECT;
+		hentry->l_attr.type = SHFS_LTYPE_REDIRECT;
 		break;
 	}
+	memcpy(&hentry->l_attr.rhost, &rhost, sizeof(hentry->l_attr.rhost));
 	if (u.field_set & (1 << UF_PATH) &&
 	    u.field_data[UF_PATH].len > 1) {
 		strncpy(hentry->l_attr.rpath,
@@ -1127,11 +1180,7 @@ static int actn_addlink(struct token *j)
 		hentry->l_attr.rpath[0] = '\0';
 	}
 	hentry->ts_creation = gettimestamp_s();
-	memset(hentry->mime, 0, sizeof(hentry->mime));
 	memset(hentry->name, 0, sizeof(hentry->name));
-	memset(hentry->encoding, 0, sizeof(hentry->encoding));
-	if (j->optstr0) /* mime */
-		strncpy(hentry->mime, j->optstr0, sizeof(hentry->mime));
 	if (j->optstr1) /* filename */
 		strncpy(hentry->name, j->optstr1, sizeof(hentry->name));
 	else
@@ -1170,14 +1219,16 @@ static int actn_rmfile(struct token *token)
 		 + bentry->hentry_htoffset);
 
 	/* release container */
-	dprintf(D_L0, "Releasing container...\n");
-	ret = shfs_alist_unregister(shfs_vol.al, hentry->f_attr.chunk,
-	                            DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset,
-	                                         shfs_vol.chunksize));
-	if (ret < 0) {
-		eprintf("Could not release container\n");
-		ret = -1;
-		goto out;
+	if (!SHFS_HENTRY_ISLINK(hentry)) {
+		dprintf(D_L0, "Releasing container...\n");
+		ret = shfs_alist_unregister(shfs_vol.al, hentry->f_attr.chunk,
+					    DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset,
+							 shfs_vol.chunksize));
+		if (ret < 0) {
+			eprintf("Could not release container\n");
+			ret = -1;
+			goto out;
+		}
 	}
 
 	/* clear htable entry */
@@ -1229,15 +1280,17 @@ static int actn_catfile(struct token *token)
 		 + bentry->hentry_htoffset);
 
 	fflush(stdout);
+	if (SHFS_HENTRY_ISLINK(hentry))
+		goto out_free_buf;
+
 	c = hentry->f_attr.chunk;
 	off = hentry->f_attr.offset;
 	left = hentry->f_attr.len;
-
 	while (left) {
 		ret = sync_read_chunk(&shfs_vol.s, c, 1, buf);
 		if (ret < 0) {
 			eprintf("Could not read from volume '%s': %s\n",
-			        shfs_vol.volname, strerror(errno));
+				shfs_vol.volname, strerror(errno));
 			ret = -1;
 			goto out_free_buf;
 		}
@@ -1245,7 +1298,7 @@ static int actn_catfile(struct token *token)
 
 		if (write(STDOUT_FILENO, buf + off, rlen) < 0) {
 			eprintf("Could not write to stdout: %s\n",
-			        strerror(errno));
+				strerror(errno));
 			ret =-1;
 			goto out_free_buf;
 		}
@@ -1338,7 +1391,7 @@ static int actn_ls(struct token *token)
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
-	char str_mime[sizeof(hentry->mime) + 1];
+	char str_mime[sizeof(hentry->f_attr.mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
 	char str_date[20];
 
@@ -1351,7 +1404,7 @@ static int actn_ls(struct token *token)
 	else
 		printf("%-128s ", "Hash");
 	printf("%12s %12s %5s %5s %-24s %-16s %s\n",
-	       "At (chk)",
+	       "Loc (chk)",
 	       "Size (chk)",
 	       "Flags",
 	       "LType",
@@ -1366,45 +1419,56 @@ static int actn_ls(struct token *token)
 			 + bentry->hentry_htoffset);
 		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
 		strncpy(str_name, hentry->name, sizeof(hentry->name));
-		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
+		if (!SHFS_HENTRY_ISLINK(hentry))
+			strncpy(str_mime, hentry->f_attr.mime, sizeof(hentry->f_attr.mime));
 
+		/* hash */
 		if (shfs_vol.hlen <= 32)
 			printf("%-64s ", str_hash);
 		else
 			printf("%-128s ", str_hash);
 
-		if (hentry->flags & SHFS_EFLAG_RLINK)
+		/* loc, size */
+		if (SHFS_HENTRY_ISLINK(hentry))
 			printf("                          ");
 		else
 			printf("%12"PRIchk" %12"PRIchk" ",
 			       hentry->f_attr.chunk,
 			       DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize));
 
+		/* flags */
 		printf("  %c%c%c ",
-		       (hentry->flags & SHFS_EFLAG_RLINK)   ? 'L' : '-',
+		       (hentry->flags & SHFS_EFLAG_LINK)    ? 'L' : '-',
 		       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
 		       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-');
 
-		if (hentry->flags & SHFS_EFLAG_RLINK) {
+		if (SHFS_HENTRY_ISLINK(hentry)) {
+			/* ltype */
 			switch(hentry->l_attr.type) {
-			case SHFS_RLTYPE_RELACLONE_MPEG:
+			case SHFS_LTYPE_RELACLONE_MPEG:
 				printf("%5s ", "rlmpg");
 				break;
-			case SHFS_RLTYPE_ABSCLONE:
+			case SHFS_LTYPE_ABSCLONE:
 				printf("%5s ", "abscl");
 				break;
-			default: /* SHFS_RLTYPE_REDIRECT */
+			default: /* SHFS_LTYPE_REDIRECT */
 				printf("%5s ", "redir");
 				break;
 			}
+
+			/* mime */
+			printf("%-24s ", " ");
 		} else {
+			/* ltype */
 			printf("      ");
+			/* mime */
+			printf("%-24s ", str_mime);
 		}
 
-		printf("%-24s %-16s %s\n",
-		       str_mime,
+		/* date, name */
+		printf("%-16s %s\n",
 		       str_date,
 		       str_name);
 	}

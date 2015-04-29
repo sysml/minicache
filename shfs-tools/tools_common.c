@@ -270,6 +270,30 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	}
 }
 
+size_t strshfshost(char *s, size_t slen, struct shfs_host *h)
+{
+	size_t ret = 0;
+	size_t l;
+
+	switch(h->type) {
+	case SHFS_HOST_TYPE_NAME:
+		l = min(slen, sizeof(h->name));
+		ret = snprintf(s, l, "%s", h->name);
+		break;
+	case SHFS_HOST_TYPE_IPV4:
+		ret = snprintf(s, slen, "%u.%u.%u.%u",
+			       h->addr[0], h->addr[1], h->addr[2], h->addr[3]);
+		break;
+	default:
+		if (slen > 0)
+			s[0] = '\0';
+		errno = EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
 chk_t metadata_size(struct shfs_hdr_common *hdr_common,
                     struct shfs_hdr_config *hdr_config)
 {
