@@ -24,8 +24,8 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
-	char str_mime[sizeof(hentry->mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
+	char str_mime[sizeof(hentry->f_attr.mime) + 1];
 	char str_date[20];
 
 	down(&shfs_mount_lock);
@@ -34,6 +34,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
+	str_mime[sizeof(hentry->f_attr.mime)] = '\0';
 
 	foreach_htable_el(shfs_vol.bt, el) {
 		bentry = el->private;
@@ -42,21 +43,55 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			 + bentry->hentry_htoffset);
 		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
 		strncpy(str_name, hentry->name, sizeof(hentry->name));
-		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
-		fprintf(cio, "%c%s %12"PRIchk" %12"PRIchk" %c%c%c%c %-24s %-16s %s\n",
-		        SHFS_HASH_INDICATOR_PREFIX,
-		        str_hash,
-		        SHFS_HENTRY_ISLINK(hentry) ? 0 : hentry->f_attr.chunk,
-		        SHFS_HENTRY_ISLINK(hentry) ? 0 : DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize),
-		        SHFS_HENTRY_ISDEFAULT(hentry) ? 'D' : '-',
-		        SHFS_HENTRY_ISLINK(hentry) ? 'L' : '-',
-		        '-',
-		        SHFS_HENTRY_ISHIDDEN(hentry) ? 'H' : '-',
-		        str_mime,
-		        str_date,
-		        str_name);
+		if (!SHFS_HENTRY_ISLINK(hentry))
+			strncpy(str_mime, hentry->f_attr.mime, sizeof(hentry->f_attr.mime));
+
+		/* hash */
+		if (shfs_vol.hlen <= 32)
+			fprintf(cio, "%-64s ", str_hash);
+		else
+			fprintf(cio, "%-128s ", str_hash);
+
+		/* loc, size */
+		if (SHFS_HENTRY_ISLINK(hentry))
+			fprintf(cio, "                          ");
+		else
+			fprintf(cio, "%12"PRIchk" %12"PRIchk" ",
+			        hentry->f_attr.chunk,
+			        DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize));
+
+		/* flags */
+		fprintf(cio, "  %c%c%c ",
+		        (hentry->flags & SHFS_EFLAG_LINK)    ? 'L' : '-',
+		        (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+		        (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-');
+
+		/* ltype, mime */
+		if (SHFS_HENTRY_ISLINK(hentry)) {
+			switch(hentry->l_attr.type) {
+			case SHFS_LTYPE_RELACLONE_MPEG:
+				fprintf(cio, "%5s ", "rlmpg");
+				break;
+			case SHFS_LTYPE_ABSCLONE:
+				fprintf(cio, "%5s ", "abscl");
+				break;
+			default: /* SHFS_LTYPE_REDIRECT */
+				fprintf(cio, "%5s ", "redir");
+				break;
+			}
+
+			fprintf(cio, "%-24s ", " ");
+		} else {
+			fprintf(cio, "      ");
+			fprintf(cio, "%-24s ", str_mime);
+		}
+
+		/* date, name */
+		fprintf(cio, "%-16s %s\n",
+		       str_date,
+		       str_name);
 	}
 
  out:
@@ -94,7 +129,8 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 
 static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 {
-	char str_mime[128];
+	char strsbuf[64];
+	char strlbuf[128];
 	uint64_t fsize;
 	unsigned int i;
 	SHFS_FD f;
@@ -111,12 +147,29 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "%s: Could not open: %s\n", argv[i], strerror(errno));
 			return -1;
 		}
-		shfs_fio_mime(f, str_mime, sizeof(str_mime));
-		fprintf(cio, "%s: %s, ", argv[i], str_mime);
-
 		if (shfs_fio_islink(f)) {
-			fprintf(cio, "Remote link\n");
+			strshfshost(strsbuf, sizeof(strsbuf),
+				    shfs_fio_link_rhost(f));
+			shfs_fio_link_rpath(f, strlbuf, sizeof(strlbuf));
+			fprintf(cio, "%s: remote link: http://%s:%"PRIu16"/%s, ",
+				argv[i], strsbuf, shfs_fio_link_rport(f), strlbuf);
+
+			switch (shfs_fio_link_type(f)) {
+			case SHFS_LTYPE_RELACLONE_MPEG:
+				fprintf(cio, "relative clone (MPEG)");
+				break;
+			case SHFS_LTYPE_ABSCLONE:
+				fprintf(cio, "clone");
+				break;
+			default: /* SHFS_LTYPE_REDIRECT */
+				fprintf(cio, "redirect");
+				break;
+			}
+			fprintf(cio, "\n");
 		} else {
+			shfs_fio_mime(f, strlbuf, sizeof(strlbuf));
+			fprintf(cio, "%s: %s, ", argv[i], strlbuf);
+
 			shfs_fio_size(f, &fsize);
 			if (fsize < 1024ll)
 				fprintf(cio, "%"PRIu64" B\n",
@@ -160,7 +213,7 @@ static int shcmd_shfs_cat(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "%s: Could not open: %s\n", argv[i], strerror(errno));
 			return -1;
 		}
-		shfs_fio_size(f, &fsize);
+		shfs_fio_size(f, &fsize); /* will be 0 on links */
 
 		left = fsize;
 		cur = 0;
@@ -523,4 +576,28 @@ size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec)
 	time_t *tsec = (time_t *) &ts_sec;
 	tm = localtime(tsec);
 	return strftime(s, slen, fmt, tm);
+}
+
+size_t strshfshost(char *s, size_t slen, struct shfs_host *h)
+{
+	size_t ret = 0;
+	size_t l;
+
+	switch(h->type) {
+	case SHFS_HOST_TYPE_NAME:
+		l = min(slen, sizeof(h->name));
+		ret = snprintf(s, l, "%s", h->name);
+		break;
+	case SHFS_HOST_TYPE_IPV4:
+		ret = snprintf(s, slen, "%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,
+			       h->addr[0], h->addr[1], h->addr[2], h->addr[3]);
+		break;
+	default:
+		if (slen > 0)
+			s[0] = '\0';
+		errno = EINVAL;
+		break;
+	}
+
+	return ret;
 }

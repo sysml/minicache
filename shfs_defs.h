@@ -240,6 +240,58 @@ static inline void uuid_copy(uuid_t dst, const uuid_t src)
 }
 #endif /* __SHFS_TOOLS__ */
 
+static inline int shfshost_compare(const struct shfs_host *h0, const struct shfs_host *h1)
+{
+	size_t l0, l1;
+
+	if (h0->type != h1->type)
+		return 1;
+
+	switch(h0->type) {
+	case SHFS_HOST_TYPE_NAME:
+		l0 = strnlen(h0->name, sizeof(h0->name));
+		l1 = strnlen(h1->name, sizeof(h1->name));
+
+		if (l0 != l1)
+			return 1;
+		return (memcmp(h0->name, h1->name, l0) != 0);
+
+	case SHFS_HOST_TYPE_IPV4:
+		if ((h0->addr[0] != h1->addr[0]) ||
+		    (h0->addr[1] != h1->addr[1]) ||
+		    (h0->addr[2] != h1->addr[2]) ||
+		    (h0->addr[3] != h1->addr[3]))
+			return 1;
+		break;
+	default:
+		return 2; /* unsupported type */
+	}
+
+	return 0;
+}
+
+static inline void shfshost_copy(struct shfs_host *dst, const struct shfs_host *src)
+{
+	dst->type = src->type;
+
+	switch(src->type) {
+	case SHFS_HOST_TYPE_NAME:
+		strncpy(dst->name, src->name, sizeof(src->name));
+		break;
+
+	case SHFS_HOST_TYPE_IPV4:
+		dst->addr[0] = src->addr[0];
+		dst->addr[1] = src->addr[1];
+		dst->addr[2] = src->addr[2];
+		dst->addr[3] = src->addr[3];
+		break;
+	default:
+		/* unsupported type; just copy */
+		memcpy(dst, src, sizeof(*dst));
+		break;
+	}
+}
+
 static inline uint64_t gettimestamp_s(void)
 {
 	struct timeval now;

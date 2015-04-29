@@ -281,7 +281,7 @@ size_t strshfshost(char *s, size_t slen, struct shfs_host *h)
 		ret = snprintf(s, l, "%s", h->name);
 		break;
 	case SHFS_HOST_TYPE_IPV4:
-		ret = snprintf(s, slen, "%u.%u.%u.%u",
+		ret = snprintf(s, slen, "%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,
 			       h->addr[0], h->addr[1], h->addr[2], h->addr[3]);
 		break;
 	default:

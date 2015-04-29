@@ -1100,7 +1100,7 @@ static int actn_addlink(struct token *j)
 
 	dprintf(D_L1, "Going to add the following remote entry:\n");
 	dprintf(D_L1, " Host: %s\n", str_rhost);
-	dprintf(D_L1, " Port: %u\n", u.port);
+	dprintf(D_L1, " Port: %"PRIu16"\n", u.port);
 	if (u.field_data[UF_PATH].len > 1)
 		dprintf(D_L1, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
 	else
@@ -1444,9 +1444,9 @@ static int actn_ls(struct token *token)
 		       (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
 		       (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-');
 
+		/* ltype, mime */
 		if (SHFS_HENTRY_ISLINK(hentry)) {
-			/* ltype */
-			switch(hentry->l_attr.type) {
+			switch (hentry->l_attr.type) {
 			case SHFS_LTYPE_RELACLONE_MPEG:
 				printf("%5s ", "rlmpg");
 				break;
@@ -1458,12 +1458,9 @@ static int actn_ls(struct token *token)
 				break;
 			}
 
-			/* mime */
 			printf("%-24s ", " ");
 		} else {
-			/* ltype */
 			printf("      ");
-			/* mime */
 			printf("%-24s ", str_mime);
 		}
 

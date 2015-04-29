@@ -12,6 +12,7 @@
 #include "shfs.h"
 #include "shfs_cache.h"
 #include "shfs_fio.h"
+#include "shfs_tools.h"
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 #include "shfs_stats.h"
 #endif
@@ -36,10 +37,10 @@
 #define HTTP_TCPKEEPALIVE_IDLE    30 /* = x sec */
 
 #define HTTPHDR_URL_MAXLEN        99 /* MAX: '/' + '?' + 512 bits hash + '\0' */
-#define HTTPHDR_BUFFER_MAXLEN     64
+#define HTTPHDR_BUFFER_MAXLEN    128
 #define HTTPHDR_REQ_MAXNB_LINES   12
 #define HTTPHDR_RESP_MAXNB_SLINES  8
-#define HTTPHDR_RESP_MAXNB_DLINES  8
+#define HTTPHDR_RESP_MAXNB_DLINES  4
 #define HTTPURL_ARGS_INDICATOR   '?'
 
 #define HTTPREQ_TCP_MAXSNDBUF          ((size_t) TCP_SND_BUF)
@@ -1056,7 +1057,8 @@ static inline void httpreq_build_response(struct http_req *hreq)
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	register unsigned int i;
 #endif
-	char fmime[65]; /* mime type of element */
+	char strsbuf[64];
+	char strlbuf[128];
 
 	/* check request method (GET, POST, ...) */
 	if (hreq->request_hdr.method != HTTP_GET) {
@@ -1104,18 +1106,24 @@ static inline void httpreq_build_response(struct http_req *hreq)
 			goto err404_hdr; /* 404 File not found */
 		goto err500_hdr; /* 500 Internal server error */
 	}
-
-	hreq->response_hdr.code = 200;	/* 200 OK */
-	shfs_fio_size(hreq->fd, &hreq->fsize);
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 	hreq->stats.el_stats = shfs_stats_from_fd(hreq->fd);
-#if defined SHFS_STATS_HTTP_DPC
+#endif
+	if (shfs_fio_islink(hreq->fd) &&
+	    shfs_fio_link_type(hreq->fd) == SHFS_LTYPE_REDIRECT)
+		goto red307_hdr;
+
+	/**
+	 * FILE HEADER
+	 */
+	shfs_fio_size(hreq->fd, &hreq->fsize);
+#if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	for (i = 0; i < SHFS_STATS_HTTP_DPCR; ++i)
 		hreq->stats.dpc_threshold[i] = SHFS_STATS_HTTP_DPC_THRESHOLD(hreq->fsize, i);
 #endif
-#endif
 
 	/* File range requested? */
+	hreq->response_hdr.code = 200;	/* 200 OK */
 	hreq->rfirst = 0;
 	hreq->rlast  = hreq->fsize - 1;
 	ret = http_reqhdr_findfield(hreq, "range");
@@ -1168,11 +1176,11 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->type = HRT_DMSG;
 
 	/* MIME (by element or default) */
-	shfs_fio_mime(hreq->fd, fmime, sizeof(fmime));
-	if (fmime[0] == '\0')
+	shfs_fio_mime(hreq->fd, strsbuf, sizeof(strsbuf));
+	if (strsbuf[0] == '\0')
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_DEFAULT_TYPE);
 	else
-		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], fmime);
+		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
 
 	/* Content length */
 	hreq->rlen   = (hreq->rlast + 1) - hreq->rfirst;
@@ -1191,7 +1199,104 @@ static inline void httpreq_build_response(struct http_req *hreq)
 		hreq->volchkoff_first = shfs_volchkoff_foff(hreq->fd, hreq->rfirst);               /* first byte in first chunk */
 		hreq->volchkoff_last  = shfs_volchkoff_foff(hreq->fd, hreq->rlast + hreq->rfirst); /* last byte in last chunk */
 	}
+	goto finalize_hdr;
 
+	/**
+	 * REDIRECT HEADER
+	 */
+ red307_hdr:
+	hreq->response_hdr.code = 307;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_307(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	strshfshost(strsbuf, sizeof(strsbuf),
+		    shfs_fio_link_rhost(hreq->fd));
+	shfs_fio_link_rpath(hreq->fd, strlbuf, sizeof(strlbuf));
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%shttp://%s:%"PRIu16"/%s\r\n",
+			 _http_dhdr[HTTP_DHDR_LOCATION],
+			 strsbuf, shfs_fio_link_rport(hreq->fd), strlbuf);
+	hreq->type = HRT_NOMSG;
+	goto finalize_hdr;
+
+	/**
+	 * TESTFILE HEADER
+	 */
+#ifdef HTTP_TESTFILE
+ testfile_hdr:
+	hreq->response_hdr.code = 200;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
+	/* Content length */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_testfile;
+	hreq->rlen = _http_testfile_len;
+	goto finalize_hdr;
+#endif
+
+	/**
+	 * ERROR HEADERS
+	 */
+ err404_hdr:
+	/* 404 File not found */
+	hreq->response_hdr.code = 404;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_404(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
+	/* Content length */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err404p_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err404p;
+	hreq->rlen = _http_err404p_len;
+	goto finalize_hdr;
+
+ err416_hdr:
+	/* 416 Range request error */
+	hreq->response_hdr.code = 416;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+	hreq->type = HRT_NOMSG;
+	goto finalize_hdr;
+
+ err500_hdr:
+	/* 500 Internal server error */
+	hreq->response_hdr.code = 500;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_500(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
+	/* Content length */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err500p_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err500p;
+	hreq->rlen = _http_err500p_len;
+	goto finalize_hdr;
+
+ err501_hdr:
+	/* 501 Invalid request */
+	hreq->response_hdr.code = 501;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_501(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
+	/* Content length */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err501p_len);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err501p;
+	hreq->rlen = _http_err501p_len;
+	goto finalize_hdr;
+
+ err503_hdr:
+	/* 503 Service unavailable */
+	hreq->response_hdr.code = 503;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_503(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
+	/* Content length */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err503p_len);
+	/* Retry-after (TODO: here, just set to 2 second) */
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%u\r\n", _http_dhdr[HTTP_DHDR_RETRY], 2);
+	hreq->type = HRT_SMSG;
+	hreq->smsg = _http_err503p;
+	hreq->rlen = _http_err503p_len;
+	goto finalize_hdr;
+
+	/**
+	 * FINALIZE
+	 */
  finalize_hdr:
 	/* Default header lines */
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_SERVER);
@@ -1251,84 +1356,6 @@ static inline void httpreq_build_response(struct http_req *hreq)
 #endif
 #endif
 	return;
-
-	/**
-	 * ERROR HEADERS
-	 */
- err404_hdr:
-	/* 404 File not found */
-	hreq->response_hdr.code = 404;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_404(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
-	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err404p_len);
-	hreq->type = HRT_SMSG;
-	hreq->smsg = _http_err404p;
-	hreq->rlen = _http_err404p_len;
-	goto finalize_hdr;
-
- err416_hdr:
-	/* 416 Range request error */
-	hreq->response_hdr.code = 416;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
-	hreq->type = HRT_NOMSG;
-	goto finalize_hdr;
-
- err500_hdr:
-	/* 500 Internal server error */
-	hreq->response_hdr.code = 500;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_500(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
-	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err500p_len);
-	hreq->type = HRT_SMSG;
-	hreq->smsg = _http_err500p;
-	hreq->rlen = _http_err500p_len;
-	goto finalize_hdr;
-
- err501_hdr:
-	/* 501 Invalid request */
-	hreq->response_hdr.code = 501;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_501(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
-	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err501p_len);
-	hreq->type = HRT_SMSG;
-	hreq->smsg = _http_err501p;
-	hreq->rlen = _http_err501p_len;
-	goto finalize_hdr;
-
- err503_hdr:
-	/* 503 Service unavailable */
-	hreq->response_hdr.code = 503;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_503(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_HTML);
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_NOCACHE);
-	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_err503p_len);
-	/* Retry-after (TODO: here, just set to 2 second) */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%u\r\n", _http_dhdr[HTTP_DHDR_RETRY], 2);
-	hreq->type = HRT_SMSG;
-	hreq->smsg = _http_err503p;
-	hreq->rlen = _http_err503p_len;
-	goto finalize_hdr;
-
-#ifdef HTTP_TESTFILE
- testfile_hdr:
-	hreq->response_hdr.code = 200;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
-	/* Content length */
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
-	hreq->type = HRT_SMSG;
-	hreq->smsg = _http_testfile;
-	hreq->rlen = _http_testfile_len;
-	goto finalize_hdr;
-#endif
 }
 
 
@@ -1691,7 +1718,7 @@ static err_t httpsess_respond(struct http_sess *hsess)
 	err_t err = ERR_OK;
 
 	BUG_ON(hsess->state != HSS_ESTABLISHED);
-	BUG_ON(hsess->_in_respond >= 1); /* no function nesting */
+	BUG_ON(hsess->_in_respond >= 1); /* no function nesting: FIXME: Happens still in some cases -> backtrace */
 	BUG_ON(!hsess->rqueue_head);
 
 	hsess->_in_respond = 1;
@@ -1751,6 +1778,7 @@ static err_t httpsess_respond(struct http_sess *hsess)
 				goto case_HRS_RESPONDING_EOM;
 			}
 			break;
+
 		default:
 			goto err_close;
 		}

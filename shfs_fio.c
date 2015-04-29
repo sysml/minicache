@@ -176,8 +176,8 @@ void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen)
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 	struct shfs_hentry *hentry = bentry->hentry;
 
-	outlen = min(outlen, sizeof(hentry->mime) + 1);
-	strncpy(out, hentry->mime, outlen - 1);
+	outlen = min(outlen, sizeof(hentry->f_attr.mime) + 1);
+	strncpy(out, hentry->f_attr.mime, outlen - 1);
 	out[outlen - 1] = '\0';
 }
 
@@ -195,6 +195,16 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out)
 	struct shfs_hentry *hentry = bentry->hentry;
 
 	hash_copy(out, hentry->hash, shfs_vol.hlen);
+}
+
+void  shfs_fio_link_rpath(SHFS_FD f, char *out, size_t outlen)
+{
+	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
+	struct shfs_hentry *hentry = bentry->hentry;
+
+	outlen = min(outlen, sizeof(hentry->l_attr.rpath) + 1);
+	strncpy(out, hentry->l_attr.rpath, outlen - 1);
+	out[outlen - 1] = '\0';
 }
 
 /*

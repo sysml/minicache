@@ -65,7 +65,7 @@
 /* boot time tracing helper */
 #ifdef TRACE_BOOTTIME
 #ifndef __MINIOS__
-#define TT_DECLARE(var) struct timeval (var)
+#define TT_DECLARE(var) struct timeval (var) = { 0 }
 #define TT_START(var) gettimeofday(&(var), NULL)
 #define TT_END(var) \
   do {						\
@@ -78,7 +78,7 @@
   printk(" %-32s: %ld.%06lds\n",		\
     (desc), (var).tv_sec, (var).tv_usec);
 #else /*__MINIOS__ */
-#define TT_DECLARE(var) uint64_t (var)
+#define TT_DECLARE(var) uint64_t (var) = 0
 #define TT_START(var) do { (var) = NOW(); } while(0)
 #define TT_END(var) do { (var) = (NOW() - (var)); } while(0)
 #define TT_PRINT(desc, var)			\

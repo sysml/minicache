@@ -21,15 +21,29 @@ typedef struct shfs_bentry *SHFS_FD;
 SHFS_FD shfs_fio_open(const char *path);
 void shfs_fio_close(SHFS_FD f);
 
-/**
- * File/object information
- */
-void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_hash(SHFS_FD f, hash512_t out);
-void shfs_fio_size(SHFS_FD f, uint64_t *out);
 #define shfs_fio_islink(f) \
 	(SHFS_HENTRY_ISLINK((f)->hentry))
+void shfs_fio_size(SHFS_FD f, uint64_t *out); /* returns 0 on links */
+
+/**
+ * Link object attributes
+ * The following interfaces can only be used on link objects
+ */
+#define shfs_fio_link_type(f) \
+	(SHFS_HENTRY_LINK_TYPE((f)->hentry))
+#define shfs_fio_link_rport(f) \
+	(SHFS_HENTRY_LINKATTR((f)->hentry).rport)
+#define shfs_fio_link_rhost(f) \
+	(&(SHFS_HENTRY_LINKATTR((f)->hentry).rhost))
+void shfs_fio_link_rpath(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
+
+/**
+ * File object attributes
+ * The following interfaces can only be used to non-link objects
+ */
+void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 
 /* file container size in chunks */
 #define shfs_fio_size_chks(f) \

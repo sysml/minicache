@@ -33,4 +33,6 @@ void hash_unparse(const hash512_t h, uint8_t hlen, char *out);
 
 size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec);
 
+size_t strshfshost(char *s, size_t slen, struct shfs_host *h);
+
 #endif /* _SHFS_TOOLS_H_ */

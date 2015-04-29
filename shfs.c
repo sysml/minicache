@@ -718,17 +718,9 @@ static int reload_vol_htable(void) {
 					else if (SHFS_HENTRY_ISDEFAULT(nhentry))
 						shfs_vol.def_bentry = bentry;
 				}
-			} else if (chentry->flags != nhentry->flags ||
-				   (SHFS_HENTRY_ISLINK(chentry) && (
-				   chentry->f_attr.chunk  != nhentry->f_attr.chunk  ||
-				   chentry->f_attr.offset != nhentry->f_attr.offset ||
-				   chentry->f_attr.len    != nhentry->f_attr.len)) ||
-				   (!SHFS_HENTRY_ISLINK(chentry) && (
-				   chentry->l_attr.rip    != nhentry->l_attr.rip  ||
-				   chentry->l_attr.rport  != nhentry->l_attr.rport ||
-				   chentry->l_attr.rpath  != nhentry->l_attr.rpath || 
-				   chentry->l_attr.type   != nhentry->l_attr.type))) {
+			} else {
 				/* in this case, at most the file location has been moved
+				 * or the contents has been changed
 				 *
 				 * Note: This is usually a bad thing but happens
 				 * if the tools were misused
@@ -740,11 +732,11 @@ static int reload_vol_htable(void) {
 
 				/* lock entry */
 				bentry->update = 1; /* forbid further open() */
-				down(&bentry->updatelock); /* wait until files is closed */
+				down(&bentry->updatelock); /* wait until this file is closed */
 
 				memcpy(chentry, nhentry, sizeof(*chentry));
 
-				shfs_flush_cache();
+				shfs_flush_cache(); /* to ensure re-reading this file */
 
 				/* unlock entry */
 				up(&bentry->updatelock);
@@ -756,18 +748,6 @@ static int reload_vol_htable(void) {
 					shfs_vol.def_bentry = NULL;
 				else if (SHFS_HENTRY_ISDEFAULT(nhentry))
 					shfs_vol.def_bentry = bentry;
-			} else {
-				/* at least update name, mime type, enconding and
-				 * creation timestamp (just in case if these values have
-				 * been changed)
-				 * These fields are completely independent to the file
-				 * contents and should be read at once without yielding
-				 * the CPU (e.g., snprintf, strncpy).
-				 * Because of this, no locking is required */
-				memcpy(chentry->name,     nhentry->name,     sizeof(chentry->name));
-				memcpy(chentry->mime,     nhentry->mime,     sizeof(chentry->mime));
-				memcpy(chentry->encoding, nhentry->encoding, sizeof(chentry->encoding));
-				chentry->ts_creation = nhentry->ts_creation;
 			}
 		}
 	}
