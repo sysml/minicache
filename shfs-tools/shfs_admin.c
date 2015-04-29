@@ -1093,7 +1093,7 @@ static int actn_addlink(struct token *j)
 	if ((ret = hntoshfshost(j->path + u.field_data[UF_HOST].off,
 				u.field_data[UF_HOST].len,
 				SHFS_HOST_TYPE_NAME, &rhost)) < 0) {
-		eprintf("Hostname query failed: %s\n", j->path, strerror(-ret));
+		eprintf("Hostname query for %s failed: %s\n", j->path, strerror(-ret));
 		goto err;
 	}
 	strshfshost(str_rhost, sizeof(str_rhost), &rhost);
