@@ -1070,6 +1070,7 @@ static int shcmd_xargs(FILE *cio, int argc, char *argv[])
 {
     int ret = 0;
     int32_t cmdi;
+    char *cmd_argv[2];
     int i;
 
     if (argc == 1) {
@@ -1083,10 +1084,12 @@ static int shcmd_xargs(FILE *cio, int argc, char *argv[])
     }
 
     if (argc == 2) {
-        ret = sh->cmd_func[cmdi](cio, 1, NULL);
+        ret = sh->cmd_func[cmdi](cio, 1, &argv[1]);
     } else {
         for (i = 2; i < argc; i++) {
-            ret = sh->cmd_func[cmdi](cio, 1, &argv[i]);
+            cmd_argv[0] = argv[1];
+            cmd_argv[1] = argv[i];
+            ret = sh->cmd_func[cmdi](cio, 2, cmd_argv);
             if (ret < 0)
                 return ret;
         }
