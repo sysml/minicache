@@ -4,6 +4,15 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
+#if defined linux || defined __OSV__
+#define USE_FOPENCOOKIE
+#endif
+
+#ifdef USE_FOPENCOOKIE
+#define _GNU_SOURCE
+#include <stdio.h>
+#endif
+
 #include <target/sys.h>
 #include <errno.h>
 #include <sched.h>
@@ -19,6 +28,8 @@
 
 #ifdef HAVE_LWIP
 #include <lwip/tcp.h>
+#else
+typedef int err_t;
 #endif
 
 #include "shell.h"
@@ -127,6 +138,9 @@ struct shell_sess {
 
     /* console i/o */
     FILE *cio; /* stdin/stdout of session */
+#ifdef USE_FOPENCOOKIE
+    cookie_io_functions_t cio_funcs;
+#endif
 
     int cons_fd; /* serial console on SSS_LOCAL */
 #ifdef HAVE_LWIP
@@ -239,7 +253,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
 #ifdef __MINIOS__
     shell_register_cmd("free",   shcmd_free);
 #endif
-#if defined HAVE_LIBC && !defined CONFIG_ARM
+#if defined HAVE_LIBC && !(defined __MINIOS__ && defined CONFIG_ARM)
     shell_register_cmd("mallinfo",shcmd_mallinfo);
 #endif
 #ifdef HAVE_LWIP
@@ -593,6 +607,7 @@ static err_t shlsess_accept(void)
         goto err_out;
     }
 
+#ifdef __MINIOS__
     sess->cons_fd = open("/var/log/", O_RDWR); /* workaround to
                                                 * access stdin/stdout */
     if (sess->cons_fd < 0) {
@@ -600,6 +615,9 @@ static err_t shlsess_accept(void)
         goto err_free_sess;
     }
     sess->cio = fdopen(sess->cons_fd, "r+");
+#else
+    sess->cio = stdin; /* FIXME */
+#endif
 
     sess->tpcb = NULL;
     sess->type = SST_LOCAL;
@@ -661,7 +679,11 @@ static void shlsess_close(struct shell_sess *sess)
 #define RXBUF_NB_AVAIL(s) ((SH_RXBUFLEN  + (s)->cio_rxbuf_widx - (s)->cio_rxbuf_ridx) & SH_RXBUFMASK)
 #define RXBUF_NB_FREE(s)  ((SH_RXBUFMASK + (s)->cio_rxbuf_ridx - (s)->cio_rxbuf_widx) & SH_RXBUFMASK)
 
+#ifdef USE_FOPENCOOKIE
+static ssize_t shrsess_cio_read(void *argp, char *buf, size_t maxlen)
+#else
 static ssize_t shrsess_cio_read(void *argp, char *buf, int maxlen)
+#endif
 {
     struct shell_sess *sess = argp;
     int i;
@@ -692,7 +714,11 @@ retry:
     return (ssize_t) avail;
 }
 
+#ifdef USE_FOPENCOOKIE
+static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
+#else
 static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
+#endif
 {
     struct shell_sess *sess = argp;
     err_t err = ERR_OK;
@@ -774,11 +800,12 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
     sess->cio_rxbuf_ridx = 0;
     sess->cio_rxbuf_widx = 0;
-#ifndef __MINIOS__
-    sess->cio = fopencookie(sess, "r+",
-                        shrsess_cio_read,
-                        shrsess_cio_write,
-                        NULL, NULL);
+#ifdef USE_FOPENCOOKIE
+    sess->cio_funcs.read = shrsess_cio_read;
+    sess->cio_funcs.write = shrsess_cio_write;
+    sess->cio_funcs.seek = NULL;
+    sess->cio_funcs.close = NULL;
+    sess->cio = fopencookie(sess, "r+", sess->cio_funcs);
 #else
     sess->cio = funopen(sess,
                         shrsess_cio_read,
