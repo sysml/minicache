@@ -438,11 +438,14 @@ static int sh_exec(FILE *cio, char *argb, size_t argb_len)
     }
 
  out:
-    if (argc == 0)
+    if (argc == 0) {
+        printd("Ignoring empty command\n");
         return 0; /* nothing was typed */
+    }
 
     cmdi = shell_get_cmd_index(argv[0]);
     if (cmdi < 0) {
+        printd("%s: command not found\n", argv[0]);
         fprintf(cio, "%s: command not found\n", argv[0]);
         return 0;
     }
@@ -450,6 +453,7 @@ static int sh_exec(FILE *cio, char *argb, size_t argb_len)
     ret = sh->cmd_func[cmdi](cio, argc, argv);
     if (ret < 0)
         fprintf(cio, "%s: command returned %d\n", argv[0], ret);
+    printd("%s: command returned %d\n", argv[0], ret);
 
     return ret;
 }
@@ -488,8 +492,11 @@ respawn:
                 sess->state == SSS_KILLING)
                 goto terminate;
             ret = fgetc(sess->cio);
-            if (ret == EOF)
-	        goto terminate;
+            printd("%s: fgetc: %d %c\n", sess->name, ret, ret > 0 ? ret : '\0');
+            if (ret == EOF) {
+                printd("%s: fgetc returned EOF: Connection closed\n", sess->name);
+                goto terminate;
+            }
             argb[argb_p] = (char) ret;
             if (sess->state == SSS_CLOSING ||
                 sess->state == SSS_KILLING)
@@ -567,13 +574,17 @@ respawn:
         if (sess->echo)
             fprintf(sess->cio, "\n");
 
+	printd("Parsing command line: %s\n", argb);
         ret = sh_exec(sess->cio, argb, argb_p + 1);
         fflush(sess->cio);
+	printd("Command line parsing finished: return code %d\n", ret);
         if (ret == SH_CLOSE) {
+	    printd("Close session\n");
 	    sess->state = SSS_CLOSING;
             break;
         }
     }
+
     if (sh->goodbye)
         fprintf(sess->cio, "%s\n", sh->goodbye);
     fflush(sess->cio);
@@ -582,6 +593,7 @@ respawn:
         goto respawn;
 
 terminate:
+    printd("Terminate session %s\n", sess->name);
 #ifdef HAVE_LWIP
     if (sess->type == SST_REMOTE)
 	    shrsess_close(sess);
@@ -684,19 +696,26 @@ static void shlsess_close(struct shell_sess *sess)
 #ifdef USE_FOPENCOOKIE
 static ssize_t shrsess_cio_read(void *argp, char *buf, size_t maxlen)
 #else
-static ssize_t shrsess_cio_read(void *argp, char *buf, int maxlen)
+static int shrsess_cio_read(void *argp, char *buf, int maxlen)
 #endif
 {
     struct shell_sess *sess = argp;
-    int i;
-    int avail;
+#ifdef USE_FOPENCOOKIE
+    ssize_t i, avail;
+#else
+    int i, avail;
+#endif
+
+    printd("%s: Read incoming data (max: %d bytes)...\n", sess->name, maxlen);
 
 retry:
-    if (sess->state == SSS_CLOSING || sess->state == SSS_KILLING)
-        return EOF;
+    if (sess->state == SSS_CLOSING || sess->state == SSS_KILLING) {
+        errno = EIO;
+        return -1;
+    }
 
     avail = min(RXBUF_NB_AVAIL(sess), maxlen);
-    if (!avail && maxlen) {
+    if ((avail == 0) && (maxlen > 0)) {
         /* we need to wait for further input of data */
         schedule(); /* TODO: use wait queue */
         goto retry;
@@ -705,37 +724,23 @@ retry:
 	buf[i] = sess->cio_rxbuf[sess->cio_rxbuf_ridx];
         sess->cio_rxbuf_ridx = (sess->cio_rxbuf_ridx + 1) & SH_RXBUFMASK;
     }
-    /*
-#ifdef SHELL_DEBUG
-    printd("Received %u bytes from client: '", avail);
-    for (i = 0; i < avail; i++)
-	    printd("%02x:", (unsigned char) buf[i]);
-    printd("'\n");
-#endif
-    */
-    return (ssize_t) avail;
+
+    printd("%s: Received %d bytes from client\n", sess->name, avail);
+    return avail;
 }
 
 #ifdef USE_FOPENCOOKIE
 static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
 #else
-static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
+static int shrsess_cio_write(void *argp, const char *buf, int len)
 #endif
 {
     struct shell_sess *sess = argp;
     err_t err = ERR_OK;
     int i = 0;
     uint16_t avail, sendlen;
-    /*
-#ifdef SHELL_DEBUG
-    printd("Sending %u bytes to client: '", len);
-    for (i = 0; i < len; i++)
-	printd("%c", buf[i]);
-    printd("'\n");
-    fflush(stdout);
-    i = 0;
-#endif
-    */
+
+    printd("%s: Sending %d bytes to client...\n", sess->name, len);
     while (i < len) {
 	    while((avail = tcp_sndbuf(sess->tpcb)) < 1) {
 		    if (sess->state == SSS_CLOSING ||
@@ -765,8 +770,9 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
 	    i += sendlen;
 	    tcp_output(sess->tpcb);
     }
+    printd("%s: Sending done (%d bytes)\n", sess->name, len);
 
-    return (ssize_t) len;
+    return len;
 }
 
 static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
@@ -901,6 +907,7 @@ static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_
         }
 
         /* close connection */
+	printd("Unexpected close of session %s: Killing session...\n", sess->name);
         sess->state = SSS_CLOSING;
         return ERR_OK;
     }
@@ -925,6 +932,7 @@ static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_
 static void shrsess_error(void *argp, err_t err)
 {
     struct shell_sess *sess = (struct shell_sess *) argp;
+    printd("Receive error on %s: Killing session...\n", sess->name);
     sess->state = SSS_KILLING; /* kill connection on errors */
 }
 
