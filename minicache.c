@@ -802,6 +802,9 @@ int main(int argc, char *argv[])
 	/* poll block devices */
 	shfs_poll_blkdevs();
 
+	/* poll IO retry chain of HTTP */
+	http_poll_ioretry();
+
 #ifdef CONFIG_LWIP_NOTHREADS
         /* NIC handling loop (single threaded lwip) */
 	target_netif_poll(&netif);

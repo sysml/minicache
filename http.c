@@ -395,12 +395,12 @@ void exit_http(void)
 
 /* gets called whenever it is worth
  * to retry an failed I/O operation (with EAGAIN) */
-void http_retry_aio_cb(void) {
+void http_poll_ioretry(void) {
 	struct http_sess *hsess;
 	struct http_sess *hsess_next;
 
 	if (unlikely(!hs))
-		return;
+		return; /* no active http server */
 
 	hsess = dlist_first_el(hs->ioretry_chain, struct http_sess);
 	/* clear head so that a new list is created
@@ -416,12 +416,9 @@ void http_retry_aio_cb(void) {
 		hsess->ioretry_chain.prev = NULL;
 
 		printd("Retrying I/O on session %p\n", hsess);
-		if (!hsess->_in_respond)
-			httpsess_respond(hsess); /* can register itself to the new list */
-		else
-			httpsess_register_ioretry(hsess); /* register element to the new list */
+		httpsess_respond(hsess); /* can register itself to the new list */
 
-		hsess = hsess_next;
+		hsess = hsess_next; /* next element */
 	}
 }
 
@@ -1536,6 +1533,8 @@ static inline err_t httpreq_write_shfsafio(struct http_req *hreq, size_t *sent)
 		} else if (unlikely(ret < 0)) {
 			/* Read ERROR happened -> abort */
 			printd("[idx=%u] fatal read error (%d): aborting...\n", idx, ret);
+			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
+			                                we have no new data for now */
 			err = ERR_ABRT;
 			goto err_abort;
 		} else if (ret == 1) {

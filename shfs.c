@@ -24,8 +24,6 @@
 #endif
 #include "debug.h"
 
-#include "http.h"
-
 #ifndef CACHELINE_SIZE
 #define CACHELINE_SIZE 64
 #endif
@@ -523,10 +521,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 		goto err_free_htable;
 
 	/* chunk buffer cache for I/O */
-	/* TODO/NOTE: For now the http server is the only service supporting the
-	 *            AIO retry callback. In case there will be more in the future,
-	 *            a callback registration service needs to be implemented */
-	ret = shfs_alloc_cache(http_retry_aio_cb);
+	ret = shfs_alloc_cache();
 	if (ret < 0)
 		goto err_free_remount_buffer;
 

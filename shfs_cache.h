@@ -8,23 +8,24 @@
 #include "dlist.h"
 #include "mempool.h"
 
-#define SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY 2 /* defines roughly the average maximum number of comparisons per table entry (Note: due to rounding, the real number will be higher) */
+#define SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY 2 /* defines in the end roughly the average maximum number of comparisons
+						       * per table entry (Note: the real lenght might be higher) */
 #define SHFS_CACHE_POOL_NB_BUFFERS 32 /* defines minimum cache size,
                                        * if 0, CACHE_GROW has to be enabled */
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
 
-#ifdef __MINIOS__
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
-                         * allocating more buffers on demand (via _xmalloc). When
+                         * allocating more buffers on demand (via malloc()). When
 			 * SHFS_GROW_THRESHOLD is defined, left system memory 
 			 * is checked before the allocation */
 
+#ifdef __MINIOS__
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* 256KB */
 #else
 #define SHFS_CACHE_GROW_THRESHOLD (1 * 1024 * 1024) /* 1MB */
 #endif
-#endif
+#endif /* __MINIOS__ */
 
 struct shfs_cache_entry {
 	struct mempool_obj *pobj;
@@ -56,18 +57,12 @@ struct shfs_cache {
 	uint32_t htmask;
 	uint64_t nb_ref_entries;
 	uint64_t nb_entries;
-	void (*cb_retry)(void); /* callback that is called whenever it is
-	                         * worth to retry an AIO request that
-	                         * failed with EAGAIN */
-	int call_cb_retry;      /* is set to true there was an event happening
-	                         * that increases the chaance to retry the I/O */
-	int _in_cb_retry;
 
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };
 
-int shfs_alloc_cache(void (*cb_retry)(void));
+int shfs_alloc_cache(void);
 void shfs_flush_cache(void); /* releases unreferenced buffers */
 void shfs_free_cache(void);
 #define shfs_cache_ref_count() \

@@ -10,7 +10,7 @@
 
 #define MIN_ALIGN 8
 
-#ifdef SHFS_CACHE_GROW_THRESHOLD
+#ifdef __MINIOS__
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define shfs_cache_free_mem() \
 	({ struct mallinfo minfo = mallinfo(); \
@@ -21,20 +21,10 @@
 #define shfs_cache_free_mem() \
 	(mm_free_pages() << PAGE_SHIFT) /* free pages in page allocator */
 #endif
-#endif
-
-#define shfs_cache_notify_retry() \
-	do { \
-		if (unlikely(!shfs_vol.chunkcache->_in_cb_retry && \
-		             shfs_vol.chunkcache->call_cb_retry && \
-		             shfs_vol.chunkcache->cb_retry)) { \
-			printd("Notify retry of failed AIO request setup...\n"); \
-			shfs_vol.chunkcache->call_cb_retry = 0; \
-			shfs_vol.chunkcache->_in_cb_retry = 1; \
-			shfs_vol.chunkcache->cb_retry(); \
-			shfs_vol.chunkcache->_in_cb_retry = 0; \
-		} \
-	} while(0)
+#else /* __MINIOS__ */
+#define shfs_cache_free_mem() \
+	(0)
+#endif /* __MINIOS__ */
 
 static void _cce_pobj_init(struct mempool_obj *pobj, void *unused)
 {
@@ -61,14 +51,9 @@ static inline uint32_t log2(uint32_t v)
   return (i - 1);
 }
 
-int shfs_alloc_cache(void (*cb_retry)(void))
+static inline uint32_t shfs_gen_htcollison_order()
 {
-    struct shfs_cache *cc;
-    uint32_t htlen, htorder, i;
-    size_t cc_size;
-    int ret;
-
-    ASSERT(shfs_vol.chunkcache == NULL);
+    uint32_t htlen;
 
     /* quickly calculate an "optimal" collision table size (heuristical):
      * n per entry: nb_entries = max_nb_bffrs / n
@@ -82,12 +67,23 @@ int shfs_alloc_cache(void (*cb_retry)(void))
     htlen   = ((mm_total_pages() << PAGE_SHIFT) / shfs_vol.chunksize) /
               SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY;
 #endif
-#else
+#else /* SHFS_CACHE_GROW */
     htlen   = SHFS_CACHE_POOL_NB_BUFFERS /
               SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY;
-#endif
-    htorder = log2(htlen);
-    htlen   = 1 << htorder;
+#endif /* SHFS_CACHE_GROW */
+    return log2(htlen);
+}
+
+int shfs_alloc_cache(void)
+{
+    struct shfs_cache *cc;
+    uint32_t htlen, i;
+    size_t cc_size;
+    int ret;
+
+    ASSERT(shfs_vol.chunkcache == NULL);
+
+    htlen   = 1 << shfs_gen_htcollison_order();
 
     cc_size = sizeof(*cc) + (htlen * sizeof(struct shfs_cache_htel));
     cc = target_malloc(MIN_ALIGN, cc_size);
@@ -124,9 +120,6 @@ int shfs_alloc_cache(void (*cb_retry)(void))
     cc->htmask = htlen - 1;
     cc->nb_entries = 0;
     cc->nb_ref_entries = 0;
-    cc->cb_retry = cb_retry;
-    cc->call_cb_retry = 0;
-    cc->_in_cb_retry = 0;
 
     shfs_vol.chunkcache = cc;
     return 0;
@@ -233,7 +226,6 @@ static inline void shfs_cache_unlink(struct shfs_cache_entry *cce)
 static inline void shfs_cache_flush_alist(void)
 {
     struct shfs_cache_entry *cce;
-    int orig_call_cb_retry = shfs_vol.chunkcache->call_cb_retry;
 
     printd("Flushing cache...\n");
     while ((cce = dlist_first_el(shfs_vol.chunkcache->alist, struct shfs_cache_entry)) != NULL) {
@@ -243,8 +235,6 @@ static inline void shfs_cache_flush_alist(void)
 		    /* set refcount to 1 in order to avoid freeing of an invalid
 		     * buffer by aiocb */
 		    cce->refcount = 1;
-		    /* disable retry notification call */
-		    shfs_vol.chunkcache->call_cb_retry = 0;
 
 		     /* wait for I/O without having thread switching
 		      * because otherwise, the state of alist might change */
@@ -252,25 +242,17 @@ static inline void shfs_cache_flush_alist(void)
 			    shfs_poll_blkdevs(); /* requires shfs_mounted = 1 */
 
 		    cce->refcount = 0; /* retore refcount */
-
-		    /* since we come back from an I/O we should schedule
-		     * an I/O retry call */
-		    orig_call_cb_retry = 1;
 	    }
 
 	    printd("Releasing chunk buffer %llu...\n", cce->addr);
 	    shfs_cache_unlink(cce); /* unlinks element from alist and clist */
 	    shfs_cache_put_cce(cce);
     }
-
-    /* reenable previous state of retry notification call */
-    shfs_vol.chunkcache->call_cb_retry = orig_call_cb_retry;
 }
 
 void shfs_flush_cache(void)
 {
     shfs_cache_flush_alist();
-    shfs_cache_notify_retry();
 }
 
 void shfs_free_cache(void)
@@ -300,7 +282,7 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
         printd("Destroy failed cache I/O at chunk %llu: %d\n", cce->addr, ret);
 	shfs_cache_unlink(cce);
 	shfs_cache_put_cce(cce);
-        goto out;
+        return;
     }
 
     /* clear chain */
@@ -320,9 +302,6 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 	}
 	t_cur = t_next;
     }
-
- out:
-    shfs_cache_notify_retry();
 }
 
 static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
@@ -415,8 +394,6 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 	cce = shfs_cache_add(addr);
 	if (!cce) {
 	    ret = -errno;
-	    if (errno == EAGAIN)
-		    shfs_vol.chunkcache->call_cb_retry = 1;
 	    goto err_out;
 	}
     }
@@ -446,7 +423,6 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     t = shfs_aio_pick_token();
     if (unlikely(!t)) {
 	printd("Failed to append AIO token: Out of token\n");
-	shfs_vol.chunkcache->call_cb_retry = 1; /* note that callback will be called */
 	ret = -EAGAIN;
 	goto err_dec_refcount;
     }
@@ -472,9 +448,6 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
 	dlist_append(cce, shfs_vol.chunkcache->alist, alist);
-	/* because we are out of AIO token it does not make sense to not notify
-	 * others for retry: There is indeed a buffer free'd but no I/O operation
-	 * can be done so far and on this buffer an I/O operation is in fly */
     }
  err_out:
     *t_out = NULL;
@@ -502,8 +475,6 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
 	    shfs_cache_unlink(cce);
 	    shfs_cache_put_cce(cce);
 	}
-
-	shfs_cache_notify_retry();
     }
 }
 
@@ -548,10 +519,6 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	}
     }
-
-    /* notify retry if cache buffer can be reused/was released or the AIO token was released */
-    if (t || (shfs_aio_is_done(cce->t) && cce->refcount==0))
-	shfs_cache_notify_retry();
 }
 
 #ifdef SHFS_CACHE_INFO
