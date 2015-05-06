@@ -1235,7 +1235,7 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 
 static int shcmd_free(FILE *cio, int argc, char *argv[])
 {
-    size_t base;
+    uint64_t base;
     char mode = 'm';
 
     /* parsing */
@@ -1267,12 +1267,12 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 
     case 'p': /* pages */
         do {
-	    size_t total_p     = arch_mem_size() >> PAGE_SHIFT;
-	    size_t free_p      = mm_free_pages();
-	    size_t reserved_p  = arch_reserved_mem() >> PAGE_SHIFT;
-	    size_t allocated_p = mm_total_pages() - mm_free_pages();
+	    uint64_t total_p     = arch_mem_size() >> PAGE_SHIFT;
+	    uint64_t free_p      = mm_free_pages();
+	    uint64_t reserved_p  = arch_reserved_mem() >> PAGE_SHIFT;
+	    uint64_t allocated_p = mm_total_pages() - free_p;
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    size_t heap_p      = mm_heap_pages();
+	    uint64_t heap_p      = mm_heap_pages();
 	    allocated_p       -= heap_p; /* excludes heap pages from page allocator */
 #endif
 
@@ -1286,26 +1286,26 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    fprintf(cio, "%12s\n", "free");
 
 	    fprintf(cio, "Pages: ");
-	    fprintf(cio, "%12lu ", total_p);
-	    fprintf(cio, "%12lu ", reserved_p);
-	    fprintf(cio, "%12lu ", allocated_p);
+	    fprintf(cio, "%12"PRIu64" ", total_p);
+	    fprintf(cio, "%12"PRIu64" ", reserved_p);
+	    fprintf(cio, "%12"PRIu64" ", allocated_p);
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12lu ", heap_p);
+	    fprintf(cio, "%12"PRIu64" ", heap_p);
 #endif
-	    fprintf(cio, "%12lu\n", free_p);
+	    fprintf(cio, "%12"PRIu64"\n", free_p);
         } while(0);
         break;
     default: /* mem */
         do {
-	    size_t total_s     = arch_mem_size();
-	    size_t free_s      = mm_free_pages() << PAGE_SHIFT;
-	    size_t other_s     = arch_reserved_mem();
-	    size_t text_s      = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
-	    size_t data_s      = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
-	    size_t bss_s       = ((size_t) &_end - (size_t) &_edata); /* bss section */
-	    size_t allocated_s = (mm_total_pages() - mm_free_pages()) << PAGE_SHIFT;
+	    uint64_t total_s     = arch_mem_size();
+	    uint64_t free_s      = mm_free_pages() << PAGE_SHIFT;
+	    uint64_t other_s     = arch_reserved_mem();
+	    uint64_t text_s      = ((uint64_t) &_erodata - (uint64_t) &_text);  /* text and read only data sections */
+	    uint64_t data_s      = ((uint64_t) &_edata - (uint64_t) &_erodata); /* rw data section */
+	    uint64_t bss_s       = ((uint64_t) &_end - (uint64_t) &_edata); /* bss section */
+	    uint64_t allocated_s = (mm_total_pages() - mm_free_pages()) << PAGE_SHIFT;
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    size_t heap_s      = mm_heap_pages() << PAGE_SHIFT;
+	    uint64_t heap_s      = mm_heap_pages() << PAGE_SHIFT;
 	    allocated_s       -= heap_s; /* excludes heap pages from page allocator */
 #endif
 	    other_s -= text_s + data_s + bss_s;
@@ -1323,16 +1323,16 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    fprintf(cio, "%12s\n", "free");
 
 	    fprintf(cio, "Mem:   ");
-	    fprintf(cio, "%12lu ", total_s / base);
-	    fprintf(cio, "%12lu ", text_s / base);
-	    fprintf(cio, "%12lu ", data_s / base);
-	    fprintf(cio, "%12lu ", bss_s / base);
-	    fprintf(cio, "%12lu ", other_s / base);
-	    fprintf(cio, "%12lu ", allocated_s / base);
+	    fprintf(cio, "%12"PRIu64" ", total_s / base);
+	    fprintf(cio, "%12"PRIu64" ", text_s / base);
+	    fprintf(cio, "%12"PRIu64" ", data_s / base);
+	    fprintf(cio, "%12"PRIu64" ", bss_s / base);
+	    fprintf(cio, "%12"PRIu64" ", other_s / base);
+	    fprintf(cio, "%12"PRIu64" ", allocated_s / base);
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12lu ", heap_s / base);
+	    fprintf(cio, "%12"PRIu64" ", heap_s / base);
 #endif
-	    fprintf(cio, "%12lu\n", free_s /base);
+	    fprintf(cio, "%12"PRIu64"\n", free_s /base);
         } while(0);
         break;
     }
