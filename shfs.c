@@ -166,6 +166,9 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 	shfs_vol.ts_creation = hdr_common->vol_ts_creation;
 	shfs_vol.stripesize = hdr_common->member_stripesize;
 	shfs_vol.stripemode = hdr_common->member_stripemode;
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV
+	shfs_vol.members_maxfd = blkdev_get_fd(detected_member[0].bd);
+#endif
 	if (shfs_vol.stripemode != SHFS_SM_COMBINED &&
 	    shfs_vol.stripemode != SHFS_SM_INDEPENDENT) {
 		printd("Stripe mode 0x%x is not supported\n", shfs_vol.stripemode);
@@ -189,6 +192,10 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 #endif
 				shfs_vol.member[shfs_vol.nb_members].bd = detected_member[m].bd;
 				uuid_copy(shfs_vol.member[shfs_vol.nb_members].uuid, detected_member[m].uuid);
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV
+				shfs_vol.members_maxfd = max(shfs_vol.members_maxfd,
+							     blkdev_get_fd(detected_member[m].bd));
+#endif
 				shfs_vol.nb_members++;
 				break;
 			}

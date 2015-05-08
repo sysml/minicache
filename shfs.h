@@ -42,6 +42,9 @@ struct vol_info {
 	uint32_t stripesize;
 	uint8_t stripemode;
 	uint32_t ioalign;
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV
+	int members_maxfd; /* biggest fd number of mounted members (required for select()) */
+#endif
 
 	struct htable *bt; /* SHFS bucket entry table */
 	void **htable_chunk_cache;
@@ -83,6 +86,29 @@ static inline void shfs_poll_blkdevs(void) {
 		for(i = 0; i < shfs_vol.nb_members; ++i)
 			blkdev_poll_req(shfs_vol.member[i].bd);
 }
+
+#define shfs_blkdevs_count() \
+	((shfs_mounted) ? shfs_vol.nb_members : 0)
+
+#ifdef CAN_POLL_BLKDEV
+#include <sys/select.h>
+
+static inline void shfs_blkdevs_fds(int *fds) {
+	unsigned int i;
+
+	if (likely(shfs_mounted))
+		for(i = 0; i < shfs_vol.nb_members; ++i)
+			fds[i] = blkdev_get_fd(shfs_vol.member[i].bd);
+}
+
+static inline void shfs_blkdevs_fdset(fd_set *fdset) {
+	unsigned int i;
+
+	if (likely(shfs_mounted))
+		for(i = 0; i < shfs_blkdevs_count(); ++i)
+			FD_SET(blkdev_get_fd(shfs_vol.member[i].bd), fdset);
+}
+#endif /* CAN_POLL_BLKDEV */
 
 /**
  * Fast I/O: asynchronous I/O for volume chunks

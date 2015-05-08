@@ -22,6 +22,9 @@ struct blkdev {
   struct mempool *reqpool;
   char nname[64];
   blkdev_id_t id;
+#ifdef CONFIG_SELECT_POLL
+  int fd;
+#endif
 
   int exclusive;
   unsigned int refcount;
@@ -137,7 +140,13 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 #define blkdev_async_read(bd, start, len, buffer, cb, cb_argp)	  \
 	blkdev_async_io((bd), (start), (len), 0, (buffer), (cb), (cb_argp))
 
-#define blkdev_poll_req(bd) blkfront_aio_poll((bd)->dev);
+#define blkdev_poll_req(bd) \
+	blkfront_aio_poll((bd)->dev)
+
+#ifdef CONFIG_SELECT_POLL
+#define CAN_POLL_BLKDEV
+#define blkdev_get_fd(bd) ((bd)->fd)
+#endif /* CONFIG_SELECT_POLL */
 
 /**
  * Sync I/O

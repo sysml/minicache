@@ -120,6 +120,12 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 	goto err_shutdown_blkfront;
   }
 
+#ifdef CONFIG_SELECT_POLL
+  bd->fd = blkfront_open(bd->dev);
+  if (bd->fd < 0)
+	goto err_close_blkfront;
+#endif
+
   /* link new element to the head of _open_bd_list */
   bd->_prev = NULL;
   bd->_next = _open_bd_list;
@@ -128,6 +134,10 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
     bd->_next->_prev = bd;
   return bd;
 
+#ifdef CONFIG_SELECT_POLL
+ err_close_blkfront:
+  /* blkfront_close(bd->fd); // DOES NOT EXIST */
+#endif
  err_shutdown_blkfront:
   shutdown_blkfront(bd->dev);
  err_free_reqpool:

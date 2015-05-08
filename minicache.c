@@ -491,6 +491,14 @@ int main(int argc, char *argv[])
     int ret;
     err_t err;
     unsigned int i;
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+    int poll_netif_fd;
+    fd_set poll_rfdset;
+    fd_set poll_wfdset;
+    uint64_t poll_to_ms;
+    struct timeval poll_to;
+    struct timeval poll_tv;
+#endif
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
     uint64_t now;
 #endif
@@ -674,6 +682,9 @@ int main(int argc, char *argv[])
     }
     netif_set_default(&netif);
     netif_set_up(&netif);
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+    poll_netif_fd = target_netif_fd(&netif);
+#endif
     if (args.dhclient) {
 	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
@@ -736,8 +747,7 @@ int main(int argc, char *argv[])
 #else
     register_shfs_stats_tools();
 #endif
-
-#endif
+#endif /* SHFS_STATS */
 
     /* -----------------------------------
      * testsuite commands
@@ -763,6 +773,41 @@ int main(int argc, char *argv[])
 		    printk("FATAL: Could not register xenstore control entries: %s\n", strerror(-ret));
 		    goto out;
 	    }
+    }
+#endif
+
+    /* -----------------------------------
+     * Initialize select/poll
+     * ----------------------------------- */
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+    FD_ZERO(&poll_rfdset);
+    FD_ZERO(&poll_wfdset);
+    poll_to_ms = UINT64_MAX;
+
+#ifdef CONFIG_MINDER_PRINT
+    poll_to_ms = min(poll_to_ms, MINDER_INTERVAL);
+#endif
+
+#ifdef CONFIG_LWIP_NOTHREADS
+    poll_to_ms = min(poll_to_ms, ARP_TMR_INTERVAL);
+    poll_to_ms = min(poll_to_ms, IP_TMR_INTERVAL);
+    poll_to_ms = min(poll_to_ms, TCP_TMR_INTERVAL);
+#if LWIP_DNS
+    poll_to_ms = min(poll_to_ms, DNS_TMR_INTERVAL);
+#endif
+    if (args.dhclient) {
+      poll_to_ms = min(poll_to_ms, DHCP_FINE_TIMER_MSECS);
+      poll_to_ms = min(poll_to_ms, DHCP_COARSE_TIMER_MSECS);
+    }
+#endif /* CONFIG_LWIP_NOTHREADS */
+
+    if (poll_to_ms == UINT64_MAX) {
+      poll_to.tv_sec = 0;
+      poll_to.tv_usec = 0;
+    } else {
+      poll_to.tv_sec = poll_to_ms / 1000;
+      poll_to.tv_usec = (poll_to_ms % 1000) * 1000;
+      printk("Maximum select timeout: %u.%06us\n", poll_to.tv_sec, poll_to.tv_usec);
     }
 #endif
 
@@ -799,6 +844,25 @@ int main(int argc, char *argv[])
      * Processing loop
      * ----------------------------------- */
     while(likely(!shall_shutdown)) {
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+	/* select with ignoring return reason */
+	FD_SET(poll_netif_fd, &poll_rfdset);
+	poll_tv.tv_sec  = poll_to.tv_sec;
+	poll_tv.tv_usec = poll_to.tv_usec;
+	if (shfs_mounted) {
+		/* poll network and block devices */
+		shfs_blkdevs_fdset(&poll_rfdset);
+		select(max(shfs_vol.members_maxfd, poll_netif_fd) + 1,
+		       &poll_rfdset, &poll_wfdset, NULL, &poll_tv);
+	} else {
+		/* poll network only */
+		select(poll_netif_fd + 1, &poll_rfdset, NULL, NULL, &poll_tv);
+	}
+
+#else
+	schedule(); /* yield CPU */
+#endif
+
 	/* poll block devices */
 	shfs_poll_blkdevs();
 
@@ -829,7 +893,6 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
         TIMED(now, ts_minder,  MINDER_INTERVAL,  minder_print());
 #endif /* CONFIG_MINDER_PRINT */
-        schedule(); /* yield CPU */
 
         if (unlikely(shall_suspend)) {
             printk("System is going to suspend now\n");
