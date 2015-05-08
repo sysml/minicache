@@ -26,7 +26,7 @@ verbose			?=
 ######################################
 CONFIG_SHUTDOWN			 = y
 CONFIG_CONSFRONT_SYNC		 = n
-CONFIG_SELECT_POLL               = y
+CONFIG_SELECT_POLL              ?= y
 
 CFLAGS				+= -Wunused \
 				   -Wtype-limits \
