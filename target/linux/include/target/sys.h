@@ -50,6 +50,9 @@
     target_halt(); \
   } while(0)
 
+#define target_crash() \
+  exit(1)
+
 void app_shutdown(unsigned reason);
 
 /* scheduling */

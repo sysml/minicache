@@ -32,6 +32,14 @@ static inline int parse_ipv4(struct ip_addr *out, const char *buf)
 	return 0;
 }
 
+static int shcmd_blast(FILE *cio, int argc, char *argv[])
+{
+	// *((uint16_t *)0) = 0xDEAD;
+	target_crash(); /* never returns */
+	fprintf(cio, "Failed to crash this instance\n");
+	return -1;
+}
+
 static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 {
 	SHFS_FD f;
@@ -255,12 +263,14 @@ int register_testsuite(void)
 #ifdef HAVE_CTLDIR
 	/* ctldir entries (ignore errors) */
 	if (cd) {
+		ctldir_register_shcmd(cd, "blast", shcmd_blast);
 		ctldir_register_shcmd(cd, "netdf", shcmd_netdf);
 	}
 #endif
 
 #ifdef HAVE_SHELL
 	/* shell commands (ignore errors) */
+	shell_register_cmd("blast", shcmd_blast);
 	shell_register_cmd("netdf", shcmd_netdf);
 	shell_register_cmd("ioperf", shcmd_ioperf);
 #endif
