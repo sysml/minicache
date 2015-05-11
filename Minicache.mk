@@ -73,6 +73,9 @@ MCCFLAGS				+= -DSHFS_STATS_HTTP_DPC \
 endif
 endif
 
+CONFIG_SHFS_CACHE_READAHEAD		?= 8
+MCCFLAGS				+= -DSHFS_CACHE_READAHEAD=$(CONFIG_SHFS_CACHE_READAHEAD)
+
 ######################################
 ## HTTP
 ######################################
