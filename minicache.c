@@ -53,13 +53,15 @@
 	} while(0)
 
 /* runs (func) a command on a timeout */
-#define TIMED(ts_now, ts_tmr, interval, func)                        \
+#define TIMED(ms_now, ms_till, ms_next, ms_interval, func)	     \
 	do {                                                         \
-		if (unlikely(((ts_now) - (ts_tmr)) > (interval))) {  \
-			if ((ts_tmr))                                \
-				(func);                              \
-			(ts_tmr) = (ts_now);                         \
-		}                                                    \
+		if (unlikely((ms_next) <= (ms_now))) {		     \
+			(ms_next) = (ms_now) + (ms_interval);	     \
+			(func);				     \
+		}						     \
+		/* update ms_till only if current nextin	     \
+		 * is smaller than the passed one */		     \
+		(ms_till) = (ms_next) < (ms_till) ? (ms_next) : (ms_till); \
 	} while(0)
 
 /* boot time tracing helper */
@@ -495,12 +497,12 @@ int main(int argc, char *argv[])
     int poll_netif_fd;
     fd_set poll_rfdset;
     fd_set poll_wfdset;
-    uint64_t poll_to_ms;
     struct timeval poll_to;
-    struct timeval poll_tv;
 #endif
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
-    uint64_t now;
+    uint64_t ts_now;
+    uint64_t ts_till;
+    uint64_t ts_to;
 #endif
 #ifdef CONFIG_LWIP_NOTHREADS
     uint64_t ts_tcp = 0;
@@ -782,33 +784,7 @@ int main(int argc, char *argv[])
 #if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
     FD_ZERO(&poll_rfdset);
     FD_ZERO(&poll_wfdset);
-    poll_to_ms = UINT64_MAX;
-
-#ifdef CONFIG_MINDER_PRINT
-    poll_to_ms = min(poll_to_ms, MINDER_INTERVAL);
-#endif
-
-#ifdef CONFIG_LWIP_NOTHREADS
-    poll_to_ms = min(poll_to_ms, ARP_TMR_INTERVAL);
-    poll_to_ms = min(poll_to_ms, IP_TMR_INTERVAL);
-    poll_to_ms = min(poll_to_ms, TCP_TMR_INTERVAL);
-#if LWIP_DNS
-    poll_to_ms = min(poll_to_ms, DNS_TMR_INTERVAL);
-#endif
-    if (args.dhclient) {
-      poll_to_ms = min(poll_to_ms, DHCP_FINE_TIMER_MSECS);
-      poll_to_ms = min(poll_to_ms, DHCP_COARSE_TIMER_MSECS);
-    }
-#endif /* CONFIG_LWIP_NOTHREADS */
-
-    if (poll_to_ms == UINT64_MAX) {
-      poll_to.tv_sec = 0;
-      poll_to.tv_usec = 0;
-    } else {
-      poll_to.tv_sec = poll_to_ms / 1000;
-      poll_to.tv_usec = (poll_to_ms % 1000) * 1000;
-      printk("Maximum select timeout: %u.%06us\n", poll_to.tv_sec, poll_to.tv_usec);
-    }
+    ts_to = 0;
 #endif
 
     /* -----------------------------------
@@ -847,18 +823,26 @@ int main(int argc, char *argv[])
 #if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
 	/* select with ignoring return reason */
 	FD_SET(poll_netif_fd, &poll_rfdset);
-	poll_tv.tv_sec  = poll_to.tv_sec;
-	poll_tv.tv_usec = poll_to.tv_usec;
-	if (shfs_mounted) {
-		/* poll network and block devices */
-		shfs_blkdevs_fdset(&poll_rfdset);
-		select(max(shfs_vol.members_maxfd, poll_netif_fd) + 1,
-		       &poll_rfdset, &poll_wfdset, NULL, &poll_tv);
-	} else {
-		/* poll network only */
-		select(poll_netif_fd + 1, &poll_rfdset, NULL, NULL, &poll_tv);
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+	if (likely(ts_to)) {
+		poll_to.tv_sec = ts_to / 1000;
+		poll_to.tv_usec = (ts_to % 1000) * 1000;
+#else
+		poll_to.tv_sec  = 0;
+		poll_to.tv_usec = 0;
+#endif
+		if (shfs_mounted) {
+			/* poll network and block devices */
+			shfs_blkdevs_fdset(&poll_rfdset);
+			select(max(shfs_vol.members_maxfd, poll_netif_fd) + 1,
+			       &poll_rfdset, &poll_wfdset, NULL, &poll_to);
+			} else {
+				/* poll network only */
+			select(poll_netif_fd + 1, &poll_rfdset, NULL, NULL, &poll_to);
+		}
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
 	}
-
+#endif
 #else
 	schedule(); /* yield CPU */
 #endif
@@ -875,24 +859,28 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
-        now = NSEC_TO_MSEC(NOW());
+        ts_now  = NSEC_TO_MSEC(NOW());
+	ts_till = UINT64_MAX;
 #endif
 #ifdef CONFIG_LWIP_NOTHREADS
 	/* Process lwip network-related timers */
-        TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
-        TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
-        TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
+        TIMED(ts_now, ts_till, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
+        TIMED(ts_now, ts_till, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
+        TIMED(ts_now, ts_till, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
 #if LWIP_DNS
-        TIMED(now, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
+        TIMED(ts_now, ts_till, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
 #endif
         if (args.dhclient) {
-	        TIMED(now, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
-	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
+	        TIMED(ts_now, ts_till, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
+	        TIMED(ts_now, ts_till, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
         }
 #endif /* CONFIG_LWIP_NOTHREADS */
 #ifdef CONFIG_MINDER_PRINT
-        TIMED(now, ts_minder,  MINDER_INTERVAL,  minder_print());
+        TIMED(ts_now, ts_till, ts_minder,  MINDER_INTERVAL,  minder_print());
 #endif /* CONFIG_MINDER_PRINT */
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+        ts_to = ts_till - ts_now;
+#endif
 
         if (unlikely(shall_suspend)) {
             printk("System is going to suspend now\n");
