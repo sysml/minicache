@@ -33,14 +33,16 @@ struct shfs_cache_entry {
 	chk_t addr;
 	uint32_t refcount;
 
-	dlist_el(alist);
-	dlist_el(clist);
+	dlist_el(alist); /* when part of the avaliable list */
+	dlist_el(clist); /* when part of a collision list */
 
 	void *buffer;
-	int invalid; /* I/O didn't succeed on this buffer */
+	int invalid; /* I/O didn't succeed on this buffer
+		      * or buffer is a blank buffer when addr == 0 */
 
-	SHFS_AIO_TOKEN *t;
+	SHFS_AIO_TOKEN *t; /* private I/O token */
 	struct {
+		/* tokens for callers */
 		SHFS_AIO_TOKEN *first;
 		SHFS_AIO_TOKEN *last;
 	} aio_chain;
@@ -90,6 +92,7 @@ void shfs_free_cache(void);
  *  -EINVAL: Invalid chunk address
  *  -EAGAIN: Cannot perform operation currently, all cache buffers in use and could
  *           not create a new one or volume cannot handle a new request currently
+ *  -ENODEV: No SHFS volume mounted currently
  *
  * A cache buffer is reserved until it is released back to the cache. That's
  * why shfs_cache_release() needs to be called after the buffer is not required
@@ -99,6 +102,19 @@ void shfs_free_cache(void);
  *       because buffers can be shared.
  */
 int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp, struct shfs_cache_entry **cce_out, SHFS_AIO_TOKEN **t_out);
+
+/*
+ * Function to retrieve a blank SHFS buffer from the cache for custom I/O
+ * The returned buffer on *cce_out has no address (= 0) associated with it and does not initiate
+ * an I/O request. It can be used for custom I/O and will never be shared with other callers.
+ * Data size is equal to chunk size of the current and alignemnet is according ioalignment.
+ *
+ * a negative value is returned when there was an error:
+ *  0:       cce_out points to the blank cache buffer
+ *  -EAGAIN: No buffers free currently that could be used as blank buffer
+ *  -ENODEV: No SHFS volume mounted currently
+ */
+int shfs_cache_eblank(struct shfs_cache_entry **cce_out);
 
 /* Release a shfs cache buffer */
 void shfs_cache_release(struct shfs_cache_entry *cce); /* Note: I/O needs to be done! */

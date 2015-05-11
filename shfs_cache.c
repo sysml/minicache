@@ -51,7 +51,7 @@ static inline uint32_t log2(uint32_t v)
   return (i - 1);
 }
 
-static inline uint32_t shfs_gen_htcollison_order()
+static inline uint32_t shfs_htcollison_order()
 {
     uint32_t htlen;
 
@@ -83,7 +83,7 @@ int shfs_alloc_cache(void)
 
     ASSERT(shfs_vol.chunkcache == NULL);
 
-    htlen   = 1 << shfs_gen_htcollison_order();
+    htlen   = 1 << shfs_htcollison_order();
 
     cc_size = sizeof(*cc) + (htlen * sizeof(struct shfs_cache_htel));
     cc = target_malloc(MIN_ALIGN, cc_size);
@@ -215,9 +215,15 @@ static inline void shfs_cache_unlink(struct shfs_cache_entry *cce)
 
     ASSERT(cce->refcount == 0);
 
-    i = shfs_cache_htindex(cce->addr);
     /* unlink element from hash table collision list */
-    dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+    /* Note: entries with addr == 0 are custom buffers that do not
+     * appear in any collision lists */
+    if (cce->addr != 0) {
+        i = shfs_cache_htindex(cce->addr);
+
+        dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+    }
+
     /* unlink element from available list */
     dlist_unlink(cce, shfs_vol.chunkcache->alist, alist);
 }
@@ -451,6 +457,58 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     }
  err_out:
     *t_out = NULL;
+    *cce_out = NULL;
+    return ret;
+}
+
+int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
+{
+    struct shfs_cache_entry *cce;
+    register uint32_t i;
+    int ret;
+
+    ASSERT(cce_out != NULL);
+
+    /* sanity checks */
+    if (unlikely(!shfs_mounted)) {
+        ret = -ENODEV;
+        goto err_out;
+    }
+
+    cce = shfs_cache_pick_cce();
+    if (!cce) {
+	/* try to pick a buffer (that has completed I/O) from the available list */
+	dlist_foreach(cce, shfs_vol.chunkcache->alist, alist) {
+		if (cce->t == NULL)
+			goto found;
+	}
+	/* we are out of buffers */
+	ret = -EAGAIN;
+	goto err_out;
+
+    found:
+	/* unlink from hash table */
+	i = shfs_cache_htindex(cce->addr);
+	dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+    }
+
+    /* set refcount */
+    cce->refcount = 1;
+    ++shfs_vol.chunkcache->nb_ref_entries;
+
+    /* initialize fields */
+    /* TODO: These fields let a blank cce buffer to be released (put_cce()),
+     *       becsue they are not part of any collision lists.
+     *       As optimization, such buffers could be prepended to the alist instead...,
+     *       thus, such a released buffer would be prefered for new I/O requests */
+    cce->t = NULL;
+    cce->addr = 0;
+    cce->invalid = 1;
+
+    *cce_out = cce;
+    return 0;
+
+ err_out:
     *cce_out = NULL;
     return ret;
 }
