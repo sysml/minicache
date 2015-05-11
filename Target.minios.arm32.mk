@@ -24,6 +24,7 @@ verbose			?=
 ######################################
 ## General
 ######################################
+CONFIG_BLKFRONT_PERSISTENT_GRANTS ?= y
 CONFIG_SHUTDOWN			 = y
 CONFIG_CONSFRONT_SYNC		 = n
 CONFIG_SELECT_POLL              ?= y
