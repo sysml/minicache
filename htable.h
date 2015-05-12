@@ -182,7 +182,7 @@ static inline struct htable_el *htable_pick(struct htable *ht, uint64_t el_idx)
  * Does a lookup for an element by its hash value
  *  Returns NULL on failure
  */
-static inline struct htable_el *htable_lookup(struct htable *ht, hash512_t h)
+static inline struct htable_el *htable_lookup(struct htable *ht, const hash512_t h)
 {
 	register uint32_t i;
 	register uint32_t bkt_idx;
@@ -212,7 +212,7 @@ static inline struct htable_el *htable_lookup(struct htable *ht, hash512_t h)
  *
  * Note: User data area might not be initialized
  */
-static inline struct htable_el *htable_add(struct htable *ht, hash512_t h)
+static inline struct htable_el *htable_add(struct htable *ht, const hash512_t h)
 {
 	register uint32_t i;
 	register uint32_t bkt_idx;
@@ -264,7 +264,7 @@ static inline struct htable_el *htable_add(struct htable *ht, hash512_t h)
  *
  * Note: User data area might not be initialized
  */
-static inline struct htable_el *htable_lookup_add(struct htable *ht, hash512_t h, int *is_new)
+static inline struct htable_el *htable_lookup_add(struct htable *ht, const hash512_t h, int *is_new)
 {
 	register int empty_slot_found = 0;
 	register uint32_t i, e = 0;

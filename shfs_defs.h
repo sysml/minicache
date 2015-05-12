@@ -13,17 +13,17 @@
 #include <stdint.h>
 #include <time.h>
 #include <inttypes.h>
-#ifndef __MINIOS__
+#include "hash.h"
+
+#ifdef __SHFS_TOOLS__
 #include <uuid/uuid.h>
 #include <mhash.h>
-#endif /* __MINIOS__ */
-#include "hash.h"
+#else
+typedef uint8_t uuid_t[16];
+#endif /* __SHFS_TOOLS__ */
 
 typedef uint64_t chk_t;
 typedef uint64_t strp_t;
-#ifdef __MINIOS__
-typedef uint8_t uuid_t[16];
-#endif /* __MINIOS__ */
 
 #define PRIchk PRIu64
 #define PRIstrp PRIu64
@@ -74,6 +74,18 @@ typedef uint8_t uuid_t[16];
        __a > __b ? __a : __b; })
 #endif
 
+struct shfs_host {
+	uint8_t type; /* name or address */
+	union {
+		char      name[32]; /* hostname */
+		uint8_t   addr[32]; /* address (e.g., IPv4, IPv6) */
+	};
+} __attribute__((packed));
+
+#define SHFS_HOST_TYPE_NAME 0x00
+#define SHFS_HOST_TYPE_IPV4 0x01
+#define SHFS_HOST_TYPE_IPV6 0x02 /* not supported yet */
+
 /**
  * Common SHFS header
  * (on chunk no. 0)
@@ -84,8 +96,8 @@ typedef uint8_t uuid_t[16];
 #define SHFS_MAGIC1 'H'
 #define SHFS_MAGIC2 'F'
 #define SHFS_MAGIC3 'S'
-#define SHFSv1_VERSION1 0x01
-#define SHFSv1_VERSION0 0x06
+#define SHFS_MAJOR 0x02
+#define SHFS_MINOR 0x01
 
 /* member_stripemode */
 #define SHFS_SM_INDEPENDENT 0x0
@@ -105,7 +117,7 @@ struct shfs_hdr_common {
 	uuid_t             member_uuid; /* this disk */
 	uint8_t            member_count;
 	struct {           /* uuid's of all members */
-		uuid_t    uuid;
+		uuid_t     uuid;
 	}                  member[SHFS_MAX_NB_MEMBERS];
 } __attribute__((packed));
 
@@ -131,17 +143,39 @@ struct shfs_hdr_config {
 /* hentry flags */
 #define SHFS_EFLAG_HIDDEN    0x1
 #define SHFS_EFLAG_DEFAULT   0x8
+#define SHFS_EFLAG_LINK      0x4
+
+/* l_attr.type */
+#define SHFS_LTYPE_REDIRECT       0x0
+#define SHFS_LTYPE_ABSCLONE       0x1
+#define SHFS_LTYPE_RELACLONE_MPEG 0x2
 
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */
-	chk_t              chunk;
-	uint64_t           offset; /* byte offset, usually 0 */
-	uint64_t           len; /* length (bytes) */
-	char               mime[64]; /* internet media type */
+
+	union {
+		/* SHFS_EFLAG_LINK not set */
+		struct {
+			chk_t     chunk;
+			uint64_t  offset; /* byte offset, usually 0 */
+			uint64_t  len;    /* length (bytes) */
+
+			char      mime[32]; /* internet media type */
+			char      encoding[16]; /* set on pre-encoded content */
+		} f_attr __attribute__((packed));
+
+		/* SHFS_EFLAG_LINK set */
+		struct {
+			struct shfs_host rhost; /* remote host */
+			uint16_t         rport;
+			char             rpath[64 + 7];
+			uint8_t          type;
+		} l_attr __attribute__((packed));
+	};
+
 	uint64_t           ts_creation;
 	uint8_t            flags;
 	char               name[64];
-	char               encoding[16]; /* set on pre-encoded */
 } __attribute__((packed));
 
 #define SHFS_MIN_CHUNKSIZE 4096
@@ -169,8 +203,18 @@ struct shfs_hentry {
 	((hentry)->flags & (SHFS_EFLAG_HIDDEN))
 #define SHFS_HENTRY_ISDEFAULT(hentry) \
 	((hentry)->flags & (SHFS_EFLAG_DEFAULT))
+#define SHFS_HENTRY_ISLINK(hentry) \
+	((hentry)->flags & (SHFS_EFLAG_LINK))
 
-#ifdef __MINIOS__
+#define SHFS_HENTRY_LINKATTR(hentry) \
+	((hentry)->l_attr)
+#define SHFS_HENTRY_FILEATTR(hentry) \
+	((hentry)->f_attr)
+
+#define SHFS_HENTRY_LINK_TYPE(hentry) \
+	((SHFS_HENTRY_LINKATTR((hentry))).type)
+
+#ifndef __SHFS_TOOLS__
 static inline int uuid_compare(const uuid_t uu1, const uuid_t uu2)
 {
 	return memcmp(uu1, uu2, sizeof(uuid_t));
@@ -194,7 +238,59 @@ static inline void uuid_copy(uuid_t dst, const uuid_t src)
 {
 	memcpy(dst, src, sizeof(uuid_t));
 }
-#endif /* __MINIOS__ */
+#endif /* __SHFS_TOOLS__ */
+
+static inline int shfshost_compare(const struct shfs_host *h0, const struct shfs_host *h1)
+{
+	size_t l0, l1;
+
+	if (h0->type != h1->type)
+		return 1;
+
+	switch(h0->type) {
+	case SHFS_HOST_TYPE_NAME:
+		l0 = strnlen(h0->name, sizeof(h0->name));
+		l1 = strnlen(h1->name, sizeof(h1->name));
+
+		if (l0 != l1)
+			return 1;
+		return (memcmp(h0->name, h1->name, l0) != 0);
+
+	case SHFS_HOST_TYPE_IPV4:
+		if ((h0->addr[0] != h1->addr[0]) ||
+		    (h0->addr[1] != h1->addr[1]) ||
+		    (h0->addr[2] != h1->addr[2]) ||
+		    (h0->addr[3] != h1->addr[3]))
+			return 1;
+		break;
+	default:
+		return 2; /* unsupported type */
+	}
+
+	return 0;
+}
+
+static inline void shfshost_copy(struct shfs_host *dst, const struct shfs_host *src)
+{
+	dst->type = src->type;
+
+	switch(src->type) {
+	case SHFS_HOST_TYPE_NAME:
+		strncpy(dst->name, src->name, sizeof(src->name));
+		break;
+
+	case SHFS_HOST_TYPE_IPV4:
+		dst->addr[0] = src->addr[0];
+		dst->addr[1] = src->addr[1];
+		dst->addr[2] = src->addr[2];
+		dst->addr[3] = src->addr[3];
+		break;
+	default:
+		/* unsupported type; just copy */
+		memcpy(dst, src, sizeof(*dst));
+		break;
+	}
+}
 
 static inline uint64_t gettimestamp_s(void)
 {

@@ -5,7 +5,7 @@
 #include <limits.h>
 #include <errno.h>
 
-#include "blkdev.h"
+#include <target/blkdev.h>
 
 #ifndef container_of
 /* NOTE: This is copied from linux kernel.
@@ -23,12 +23,22 @@
 
 struct blkdev *_open_bd_list = NULL;
 
-unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb)
+int blkdev_id_parse(const char *id, blkdev_id_t *out)
+{
+  int ival, ret;
+
+  ret = sscanf(id, "%d", &ival);
+  if (ret != 1 || ival < 0)
+    return -1;
+  *out = (blkdev_id_t) ival;
+  return 0;
+}
+
+unsigned int detect_blkdevs(blkdev_id_t ids_out[], unsigned int max_nb)
 {
   register unsigned int i = 0;
   register unsigned int found = 0;
   char path[128];
-  int ival;
   char *xb_errmsg;
   char **vbd_entries;
 
@@ -43,8 +53,8 @@ unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb)
   /* interate through list */
   while (vbd_entries[i] != NULL) {
     if (found < max_nb) {
-      if (sscanf(vbd_entries[i], "%d", &ival) == 1) {
-        vbd_ids[found++] = (unsigned int) ival;
+      if (blkdev_id_parse(vbd_entries[i], &ids_out[found]) >= 0) {
+	found++;
       }
     }
     free(vbd_entries[i++]);
@@ -54,13 +64,13 @@ unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb)
   return found;
 }
 
-struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
+struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 {
   struct blkdev *bd;
 
   /* search in blkdev list if device is already open */
   for (bd = _open_bd_list; bd != NULL; bd = bd->_next) {
-	  if (bd->vbd_id == vbd_id) {
+	  if (blkdev_id_cmp(blkdev_id(bd), id) == 0) {
 		  /* found: device is already open,
 		   *  now we check if it was/shall be opened
 		   *  exclusively and requested permissions
@@ -93,10 +103,10 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 	goto err_free_bd;
   }
 
-  bd->vbd_id = vbd_id;
+  bd->id = id;
   bd->refcount = 1;
   bd->exclusive = !!(mode & O_EXCL);
-  snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", vbd_id);
+  snprintf(bd->nname, sizeof(bd->nname), "device/vbd/%u", id);
 
   bd->dev = init_blkfront(bd->nname, &(bd->info));
   if (!bd->dev) {
@@ -110,6 +120,12 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
 	goto err_shutdown_blkfront;
   }
 
+#ifdef CONFIG_SELECT_POLL
+  bd->fd = blkfront_open(bd->dev);
+  if (bd->fd < 0)
+	goto err_close_blkfront;
+#endif
+
   /* link new element to the head of _open_bd_list */
   bd->_prev = NULL;
   bd->_next = _open_bd_list;
@@ -118,6 +134,10 @@ struct blkdev *open_blkdev(unsigned int vbd_id, int mode)
     bd->_next->_prev = bd;
   return bd;
 
+#ifdef CONFIG_SELECT_POLL
+ err_close_blkfront:
+  /* blkfront_close(bd->fd); // DOES NOT EXIST */
+#endif
  err_shutdown_blkfront:
   shutdown_blkfront(bd->dev);
  err_free_reqpool:

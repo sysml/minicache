@@ -7,19 +7,25 @@
 #include "tools_common.h"
 #include "shfs_defs.h"
 
-#define STR_VERSION "Simple Hash FS (SHFS) Tools: Admin v1.03"
+#define STR_VERSION "Simple Hash FS (SHFS) Tools: Admin"
 
 #define MAX_NB_TRY_BLKDEVS SHFS_MAX_NB_MEMBERS
 
 enum action {
 	NONE = 0,
 	ADDOBJ,
+	ADDLNK,
 	RMOBJ,
 	CATOBJ,
 	SETDEFOBJ,
 	CLEARDEFOBJ,
 	LSOBJS,
 	SHOWINFO
+};
+
+enum ltype {
+	LREDIRECT = 0,
+	LMPEG,
 };
 
 struct token {
@@ -30,6 +36,7 @@ struct token {
 	char *optstr0;
 	char *optstr1;
 	char *optstr2;
+	enum ltype optltype;
 };
 
 struct args {

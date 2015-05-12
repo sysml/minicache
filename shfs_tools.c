@@ -13,7 +13,10 @@
 #include "shfs_cache.h"
 #include "shfs_fio.h"
 #include "shell.h"
-#include "ctldir.h"
+
+#ifdef HAVE_CTLDIR
+#include "target/ctldir.h"
+#endif
 
 static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 {
@@ -21,8 +24,8 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	char str_hash[(shfs_vol.hlen * 2) + 1];
-	char str_mime[sizeof(hentry->mime) + 1];
 	char str_name[sizeof(hentry->name) + 1];
+	char str_mime[sizeof(hentry->f_attr.mime) + 1];
 	char str_date[20];
 
 	down(&shfs_mount_lock);
@@ -31,6 +34,7 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 
 	str_hash[(shfs_vol.hlen * 2)] = '\0';
 	str_name[sizeof(hentry->name)] = '\0';
+	str_mime[sizeof(hentry->f_attr.mime)] = '\0';
 
 	foreach_htable_el(shfs_vol.bt, el) {
 		bentry = el->private;
@@ -39,17 +43,55 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			 + bentry->hentry_htoffset);
 		hash_unparse(*el->h, shfs_vol.hlen, str_hash);
 		strncpy(str_name, hentry->name, sizeof(hentry->name));
-		strncpy(str_mime, hentry->mime, sizeof(hentry->mime));
 		strftimestamp_s(str_date, sizeof(str_date),
 		                "%b %e, %g %H:%M", hentry->ts_creation);
-		fprintf(cio, "%c%s %12"PRIchk" %12"PRIchk" %-24s %-16s %s\n",
-		        SHFS_HASH_INDICATOR_PREFIX,
-		        str_hash,
-		        hentry->chunk,
-		        DIV_ROUND_UP(hentry->len + hentry->offset, shfs_vol.chunksize),
-		        str_mime,
-		        str_date,
-		        str_name);
+		if (!SHFS_HENTRY_ISLINK(hentry))
+			strncpy(str_mime, hentry->f_attr.mime, sizeof(hentry->f_attr.mime));
+
+		/* hash */
+		if (shfs_vol.hlen <= 32)
+			fprintf(cio, "%-64s ", str_hash);
+		else
+			fprintf(cio, "%-128s ", str_hash);
+
+		/* loc, size */
+		if (SHFS_HENTRY_ISLINK(hentry))
+			fprintf(cio, "                          ");
+		else
+			fprintf(cio, "%12"PRIchk" %12"PRIchk" ",
+			        hentry->f_attr.chunk,
+			        DIV_ROUND_UP(hentry->f_attr.len + hentry->f_attr.offset, shfs_vol.chunksize));
+
+		/* flags */
+		fprintf(cio, "  %c%c%c ",
+		        (hentry->flags & SHFS_EFLAG_LINK)    ? 'L' : '-',
+		        (hentry->flags & SHFS_EFLAG_DEFAULT) ? 'D' : '-',
+		        (hentry->flags & SHFS_EFLAG_HIDDEN)  ? 'H' : '-');
+
+		/* ltype, mime */
+		if (SHFS_HENTRY_ISLINK(hentry)) {
+			switch(hentry->l_attr.type) {
+			case SHFS_LTYPE_RELACLONE_MPEG:
+				fprintf(cio, "%5s ", "rlmpg");
+				break;
+			case SHFS_LTYPE_ABSCLONE:
+				fprintf(cio, "%5s ", "abscl");
+				break;
+			default: /* SHFS_LTYPE_REDIRECT */
+				fprintf(cio, "%5s ", "redir");
+				break;
+			}
+
+			fprintf(cio, "%-24s ", " ");
+		} else {
+			fprintf(cio, "      ");
+			fprintf(cio, "%-24s ", str_mime);
+		}
+
+		/* date, name */
+		fprintf(cio, "%-16s %s\n",
+		       str_date,
+		       str_name);
 	}
 
  out:
@@ -73,7 +115,7 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 		bentry = el->private;
 		if (bentry->refcount > 0) {
 			hash_unparse(*el->h, shfs_vol.hlen, str_hash);
-			fprintf(cio, "%c%s %12"PRIchk"\n",
+			fprintf(cio, "%c%s %12"PRIu8"\n",
 			        SHFS_HASH_INDICATOR_PREFIX,
 			        str_hash,
 			        bentry->refcount);
@@ -87,7 +129,8 @@ static int shcmd_shfs_lsof(FILE *cio, int argc, char *argv[])
 
 static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 {
-	char str_mime[128];
+	char strsbuf[64];
+	char strlbuf[128];
 	uint64_t fsize;
 	unsigned int i;
 	SHFS_FD f;
@@ -104,25 +147,46 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "%s: Could not open: %s\n", argv[i], strerror(errno));
 			return -1;
 		}
-		shfs_fio_mime(f, str_mime, sizeof(str_mime));
-		shfs_fio_size(f, &fsize);
+		if (shfs_fio_islink(f)) {
+			strshfshost(strsbuf, sizeof(strsbuf),
+				    shfs_fio_link_rhost(f));
+			shfs_fio_link_rpath(f, strlbuf, sizeof(strlbuf));
+			fprintf(cio, "%s: remote link: http://%s:%"PRIu16"/%s, ",
+				argv[i], strsbuf, shfs_fio_link_rport(f), strlbuf);
 
-		fprintf(cio, "%s: %s, ", argv[i], str_mime);
-		if (fsize < 1024ll)
-			fprintf(cio, "%"PRIu64" B\n",
-				fsize);
-		else if (fsize < (1024ll * 1024ll))
-			fprintf(cio, "%"PRIu64".%01"PRIu64" KiB\n",
-				fsize / (1024ll),
-				(fsize / (1024ll / 10)) % 10);
-		else if (fsize < (1024ll * 1024ll * 1024ll))
-			fprintf(cio, "%"PRIu64".%02"PRIu64" MiB\n",
-				fsize / (1024ll * 1024ll),
-				(fsize / ((1024ll * 1024ll) / 100)) % 100);
-		else
-			fprintf(cio, "%"PRIu64".%02"PRIu64" GiB\n",
-				fsize / (1024ll * 1024ll * 1024ll),
-				(fsize / ((1024ll * 1024ll * 1024ll) / 100)) % 100);
+			switch (shfs_fio_link_type(f)) {
+			case SHFS_LTYPE_RELACLONE_MPEG:
+				fprintf(cio, "relative clone (MPEG)");
+				break;
+			case SHFS_LTYPE_ABSCLONE:
+				fprintf(cio, "clone");
+				break;
+			default: /* SHFS_LTYPE_REDIRECT */
+				fprintf(cio, "redirect");
+				break;
+			}
+			fprintf(cio, "\n");
+		} else {
+			shfs_fio_mime(f, strlbuf, sizeof(strlbuf));
+			fprintf(cio, "%s: %s, ", argv[i], strlbuf);
+
+			shfs_fio_size(f, &fsize);
+			if (fsize < 1024ll)
+				fprintf(cio, "%"PRIu64" B\n",
+					fsize);
+			else if (fsize < (1024ll * 1024ll))
+				fprintf(cio, "%"PRIu64".%01"PRIu64" KiB\n",
+					fsize / 1024,
+					((fsize / 1024) / 10) % 10);
+			else if (fsize < (1024ll * 1024ll * 1024ll))
+				fprintf(cio, "%"PRIu64".%02"PRIu64" MiB\n",
+					fsize / (1024 * 1024),
+					(fsize / ((1024 * 1024) / 100)) % 100);
+			else
+				fprintf(cio, "%"PRIu64".%02"PRIu64" GiB\n",
+					fsize / (1024 * 1024 * 1024),
+					(fsize / ((1024 * 1024 * 1024) / 100)) % 100);
+		}
 
 		shfs_fio_close(f);
 	}
@@ -149,7 +213,7 @@ static int shcmd_shfs_cat(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "%s: Could not open: %s\n", argv[i], strerror(errno));
 			return -1;
 		}
-		shfs_fio_size(f, &fsize);
+		shfs_fio_size(f, &fsize); /* will be 0 on links */
 
 		left = fsize;
 		cur = 0;
@@ -222,15 +286,47 @@ static int shcmd_shfs_dumpfile(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+#ifdef CAN_DETECT_BLKDEVS
+static int shcmd_lsbd(FILE *cio, int argc, char *argv[])
+{
+    blkdev_id_t id[64];
+    char str_id[64];
+    unsigned int nb_bds;
+    struct blkdev *bd;
+    unsigned int i;
+
+    nb_bds = detect_blkdevs(id, sizeof(id));
+
+    for (i = 0; i < nb_bds; ++i) {
+	    bd = open_blkdev(id[i], 0x0);
+	    blkdev_id_unparse(id[i], str_id, sizeof(str_id));
+
+	    if (bd) {
+		    fprintf(cio, " %s: block size = %"PRIsctr" bytes, size = %lu bytes%s\n",
+		            str_id,
+		            blkdev_ssize(bd),
+		            blkdev_size(bd),
+		            blkdev_refcount(bd) >= 2 ? ", in use" : "");
+		    close_blkdev(bd);
+	    } else {
+		    if (errno == EBUSY)
+			    fprintf(cio, " %s: in exclusive use\n", str_id);
+	    }
+    }
+    return 0;
+}
+#endif
+
 static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 {
-    unsigned int vbd_id[MAX_NB_TRY_BLKDEVS];
+    blkdev_id_t id[MAX_NB_TRY_BLKDEVS];
+    char str_id[64];
     unsigned int count;
     unsigned int i, j;
     int ret;
 
     if ((argc + 1) > MAX_NB_TRY_BLKDEVS) {
-	    fprintf(cio, "At most %u devices are supported\n", MAX_NB_TRY_BLKDEVS);
+	    fprintf(cio, "At most %u block devices are supported\n", MAX_NB_TRY_BLKDEVS);
 	    return -1;
     }
     if ((argc) == 1) {
@@ -239,10 +335,11 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 	    if (shfs_mounted) {
 		    /* list mounted filesystem and exit */
 		    for (i = 0; i < shfs_vol.nb_members; ++i) {
+			    blkdev_id_unparse(blkdev_id(shfs_vol.member[i].bd), str_id, sizeof(str_id));
 			    if (i == 0)
-				    fprintf(cio, "%u", shfs_vol.member[i].bd->vbd_id);
+				    fprintf(cio, "%s", str_id);
 			    else
-				    fprintf(cio, ",%u", shfs_vol.member[i].bd->vbd_id);
+				    fprintf(cio, ",%s", str_id);
 		    }
 		    up(&shfs_mount_lock);
 		    fprintf(cio, " on / type shfs (ro)\n");
@@ -250,13 +347,13 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
 		    /* show usage and exit */
 		    up(&shfs_mount_lock);
 		    fprintf(cio, "No filesystem mounted\n");
-		    fprintf(cio, "\nUsage: %s [vbd_id]...\n", argv[0]);
+		    fprintf(cio, "\nUsage: %s [block device]...\n", argv[0]);
 
 	    }
 	    return 0;
     }
     for (i = 1; i < argc; ++i) {
-	    if (sscanf(argv[i], "%u", &vbd_id[i - 1]) != 1) {
+	    if (blkdev_id_parse(argv[i], &id[i- 1]) < 0) {
 		    fprintf(cio, "Invalid argument %u\n", i);
 		    return -1;
 	    }
@@ -267,12 +364,12 @@ static int shcmd_shfs_mount(FILE *cio, int argc, char *argv[])
      * This is unfortunately an ugly & slow way of how it is done here... */
     for (i = 0; i < count; ++i)
 	    for (j = 0; j < count; ++j)
-		    if (i != j && vbd_id[i] == vbd_id[j]) {
+		    if (i != j && (blkdev_id_cmp(id[i], id[j]) == 0)) {
 			    fprintf(cio, "Found duplicates in the list\n");
 			    return -1;
 		    }
 
-    ret = mount_shfs(vbd_id, count);
+    ret = mount_shfs(id, count);
     if (ret == -EALREADY) {
 	    fprintf(cio, "A filesystem is already mounted\nPlease unmount it first\n");
 	    return -1;
@@ -368,6 +465,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	unsigned int m;
 	char str_uuid[37];
 	char str_date[20];
+	char str_bdid[64];
 	int ret = 0;
 
 	down(&shfs_mount_lock);
@@ -377,9 +475,9 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 		goto out;
 	}
 
-	fprintf(cio, "SHFS version:       0x%02x%02x\n",
-	        SHFSv1_VERSION1,
-	        SHFSv1_VERSION0);
+	fprintf(cio, "SHFS version:       %2x.%02x\n",
+	        SHFS_MAJOR,
+	        SHFS_MINOR);
 	fprintf(cio, "Volume name:        %s\n", shfs_vol.volname);
 	uuid_unparse(shfs_vol.uuid, str_uuid);
 	fprintf(cio, "Volume UUID:        %s\n", str_uuid);
@@ -390,7 +488,7 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	        shfs_vol.chunksize / 1024);
 	fprintf(cio, "Volume size:        %"PRIchk" KiB\n",
 	        CHUNKS_TO_BYTES(shfs_vol.volsize, shfs_vol.chunksize) / 1024);
-	fprintf(cio, "Hash table:         %"PRIu32" entries in %ld buckets\n" \
+	fprintf(cio, "Hash table:         %"PRIu32" entries in %"PRIu32" buckets\n" \
 	        "                    %"PRIchk" chunks (%"PRIchk" KiB)\n" \
 	        "                    %s\n",
 	        shfs_vol.htable_nb_entries, shfs_vol.htable_nb_buckets,
@@ -406,8 +504,9 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "Volume members:     %u device(s)\n", shfs_vol.nb_members);
 	for (m = 0; m < shfs_vol.nb_members; m++) {
 		uuid_unparse(shfs_vol.member[m].uuid, str_uuid);
+		blkdev_id_unparse(blkdev_id(shfs_vol.member[m].bd), str_bdid, sizeof(str_bdid));
 		fprintf(cio, "  Member %2u:\n", m);
-		fprintf(cio, "    VBD:            %u\n", shfs_vol.member[m].bd->vbd_id);
+		fprintf(cio, "    Device:         %s\n", str_bdid);
 		fprintf(cio, "    UUID:           %s\n", str_uuid);
 		fprintf(cio, "    Block size:     %"PRIu32"\n", blkdev_ssize(shfs_vol.member[m].bd));
 	}
@@ -417,8 +516,13 @@ static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+#ifdef HAVE_CTLDIR
 int register_shfs_tools(struct ctldir *cd)
+#else
+int register_shfs_tools(void)
+#endif
 {
+#ifdef HAVE_CTLDIR
 	/* ctldir entries (ignore errors) */
 	if (cd) {
 		ctldir_register_shcmd(cd, "mount", shcmd_shfs_mount);
@@ -427,8 +531,12 @@ int register_shfs_tools(struct ctldir *cd)
 		ctldir_register_shcmd(cd, "flush", shcmd_shfs_flush_cache);
 		ctldir_register_shcmd(cd, "prefetch", shcmd_shfs_prefetch_cache);
 	}
+#endif
 
 	/* shell commands (ignore errors) */
+#ifdef CAN_DETECT_BLKDEVS
+	shell_register_cmd("lsbd", shcmd_lsbd);
+#endif
 	shell_register_cmd("mount", shcmd_shfs_mount);
 	shell_register_cmd("umount", shcmd_shfs_umount);
 	shell_register_cmd("remount", shcmd_shfs_remount);
@@ -468,4 +576,28 @@ size_t strftimestamp_s(char *s, size_t slen, const char *fmt, uint64_t ts_sec)
 	time_t *tsec = (time_t *) &ts_sec;
 	tm = localtime(tsec);
 	return strftime(s, slen, fmt, tm);
+}
+
+size_t strshfshost(char *s, size_t slen, struct shfs_host *h)
+{
+	size_t ret = 0;
+	size_t l;
+
+	switch(h->type) {
+	case SHFS_HOST_TYPE_NAME:
+		l = min(slen, sizeof(h->name));
+		ret = snprintf(s, l, "%s", h->name);
+		break;
+	case SHFS_HOST_TYPE_IPV4:
+		ret = snprintf(s, slen, "%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,
+			       h->addr[0], h->addr[1], h->addr[2], h->addr[3]);
+		break;
+	default:
+		if (slen > 0)
+			s[0] = '\0';
+		errno = EINVAL;
+		break;
+	}
+
+	return ret;
 }

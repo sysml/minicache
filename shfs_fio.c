@@ -1,9 +1,7 @@
 /*
  *
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/sys.h>
 
 #include "likely.h"
 #include "shfs_fio.h"
@@ -178,8 +176,8 @@ void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen)
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 	struct shfs_hentry *hentry = bentry->hentry;
 
-	outlen = min(outlen, sizeof(hentry->mime) + 1);
-	strncpy(out, hentry->mime, outlen - 1);
+	outlen = min(outlen, sizeof(hentry->f_attr.mime) + 1);
+	strncpy(out, hentry->f_attr.mime, outlen - 1);
 	out[outlen - 1] = '\0';
 }
 
@@ -188,7 +186,7 @@ void shfs_fio_size(SHFS_FD f, uint64_t *out)
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
 	struct shfs_hentry *hentry = bentry->hentry;
 
-	*out = hentry->len;
+	*out = SHFS_HENTRY_ISLINK(hentry) ? 0 : hentry->f_attr.len;
 }
 
 void shfs_fio_hash(SHFS_FD f, hash512_t out)
@@ -197,6 +195,16 @@ void shfs_fio_hash(SHFS_FD f, hash512_t out)
 	struct shfs_hentry *hentry = bentry->hentry;
 
 	hash_copy(out, hentry->hash, shfs_vol.hlen);
+}
+
+void  shfs_fio_link_rpath(SHFS_FD f, char *out, size_t outlen)
+{
+	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
+	struct shfs_hentry *hentry = bentry->hentry;
+
+	outlen = min(outlen, sizeof(hentry->l_attr.rpath) + 1);
+	strncpy(out, hentry->l_attr.rpath, outlen - 1);
+	out[outlen - 1] = '\0';
 }
 
 /*
@@ -215,13 +223,17 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	uint64_t rlen;
 	int ret = 0;
 
+	/* check if entry is link to remote file */
+	if (SHFS_HENTRY_ISLINK(hentry))
+		return -EINVAL;
+
 	/* check boundaries */
-	if ((offset > hentry->len) ||
-	    ((offset + len) > hentry->len))
+	if ((offset > hentry->f_attr.len) ||
+	    ((offset + len) > hentry->f_attr.len))
 		return -EINVAL;
 
 	/* pick chunk I/O buffer from pool */
-	chk_buf = _xmalloc(shfs_vol.chunksize, shfs_vol.ioalign);
+	chk_buf = target_malloc(shfs_vol.ioalign, shfs_vol.chunksize);
 	if (!chk_buf)
 		return -ENOMEM;
 
@@ -248,7 +260,7 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	}
 
  out:
-	xfree(chk_buf);
+	target_free(chk_buf);
 	return ret;
 }
 
@@ -268,9 +280,13 @@ int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	uint64_t rlen;
 	int ret = 0;
 
+	/* check if entry is link to remote file */
+	if (SHFS_HENTRY_ISLINK(hentry))
+		return -EINVAL;
+
 	/* check boundaries */
-	if ((offset > hentry->len) ||
-	    ((offset + len) > hentry->len))
+	if ((offset > hentry->f_attr.len) ||
+	    ((offset + len) > hentry->f_attr.len))
 		return -EINVAL;
 
 	/* perform the I/O chunk-wise */

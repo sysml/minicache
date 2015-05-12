@@ -11,11 +11,14 @@ verbose			?=
 ######################################
 ## General
 ######################################
+CONFIG_BLKFRONT_PERSISTENT_GRANTS ?= y
 CONFIG_SHUTDOWN			 = y
 CONFIG_CONSFRONT_SYNC		?= y
+CONFIG_SELECT_POLL		?= y
 
 CFLAGS				+= -Wunused \
-				   -Wtype-limits
+				   -Wtype-limits \
+				   -Itarget/minios/include
 
 ######################################
 ## Networking
@@ -60,12 +63,15 @@ CONFIG_DEBUG_LWIP_MALLOC	?= n
 ######################################
 ## Stub Domain
 ######################################
+include Minicache.mk
+
 stubdom		 = y
 STUBDOM_NAME	 = minicache
 STUBDOM_ROOT	 = $(realpath .)
 
-STUB_APP_OBJS0	 = main.o blkdev.o $(MCOBJS)
+STUB_APP_OBJS0   = $(MCOBJS)
 STUB_APP_OBJS	 = $(addprefix $(STUB_APP_OBJ_DIR)/,$(STUB_APP_OBJS0))
+STUB_BUILD_DIRS += $(STUB_APP_OBJ_DIR)/target/$(TARGET)
 CFLAGS		+= $(MCCFLAGS)
 
 include $(MINIOS_ROOT)/stub.mk

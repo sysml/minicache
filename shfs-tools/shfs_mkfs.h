@@ -6,7 +6,7 @@
 
 #include "tools_common.h"
 
-#define STR_VERSION "Simon's HashFS Tools: MakeFS v1.02"
+#define STR_VERSION "Simple Hash FS (SHFS) Tools: MakeFS"
 
 struct args {
 	char **devpath;

@@ -2,15 +2,18 @@
 #define _BLKDEV_H_
 
 #include <mini-os/blkfront.h>
+#include <mini-os/semaphore.h>
 #include <fcntl.h>
-#include <semaphore.h>
 
-#include "mempool.h"
+#include <mempool.h>
 
 #define MAX_REQUESTS ((__RING_SIZE((struct blkif_sring *)0, PAGE_SIZE)) - 1)
 #define MAX_DISKSIZE (1ll << 40) /* 1 TB */
 
+typedef unsigned int blkdev_id_t; /* device id is a uint */
 typedef uint64_t sector_t;
+#define PRIsctr PRIu64
+
 typedef void (blkdev_aiocb_t)(int ret, void *argp);
 
 struct blkdev {
@@ -18,7 +21,10 @@ struct blkdev {
   struct blkfront_info info;
   struct mempool *reqpool;
   char nname[64];
-  unsigned int vbd_id;
+  blkdev_id_t id;
+#ifdef CONFIG_SELECT_POLL
+  int fd;
+#endif
 
   int exclusive;
   unsigned int refcount;
@@ -37,10 +43,21 @@ struct _blkdev_req {
   void *cb_argp;
 };
 
-unsigned int detect_blkdevs(unsigned int vbd_ids[], unsigned int max_nb);
-struct blkdev *open_blkdev(unsigned int vbd_id, int mode);
+#define CAN_DETECT_BLKDEVS
+unsigned int detect_blkdevs(blkdev_id_t ids_out[], unsigned int max_nb);
+struct blkdev *open_blkdev(blkdev_id_t id, int mode);
 void close_blkdev(struct blkdev *bd);
+#define blkdev_refcount(bd) ((bd)->refcount)
 
+int blkdev_id_parse(const char *id, blkdev_id_t *out);
+#define blkdev_id_unparse(id, out, maxlen) \
+     (snprintf((out), (maxlen), "%u", (id)))
+#define blkdev_id_cmp(id0, id1) \
+     ((id0) != (id1))
+#define blkdev_id_cpy(dst, src) \
+     ((dst) = (src))
+#define blkdev_id(bd) ((bd)->id)
+#define blkdev_ioalign(bd) blkdev_ssize((bd))
 
 /**
  * Retrieve device information
@@ -123,7 +140,13 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 #define blkdev_async_read(bd, start, len, buffer, cb, cb_argp)	  \
 	blkdev_async_io((bd), (start), (len), 0, (buffer), (cb), (cb_argp))
 
-#define blkdev_poll_req(bd) blkfront_aio_poll((bd)->dev);
+#define blkdev_poll_req(bd) \
+	blkfront_aio_poll((bd)->dev)
+
+#ifdef CONFIG_SELECT_POLL
+#define CAN_POLL_BLKDEV
+#define blkdev_get_fd(bd) ((bd)->fd)
+#endif /* CONFIG_SELECT_POLL */
 
 /**
  * Sync I/O

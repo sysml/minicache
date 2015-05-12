@@ -8,20 +8,26 @@
 #include "dlist.h"
 #include "mempool.h"
 
-#define SHFS_CACHE_HTABLE_ORDER 8 /* order of 2 for collision table size */
-#define SHFS_CACHE_POOL_NB_BUFFERS 32 /* defines minimum cache size,
+#define SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY 2 /* defines in the end roughly the average maximum number of comparisons
+						       * per table entry (Note: the real lenght might be higher) */
+#define SHFS_CACHE_POOL_NB_BUFFERS 64 /* defines minimum cache size,
                                        * if 0, CACHE_GROW has to be enabled */
+#ifndef SHFS_CACHE_READAHEAD
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
+#endif
 
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
-                         * allocating more buffers on demand (via _xmalloc). When
+                         * allocating more buffers on demand (via malloc()). When
 			 * SHFS_GROW_THRESHOLD is defined, left system memory 
 			 * is checked before the allocation */
+
+#ifdef __MINIOS__
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* 256KB */
 #else
 #define SHFS_CACHE_GROW_THRESHOLD (1 * 1024 * 1024) /* 1MB */
 #endif
+#endif /* __MINIOS__ */
 
 struct shfs_cache_entry {
 	struct mempool_obj *pobj;
@@ -29,14 +35,16 @@ struct shfs_cache_entry {
 	chk_t addr;
 	uint32_t refcount;
 
-	dlist_el(alist);
-	dlist_el(clist);
+	dlist_el(alist); /* when part of the avaliable list */
+	dlist_el(clist); /* when part of a collision list */
 
 	void *buffer;
-	int invalid; /* I/O didn't succeed on this buffer */
+	int invalid; /* I/O didn't succeed on this buffer
+		      * or buffer is a blank buffer when addr == 0 */
 
-	SHFS_AIO_TOKEN *t;
+	SHFS_AIO_TOKEN *t; /* private I/O token */
 	struct {
+		/* tokens for callers */
 		SHFS_AIO_TOKEN *first;
 		SHFS_AIO_TOKEN *last;
 	} aio_chain;
@@ -53,18 +61,12 @@ struct shfs_cache {
 	uint32_t htmask;
 	uint64_t nb_ref_entries;
 	uint64_t nb_entries;
-	void (*cb_retry)(void); /* callback that is called whenever it is
-	                         * worth to retry an AIO request that
-	                         * failed with EAGAIN */
-	int call_cb_retry;      /* is set to true there was an event happening
-	                         * that increases the chaance to retry the I/O */
-	int _in_cb_retry;
 
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };
 
-int shfs_alloc_cache(void (*cb_retry)(void));
+int shfs_alloc_cache(void);
 void shfs_flush_cache(void); /* releases unreferenced buffers */
 void shfs_free_cache(void);
 #define shfs_cache_ref_count() \
@@ -92,6 +94,7 @@ void shfs_free_cache(void);
  *  -EINVAL: Invalid chunk address
  *  -EAGAIN: Cannot perform operation currently, all cache buffers in use and could
  *           not create a new one or volume cannot handle a new request currently
+ *  -ENODEV: No SHFS volume mounted currently
  *
  * A cache buffer is reserved until it is released back to the cache. That's
  * why shfs_cache_release() needs to be called after the buffer is not required
@@ -101,6 +104,19 @@ void shfs_free_cache(void);
  *       because buffers can be shared.
  */
 int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_argp, struct shfs_cache_entry **cce_out, SHFS_AIO_TOKEN **t_out);
+
+/*
+ * Function to retrieve a blank SHFS buffer from the cache for custom I/O
+ * The returned buffer on *cce_out has no address (= 0) associated with it and does not initiate
+ * an I/O request. It can be used for custom I/O and will never be shared with other callers.
+ * Data size is equal to chunk size of the current and alignemnet is according ioalignment.
+ *
+ * a negative value is returned when there was an error:
+ *  0:       cce_out points to the blank cache buffer
+ *  -EAGAIN: No buffers free currently that could be used as blank buffer
+ *  -ENODEV: No SHFS volume mounted currently
+ */
+int shfs_cache_eblank(struct shfs_cache_entry **cce_out);
 
 /* Release a shfs cache buffer */
 void shfs_cache_release(struct shfs_cache_entry *cce); /* Note: I/O needs to be done! */

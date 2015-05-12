@@ -159,3 +159,8 @@ uptime
 who
 ```
  Lists active shell sessions.
+
+```
+xargs [COMMAND] [[ARGS]]...
+```
+ Executes COMMAND for each ARG.

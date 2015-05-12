@@ -37,7 +37,8 @@ static struct option long_opts[] = {
 
 static inline void print_version()
 {
-	printf("%s (build: %s %s)\n", STR_VERSION, __DATE__, __TIME__);
+	printf("%s v%u.%02u (built: %s %s)\n", STR_VERSION, SHFS_MAJOR, SHFS_MINOR,
+	       __DATE__, __TIME__);
 }
 
 static void print_usage(char *argv0)
@@ -325,8 +326,8 @@ static void mkfs(struct storage *s, struct args *args)
 	hdr_common->magic[1] = SHFS_MAGIC1;
 	hdr_common->magic[2] = SHFS_MAGIC2;
 	hdr_common->magic[3] = SHFS_MAGIC3;
-	hdr_common->version[0] = SHFSv1_VERSION0;
-	hdr_common->version[1] = SHFSv1_VERSION1;
+	hdr_common->version[0] = SHFS_MAJOR;
+	hdr_common->version[1] = SHFS_MINOR;
 	uuid_generate(hdr_common->vol_uuid);
 	strncpy(hdr_common->vol_name, args->volname, 16);
 #if __BYTE_ORDER == __LITTLE_ENDIAN

@@ -10,17 +10,13 @@
 #ifndef _SHFS_BTABLE_H_
 #define _SHFS_BTABLE_H_
 
-#ifndef __MINIOS__
-#include <assert.h>
-
-#ifndef ASSERT
-#define ASSERT assert
-#endif
-#else /* __MINIOS__ */
-#include <mini-os/os.h>
-#include <mini-os/lib.h>
+#ifdef __SHFS_TOOLS__
 #include <semaphore.h>
-#endif /* __MINIOS__ */
+#include <assert.h>
+#define ASSERT assert
+#else
+#include <target/sys.h>
+#endif
 
 #include "shfs_defs.h"
 #include "htable.h"
@@ -41,10 +37,10 @@ struct shfs_bentry {
 	chk_t hentry_htchunk;       /* relative chunk:offfset addres to entry in SHFS htable */
 	off_t hentry_htoffset;
 
-#ifdef __MINIOS__
+#ifndef __SHFS_TOOLS__
 	struct shfs_hentry *hentry; /* reference to buffered entry in cache */
 	uint32_t refcount;
-	struct semaphore updatelock; /* lock is helt as long the file is opened */
+	sem_t updatelock; /* lock is helt as long the file is opened */
 	int update; /* is set when a entry update is ongoing */
 
 #ifdef SHFS_STATS

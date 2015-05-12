@@ -226,9 +226,9 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 	htable_size_chks     = SHFS_HTABLE_SIZE_CHUNKS(hdr_config, chunksize);
 	htable_size          = CHUNKS_TO_BYTES(htable_size_chks, chunksize);
 
-	printf("SHFS version:       0x%02x%02x\n",
-	       hdr_common->version[1],
-	       hdr_common->version[0]);
+	printf("SHFS version:      %2x.%02x\n",
+	       hdr_common->version[0],
+	       hdr_common->version[1]);
 	strncpy(volname, hdr_common->vol_name, 16);
 	volname[17] = '\0';
 	printf("Volume name:        %s\n", volname);
@@ -268,6 +268,30 @@ void print_shfs_hdr_summary(struct shfs_hdr_common *hdr_common,
 		uuid_unparse(hdr_common->member[m].uuid, str_uuid);
 		printf("  Member %2d UUID:   %s\n", m, str_uuid);
 	}
+}
+
+size_t strshfshost(char *s, size_t slen, struct shfs_host *h)
+{
+	size_t ret = 0;
+	size_t l;
+
+	switch(h->type) {
+	case SHFS_HOST_TYPE_NAME:
+		l = min(slen, sizeof(h->name));
+		ret = snprintf(s, l, "%s", h->name);
+		break;
+	case SHFS_HOST_TYPE_IPV4:
+		ret = snprintf(s, slen, "%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,
+			       h->addr[0], h->addr[1], h->addr[2], h->addr[3]);
+		break;
+	default:
+		if (slen > 0)
+			s[0] = '\0';
+		errno = EINVAL;
+		break;
+	}
+
+	return ret;
 }
 
 chk_t metadata_size(struct shfs_hdr_common *hdr_common,

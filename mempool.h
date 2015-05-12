@@ -9,7 +9,9 @@
 
 #include <stdint.h>
 #include <errno.h>
-#include "ring.h"
+#include <ring.h>
+
+#include "likely.h"
 
 /*
  * MEMPOOL OBJECT: MEMORY LAYOUT

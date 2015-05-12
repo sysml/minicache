@@ -2,9 +2,7 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/sys.h>
 #include <stdio.h>
 #include <lwip/udp.h>
 
@@ -14,7 +12,9 @@
 #include "shfs_cache.h"
 #include "shfs_fio.h"
 #include "shell.h"
-#include "ctldir.h"
+#ifdef HAVE_CTLDIR
+#include <target/ctldir.h>
+#endif
 
 static inline int parse_ipv4(struct ip_addr *out, const char *buf)
 {
@@ -32,7 +32,13 @@ static inline int parse_ipv4(struct ip_addr *out, const char *buf)
 	return 0;
 }
 
-
+static int shcmd_blast(FILE *cio, int argc, char *argv[])
+{
+	// *((uint16_t *)0) = 0xDEAD;
+	target_crash(); /* never returns */
+	fprintf(cio, "Failed to crash this instance\n");
+	return -1;
+}
 
 static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 {
@@ -192,7 +198,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	shfs_fio_size(f, &fsize);
 
 	buflen = shfs_vol.chunksize;
-	buf = _xmalloc(shfs_vol.chunksize, 8);
+	buf = target_malloc(8, shfs_vol.chunksize);
 	if (!buf) {
 		fprintf(cio, "Out of memory\n");
 		ret = -1;
@@ -240,22 +246,34 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "(%lu B/s)\n", bps);
 		}
 	}
+
+	target_free(buf);
  out_close_f:
 	shfs_fio_close(f);
  out:
 	return ret;
 }
 
+#ifdef HAVE_CTLDIR
 int register_testsuite(struct ctldir *cd)
+#else
+int register_testsuite(void)
+#endif
 {
+#ifdef HAVE_CTLDIR
 	/* ctldir entries (ignore errors) */
 	if (cd) {
+		ctldir_register_shcmd(cd, "blast", shcmd_blast);
 		ctldir_register_shcmd(cd, "netdf", shcmd_netdf);
 	}
+#endif
 
+#ifdef HAVE_SHELL
 	/* shell commands (ignore errors) */
+	shell_register_cmd("blast", shcmd_blast);
 	shell_register_cmd("netdf", shcmd_netdf);
 	shell_register_cmd("ioperf", shcmd_ioperf);
+#endif
 
 	return 0;
 }

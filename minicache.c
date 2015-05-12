@@ -1,14 +1,11 @@
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
+#include <target/sys.h>
+#include <target/netdev.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <getopt.h>
-#include <kernel.h>
-#include <sched.h>
-#include <semaphore.h>
-#include <shutdown.h>
+#include <sys/time.h>
 
 #include <lwip/ip_addr.h>
 #include <netif/etharp.h>
@@ -22,14 +19,18 @@
 #include <lwip/ip_frag.h>
 #include <lwip/init.h>
 #include <lwip/stats.h>
-#include <lwip-net.h>
 
+#include "likely.h"
 #include "mempool.h"
 #include "http.h"
+#ifdef HAVE_SHELL
 #include "shell.h"
+#endif
 #include "shfs.h"
 #include "shfs_tools.h"
-#include "ctldir.h"
+#ifdef HAVE_CTLDIR
+#include <target/ctldir.h>
+#endif
 #ifdef SHFS_STATS
 #include "shfs_stats.h"
 #endif
@@ -39,19 +40,63 @@
 
 #include "debug.h"
 
-/* runs (func) a command on a timeout */
-#define TIMED(ts_now, ts_tmr, interval, func)                        \
-	do {                                                         \
-		if (unlikely(((ts_now) - (ts_tmr)) > (interval))) {  \
-			if ((ts_tmr))                                \
-				(func);                              \
-			(ts_tmr) = (ts_now);                         \
-		}                                                    \
+/* r = a - b on struct timeval */
+#define TV_SUB(r, a, b)							\
+	do {									\
+		if ((a)->tv_usec < (b)->tv_usec) {				\
+			(r)->tv_sec  = (a)->tv_sec  - (b)->tv_sec - 1;		\
+			(r)->tv_usec = (a)->tv_usec - (b)->tv_usec + 1000000;	\
+		} else {							\
+			(r)->tv_sec  = (a)->tv_sec  - (b)->tv_sec;		\
+			(r)->tv_usec = (a)->tv_usec - (b)->tv_usec;		\
+		}								\
 	} while(0)
+
+/* runs (func) a command on a timeout */
+#define TIMED(ms_now, ms_till, ms_next, ms_interval, func)	     \
+	do {                                                         \
+		if (unlikely((ms_next) <= (ms_now))) {		     \
+			(ms_next) = (ms_now) + (ms_interval);	     \
+			(func);				     \
+		}						     \
+		/* update ms_till only if current nextin	     \
+		 * is smaller than the passed one */		     \
+		(ms_till) = (ms_next) < (ms_till) ? (ms_next) : (ms_till); \
+	} while(0)
+
+/* boot time tracing helper */
+#ifdef TRACE_BOOTTIME
+#ifndef __MINIOS__
+#define TT_DECLARE(var) struct timeval (var) = { 0 }
+#define TT_START(var) gettimeofday(&(var), NULL)
+#define TT_END(var) \
+  do {						\
+    struct timeval now;			\
+						\
+    gettimeofday(&now, NULL);			\
+    TV_SUB(&(var), &now, &(var));		\
+  } while(0)
+#define TT_PRINT(desc, var)			\
+  printk(" %-32s: %ld.%06lds\n",		\
+    (desc), (var).tv_sec, (var).tv_usec);
+#else /*__MINIOS__ */
+#define TT_DECLARE(var) uint64_t (var) = 0
+#define TT_START(var) do { (var) = NOW(); } while(0)
+#define TT_END(var) do { (var) = (NOW() - (var)); } while(0)
+#define TT_PRINT(desc, var)			\
+  printk(" %-32s: %"PRIu64".%06"PRIu64"s\n",		\
+	 (desc),				\
+	 (var) / 1000000000l,			\
+	 ((var) / 1000l) % 1000000l);
+#endif /*__MINIOS__ */
+#else /* TRACE_BOOTTIME */
+#define TT_DECLARE(var) while(0) {}
+#define TT_START(var) while(0) {}
+#define TT_END(var) while(0) {}
+#endif /* TRACE_BOOTTIME */
 
 #ifdef CONFIG_MINDER_PRINT
 #define MINDER_INTERVAL 500
-
 static inline void minder_print(void)
 {
     static int minder_step = 0;
@@ -106,7 +151,7 @@ static inline void minder_print(void)
 /**
  * ARGUMENT PARSING
  */
-static struct _args {
+struct mcargs {
     int             dhclient;
     struct eth_addr mac;
     struct ip_addr  ip;
@@ -114,13 +159,13 @@ static struct _args {
     struct ip_addr  gw;
     struct ip_addr  dns0;
     struct ip_addr  dns1;
-
-    unsigned int    nb_vbds;
-    unsigned int    vbd_id[MAX_NB_TRY_BLKDEVS];
-    int             vbd_detect;
-    unsigned int    stats_vbd_id;
-    int             stats_vbd;
     unsigned int    nb_http_sess;
+
+    int             bd_detect;
+    unsigned int    nb_bds;
+    blkdev_id_t     bd_id[MAX_NB_TRY_BLKDEVS];
+    int             stats_bd;
+    blkdev_id_t     stats_bd_id;
 
     int             no_ctldir;
 
@@ -236,6 +281,7 @@ static int parse_args(int argc, char *argv[])
     int opt;
     int ret;
     int ival;
+    blkdev_id_t ibd;
 
     /* default arguments */
     memset(&args, 0, sizeof(args));
@@ -244,9 +290,13 @@ static int parse_args(int argc, char *argv[])
     IP4_ADDR(&args.gw,     0,   0,   0,   0);
     IP4_ADDR(&args.dns0,   0,   0,   0,   0);
     IP4_ADDR(&args.dns1,   0,   0,   0,   0);
-    args.nb_vbds = 0;
-    args.stats_vbd = 0; /* disable stats vbd */
-    args.vbd_detect = 1;
+    args.nb_bds = 0;
+    args.stats_bd = 0; /* disable stats bd */
+#ifdef CAN_DETECT_BLKDEVS
+    args.bd_detect = 1;
+#else
+    args.bd_detect = 0;
+#endif
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
     args.no_ctldir = 0;
@@ -332,34 +382,32 @@ static int parse_args(int argc, char *argv[])
 	      args.nb_sarp_entries++;
               break;
          case 'b': /* virtual block device (specified manually to skip detection) */
-	      ret = parse_args_setval_int(&ival, optarg);
-	      if (ret < 0 || ival < 0) {
+              if (blkdev_id_parse(optarg, &ibd) < 0) {
 	           printk("invalid block device id specified\n");
 	           return -1;
               }
-	      if (args.nb_vbds == sizeof(args.vbd_id)) {
-		      printk("only %u block devices can be specified\n", sizeof(args.vbd_id));
+	      if (args.nb_bds == sizeof(args.bd_id)) {
+		      printk("only %u block devices can be specified\n", sizeof(args.bd_id));
 	           return -1;
 	      }
-	      args.vbd_detect = 0; /* disable vbd detection */
-	      args.vbd_id[args.nb_vbds++] = (unsigned int) ival;
+	      args.bd_detect = 0; /* disable bd detection */
+	      blkdev_id_cpy(args.bd_id[args.nb_bds++], ibd);
               break;
          case 'h': /* hide xenstore control entries */
 	      args.no_ctldir = 1;
               break;
 #ifdef SHFS_STATS
          case 'x': /* virtual block device for exporting statistics */
-	      ret = parse_args_setval_int(&ival, optarg);
-	      if (ret < 0 || ival < 0) {
+              if (blkdev_id_parse(optarg, &ibd) < 0) {
 	           printk("invalid block device id specified\n");
 	           return -1;
               }
-	      if (args.stats_vbd) {
+	      if (args.stats_bd) {
 		   printk("only one stats devices can be specified\n");
 	           return -1;
 	      }
-	      args.stats_vbd = 1; /* enable stats vbd */
-	      args.stats_vbd_id = (unsigned int) ival;
+	      args.stats_bd = 1; /* enable stats bd */
+	      blkdev_id_cpy(args.stats_bd_id, ibd);
               break;
 #endif
          case 'c': /* number of http connections */
@@ -387,6 +435,7 @@ static volatile int shall_shutdown = 0;
 static volatile int shall_reboot = 0;
 static volatile int shall_suspend = 0;
 
+#ifdef HAVE_SHELL
 static int shcmd_halt(FILE *cio, int argc, char *argv[])
 {
     shall_reboot = 0;
@@ -406,22 +455,23 @@ static int shcmd_suspend(FILE *cio, int argc, char *argv[])
     shall_suspend = 1;
     return 0;
 }
+#endif
 
 void app_shutdown(unsigned reason)
 {
     switch (reason) {
-    case SHUTDOWN_poweroff:
-	    printk("Poweroff requested\n", reason);
+    case TARGET_SHTDN_POWEROFF:
+	    printk("Poweroff requested\n");
 	    shall_reboot = 0;
 	    shall_shutdown = 1;
 	    break;
-    case SHUTDOWN_reboot:
-	    printk("Reboot requested: %d\n", reason);
+    case TARGET_SHTDN_REBOOT:
+	    printk("Reboot requested\n");
 	    shall_reboot = 1;
 	    shall_shutdown = 1;
 	    break;
-    case SHUTDOWN_suspend:
-	    printk("Suspend requested: %d\n", reason);
+    case TARGET_SHTDN_SUSPEND:
+	    printk("Suspend requested\n");
 	    shall_suspend = 1;
 	    break;
     default:
@@ -431,81 +481,36 @@ void app_shutdown(unsigned reason)
 }
 
 /**
- * VBD MGMT
- */
-static int shcmd_lsvbd(FILE *cio, int argc, char *argv[])
-{
-    unsigned int vbd_id[32];
-    unsigned int nb_vbds;
-    struct blkdev *bd;
-    unsigned int i;
-
-    nb_vbds = detect_blkdevs(vbd_id, sizeof(vbd_id));
-
-    for (i = 0; i < nb_vbds; ++i) {
-	    bd = open_blkdev(vbd_id[i], 0x0);
-
-	    if (bd) {
-		    fprintf(cio, " %u: block size = %lu bytes, size = %lu bytes%s\n",
-		            vbd_id[i],
-		            blkdev_ssize(bd),
-		            blkdev_size(bd),
-		            bd->refcount >= 2 ? ", in use" : "");
-		    close_blkdev(bd);
-	    } else {
-		    if (errno == EBUSY)
-			    fprintf(cio, " %u: in exclusive use\n", vbd_id[i]);
-	    }
-    }
-    return 0;
-}
-
-#if LWIP_STATS_DISPLAY
-#include <lwip/stats.h>
-
-static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
-{
-	stats_display();
-	fprintf(cio, "Stats dumped to system output\n");
-	return 0;
-}
-#endif
-
-
-/**
  * MAIN
  */
-#ifdef TRACE_BOOTTIME
-#define TT_DECLARE(var) uint64_t (var) = 0
-#define TT_START(var) do { (var) = NOW(); } while(0)
-#define TT_END(var) do {(var) = (NOW() - (var)); } while(0)
-#define TT_PRINT(desc, var) printk(" %-32s: %lu.%06lus\n",	  \
-                                   (desc),	  \
-                                   (var) / 1000000000l,	  \
-                                   ((var) / 1000l) % 1000000l);
-#else
-#define TT_DECLARE(var) while(0) {}
-#define TT_START(var) while(0) {}
-#define TT_END(var) while(0) {}
-#endif
-
-
 int main(int argc, char *argv[])
 {
     struct netif netif;
     struct netif *niret;
+#ifdef HAVE_CTLDIR
     struct ctldir *cd = NULL;
+#endif
     int ret;
     err_t err;
     unsigned int i;
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+    int poll_netif_fd;
+    fd_set poll_rfdset;
+    fd_set poll_wfdset;
+    struct timeval poll_to;
+#endif
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
-    uint64_t now;
+    uint64_t ts_now;
+    uint64_t ts_till;
+    uint64_t ts_to;
 #endif
 #ifdef CONFIG_LWIP_NOTHREADS
     uint64_t ts_tcp = 0;
     uint64_t ts_etharp = 0;
     uint64_t ts_ipreass = 0;
+#if LWIP_DNS
     uint64_t ts_dns = 0;
+#endif
     uint64_t ts_dhcp_fine = 0;
     uint64_t ts_dhcp_coarse = 0;
 #endif /* CONFIG_LWIP_NOTHREADS */
@@ -515,7 +520,7 @@ int main(int argc, char *argv[])
     TT_DECLARE(tt_boot);
     TT_DECLARE(tt_netifadd);
     TT_DECLARE(tt_lwipinit);
-    TT_DECLARE(tt_vbddetect);
+    TT_DECLARE(tt_bddetect);
 #ifdef CONFIG_AUTOMOUNT
     TT_DECLARE(tt_automount);
 #endif
@@ -523,6 +528,7 @@ int main(int argc, char *argv[])
 #ifdef SHFS_STATS
     TT_DECLARE(tt_statsdev);
 #endif
+    target_init();
 
     TT_START(tt_boot);
     init_debug();
@@ -541,7 +547,7 @@ int main(int argc, char *argv[])
     printk("%61s\n", ""CONFIG_BANNER_VERSION"");
 #endif
     printk("\n");
-    printk("Copyright(C) 2013-2014 NEC Europe Ltd.\n");
+    printk("Copyright(C) 2013-2015 NEC Europe Ltd.\n");
     printk("Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
@@ -564,12 +570,13 @@ int main(int argc, char *argv[])
 		    fflush(stdout);
 		    msleep(1000);
 	    }
-	    printf("\n");
+	    printk("\n");
     }
 
     /* -----------------------------------
-     * control dir
+     * control dir - phase 1/2
      * ----------------------------------- */
+#ifdef HAVE_CTLDIR
     if (!args.no_ctldir) {
 	    printk("Initialize xenstore control entries...\n");
 	    cd = create_ctldir("minicache");
@@ -578,16 +585,19 @@ int main(int argc, char *argv[])
 		    printk("         Disabling xenstore cotrol entries\n");
 	    }
     }
+#endif
 
     /* -----------------------------------
      * detect available block devices
      * ----------------------------------- */
-    if (args.vbd_detect) {
+#ifdef CAN_DETECT_BLKDEVS
+    if (args.bd_detect) {
 	    printk("Detecting block devices...\n");
-	    TT_START(tt_vbddetect);
-	    args.nb_vbds = detect_blkdevs(args.vbd_id, sizeof(args.vbd_id));
-	    TT_END(tt_vbddetect);
+	    TT_START(tt_bddetect);
+	    args.nb_bds = detect_blkdevs(args.bd_id, sizeof(args.bd_id));
+	    TT_END(tt_bddetect);
     }
+#endif
 
     /* -----------------------------------
      * filesystem initialization & automount
@@ -595,10 +605,10 @@ int main(int argc, char *argv[])
     printk("Loading SHFS...\n");
     init_shfs();
 #ifdef CONFIG_AUTOMOUNT
-    if (args.nb_vbds) {
+    if (args.nb_bds) {
 	    printk("Automount cache filesystem...\n");
 	    TT_START(tt_automount);
-	    ret = mount_shfs(args.vbd_id, args.nb_vbds);
+	    ret = mount_shfs(args.bd_id, args.nb_bds);
 	    TT_END(tt_automount);
 	    if (ret < 0)
 		    printk("Warning: Could not find or mount a cache filesystem\n");
@@ -621,12 +631,19 @@ int main(int argc, char *argv[])
      * network interface initialization
      * ----------------------------------- */
     TT_START(tt_netifadd);
+    /* NOTE: IP-level devices are currently only
+     * supported in non-threaded env */
 #ifdef CONFIG_LWIP_NOTHREADS
+#ifdef CONFIG_LWIP_IPDEV
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      netfrontif_init, ethernet_input);
+                      target_netif_init, ip_input);
 #else
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      netfrontif_init, tcpip_input);
+                      target_netif_init, ethernet_input);
+#endif
+#else /* CONFIG_LWIP_NOTHREADS */
+    niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
+                      target_netif_init, tcpip_input);
 #endif /* CONFIG_LWIP_NOTHREADS */
     TT_END(tt_netifadd);
 
@@ -667,6 +684,9 @@ int main(int argc, char *argv[])
     }
     netif_set_default(&netif);
     netif_set_up(&netif);
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+    poll_netif_fd = target_netif_fd(&netif);
+#endif
     if (args.dhclient) {
 	printk("Starting DHCP client (background)...\n");
         dhcp_start(&netif);
@@ -688,47 +708,64 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * service initialization
      * ----------------------------------- */
+#ifdef HAVE_SHELL
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
+#endif
     printk("Starting HTTP server (max number of connections: %u)...\n",
            args.nb_http_sess);
     init_http(args.nb_http_sess,
               args.nb_http_sess + args.nb_http_sess / 2);
 
     /* add custom commands to the shell */
+#ifdef HAVE_SHELL
     shell_register_cmd("halt", shcmd_halt);
     shell_register_cmd("reboot", shcmd_reboot);
     shell_register_cmd("suspend", shcmd_suspend);
-    shell_register_cmd("lsvbd", shcmd_lsvbd);
-#if LWIP_STATS_DISPLAY
-    shell_register_cmd("lwip-stats", shcmd_lwipstats);
+#ifdef HAVE_CTLDIR
+    register_shfs_tools(cd); /* Note: cd might be NULL */
+#else
+    register_shfs_tools();
+#endif
 #endif
 
-    register_shfs_tools(cd); /* Note: cd might be NULL */
 #ifdef SHFS_STATS
     /* -----------------------------------
      * stats device
      * ----------------------------------- */
     printk("Initializing stats device...\n");
-    if(args.stats_vbd) {
+    if(args.stats_bd) {
 	TT_START(tt_statsdev);
-	ret = init_shfs_stats_export(args.stats_vbd_id);
+	ret = init_shfs_stats_export(args.stats_bd_id);
 	TT_END(tt_statsdev);
 	if (ret < 0) {
 	    printk("Warning: Could not open stats device: %s\n", strerror(-ret));
-	    args.stats_vbd = 0;
+	    args.stats_bd = 0;
 	}
     }
 
-    register_shfs_stats_tools(cd);
+#ifdef HAVE_CTLDIR
+    register_shfs_stats_tools(cd); /* Note: cd might be NULL */
+#else
+    register_shfs_stats_tools();
 #endif
+#endif /* SHFS_STATS */
+
+    /* -----------------------------------
+     * testsuite commands
+     * ----------------------------------- */
 #ifdef TESTSUITE
-    register_testsuite(cd);
+#ifdef HAVE_CTLDIR
+    register_testsuite(cd); /* Note: cd might be NULL */
+#else
+    register_testsuite();
+#endif
 #endif
 
     /* -----------------------------------
-     * control dir
+     * control dir - phase 2/2
      * ----------------------------------- */
+#ifdef HAVE_CTLDIR
     if (cd) {
 	    printk("Registering xenstore control entries...\n");
 	    TT_START(tt_ctldirstart);
@@ -739,9 +776,19 @@ int main(int argc, char *argv[])
 		    goto out;
 	    }
     }
+#endif
 
     /* -----------------------------------
-     * Processing loop
+     * Initialize select/poll
+     * ----------------------------------- */
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+    FD_ZERO(&poll_rfdset);
+    FD_ZERO(&poll_wfdset);
+    ts_to = 0;
+#endif
+
+    /* -----------------------------------
+     * Boot banner/time trace output
      * ----------------------------------- */
     printk("*** MiniCache is up and running ***\n");
 #ifdef TRACE_BOOTTIME
@@ -749,57 +796,98 @@ int main(int argc, char *argv[])
     TT_PRINT("boot time since invoking main", tt_boot);
     TT_PRINT("lwip initialization", tt_lwipinit);
     TT_PRINT("vif addition", tt_netifadd);
-    if (args.vbd_detect)
-	    TT_PRINT("virtual block device detection", tt_vbddetect);
+    if (args.bd_detect)
+	    TT_PRINT("virtual block device detection", tt_bddetect);
 #ifdef CONFIG_AUTOMOUNT
-    if (args.nb_vbds)
+    if (args.nb_bds)
 	    TT_PRINT("file system mount time", tt_automount);
 #endif
 #ifdef SHFS_STATS
-    if (args.stats_vbd)
+    if (args.stats_bd)
 	    TT_PRINT("stats device initialization", tt_statsdev);
 #endif
+#ifdef HAVE_CTLDIR
     if (cd)
 	    TT_PRINT("xenstore registration", tt_ctldirstart);
+#endif
     printk("***\n");
 #endif /* TRACE_BOOTTIME */
 #ifdef CONFIG_MINDER_PRINT
     printk("\n");
 #endif
+
+    /* -----------------------------------
+     * Processing loop
+     * ----------------------------------- */
     while(likely(!shall_shutdown)) {
+#if defined CONFIG_SELECT_POLL && defined CAN_POLL_BLKDEV && defined CAN_POLL_NETDEV
+	/* select with ignoring return reason */
+	FD_SET(poll_netif_fd, &poll_rfdset);
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+	if (likely(ts_to)) {
+		poll_to.tv_sec = ts_to / 1000;
+		poll_to.tv_usec = (ts_to % 1000) * 1000;
+#else
+		poll_to.tv_sec  = 0;
+		poll_to.tv_usec = 0;
+#endif
+		if (shfs_mounted) {
+			/* poll network and block devices */
+			shfs_blkdevs_fdset(&poll_rfdset);
+			select(max(shfs_vol.members_maxfd, poll_netif_fd) + 1,
+			       &poll_rfdset, &poll_wfdset, NULL, &poll_to);
+			} else {
+				/* poll network only */
+			select(poll_netif_fd + 1, &poll_rfdset, NULL, NULL, &poll_to);
+		}
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+	}
+#endif
+#else
+	schedule(); /* yield CPU */
+#endif
+
 	/* poll block devices */
 	shfs_poll_blkdevs();
 
+	/* poll IO retry chain of HTTP */
+	http_poll_ioretry();
+
 #ifdef CONFIG_LWIP_NOTHREADS
         /* NIC handling loop (single threaded lwip) */
-	netfrontif_poll(&netif);
+	target_netif_poll(&netif);
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
-        now = NSEC_TO_MSEC(NOW());
+        ts_now  = NSEC_TO_MSEC(NOW());
+	ts_till = UINT64_MAX;
 #endif
 #ifdef CONFIG_LWIP_NOTHREADS
 	/* Process lwip network-related timers */
-        TIMED(now, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
-        TIMED(now, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
-        TIMED(now, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
-        TIMED(now, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
+        TIMED(ts_now, ts_till, ts_etharp,  ARP_TMR_INTERVAL, etharp_tmr());
+        TIMED(ts_now, ts_till, ts_ipreass, IP_TMR_INTERVAL,  ip_reass_tmr());
+        TIMED(ts_now, ts_till, ts_tcp,     TCP_TMR_INTERVAL, tcp_tmr());
+#if LWIP_DNS
+        TIMED(ts_now, ts_till, ts_dns,     DNS_TMR_INTERVAL, dns_tmr());
+#endif
         if (args.dhclient) {
-	        TIMED(now, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
-	        TIMED(now, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
+	        TIMED(ts_now, ts_till, ts_dhcp_fine,   DHCP_FINE_TIMER_MSECS,   dhcp_fine_tmr());
+	        TIMED(ts_now, ts_till, ts_dhcp_coarse, DHCP_COARSE_TIMER_MSECS, dhcp_coarse_tmr());
         }
 #endif /* CONFIG_LWIP_NOTHREADS */
 #ifdef CONFIG_MINDER_PRINT
-        TIMED(now, ts_minder,  MINDER_INTERVAL,  minder_print());
+        TIMED(ts_now, ts_till, ts_minder,  MINDER_INTERVAL,  minder_print());
 #endif /* CONFIG_MINDER_PRINT */
-        schedule(); /* yield CPU */
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+        ts_to = ts_till - ts_now;
+#endif
 
         if (unlikely(shall_suspend)) {
             printk("System is going to suspend now\n");
             netif_set_down(&netif);
             netif_remove(&netif);
 
-            kernel_suspend();
+            target_suspend();
 
             printk("System woke up from suspend\n");
             netif_set_default(&netif);
@@ -818,25 +906,28 @@ int main(int argc, char *argv[])
     else
 	    printk("System is going down to halt now\n");
 #ifdef SHFS_STATS
-    if (args.stats_vbd) {
+    if (args.stats_bd) {
 	    printk("Closing stats device...\n");
 	    exit_shfs_stats_export();
     }
 #endif
     printk("Stopping HTTP server...\n");
     exit_http();
+#ifdef HAVE_SHELL
     printk("Stopping shell...\n");
     exit_shell();
+#endif
     printk("Unmounting cache filesystem...\n");
-    umount_shfs(0); /* we cannot enforce unmount but all files should be closed here */
+    umount_shfs(0); /* we cannot enforce unmount but all files should be closed here anyways */
     exit_shfs();
     printk("Stopping networking...\n");
     netif_set_down(&netif);
     netif_remove(&netif);
  out:
     if (shall_reboot)
-	    kernel_shutdown(SHUTDOWN_reboot);
-    kernel_shutdown(SHUTDOWN_poweroff);
+        target_reboot();
+    target_halt();
 
-    return 0; /* will never be reached */
+    target_exit();
+    return 0;
 }

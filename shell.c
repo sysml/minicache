@@ -4,16 +4,22 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <mini-os/os.h>
-#include <mini-os/types.h>
-#include <mini-os/xmalloc.h>
-#include <mini-os/wait.h>
-#include <kernel.h>
+#if defined linux || defined __OSV__
+#define USE_FOPENCOOKIE
+#endif
+
+#ifdef USE_FOPENCOOKIE
+#define _GNU_SOURCE
+#include <stdio.h>
+#endif
+
+#include <target/sys.h>
 #include <errno.h>
 #include <sched.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
+#include "likely.h"
 
 #ifdef SHELL_DEBUG
 #define ENABLE_DEBUG
@@ -22,6 +28,8 @@
 
 #ifdef HAVE_LWIP
 #include <lwip/tcp.h>
+#else
+typedef int err_t;
 #endif
 
 #include "shell.h"
@@ -130,6 +138,9 @@ struct shell_sess {
 
     /* console i/o */
     FILE *cio; /* stdin/stdout of session */
+#ifdef USE_FOPENCOOKIE
+    cookie_io_functions_t cio_funcs;
+#endif
 
     int cons_fd; /* serial console on SSS_LOCAL */
 #ifdef HAVE_LWIP
@@ -147,6 +158,7 @@ static struct shell *sh = NULL; /* will be initialized first */
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
 static int shcmd_echo(FILE *cio, int argc, char *argv[]);
+static int shcmd_xargs(FILE *cio, int argc, char *argv[]);
 static int shcmd_sexec(FILE *cio, int argc, char *argv[]);
 static int shcmd_clear(FILE *cio, int argc, char *argv[]);
 static int shcmd_time(FILE *cio, int argc, char *argv[]);
@@ -166,6 +178,9 @@ static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
 #endif
 #ifdef HAVE_LWIP
 static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
+#if LWIP_STATS_DISPLAY
+static int shcmd_lwipstats(FILE *cio, int argc, char *argv[]);
+#endif
 #endif
 
 static err_t shlsess_accept(void);
@@ -184,7 +199,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     int32_t i;
     err_t err;
 
-    sh = _xmalloc(sizeof(*sh), PAGE_SIZE);
+    sh = malloc(sizeof(*sh));
     if (!sh) {
         errno = ENOMEM;
         goto err_out;
@@ -230,6 +245,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("exit",   shcmd_exit);
     shell_register_cmd("clear",  shcmd_clear);
     shell_register_cmd("echo",   shcmd_echo);
+    shell_register_cmd("xargs",  shcmd_xargs);
     shell_register_cmd("sexec",  shcmd_sexec);
     shell_register_cmd("who",    shcmd_who);
     shell_register_cmd("time",   shcmd_time);
@@ -239,11 +255,14 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
 #ifdef __MINIOS__
     shell_register_cmd("free",   shcmd_free);
 #endif
-#if defined HAVE_LIBC && !defined CONFIG_ARM
+#if defined HAVE_LIBC && !(defined __MINIOS__ && defined CONFIG_ARM)
     shell_register_cmd("mallinfo",shcmd_mallinfo);
 #endif
 #ifdef HAVE_LWIP
     shell_register_cmd("ifconfig",shcmd_ifconfig);
+#if LWIP_STATS_DISPLAY
+    shell_register_cmd("lwip-stats",shcmd_shcmd_lwipstats);
+#endif
 #endif
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
@@ -259,7 +278,7 @@ err_free_tcp:
         tcp_close(sh->tpcb);
 #endif
 err_free_sh:
-    xfree(sh);
+    free(sh);
 err_out:
     return -1;
 }
@@ -295,7 +314,7 @@ void exit_shell(void)
         if(sh->cmd_str[i])
             free(sh->cmd_str[i]);
     }
-    xfree(sh);
+    free(sh);
 }
 
 static int32_t shell_get_free_sess_id(void)
@@ -357,7 +376,7 @@ int shell_register_cmd(const char *cmd, shfunc_ptr_t func)
 	return -1;
     }
     sh->cmd_func[i] = func;
-    dprintf("Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
+    printd("Command %i ('%s') registered (func=@%p)\n", i, cmd, func);
     return 0;
 }
 
@@ -372,13 +391,13 @@ void shell_unregister_cmd(const char *cmd)
         free(sh->cmd_str[i]);
         sh->cmd_func[i] = NULL;
         sh->cmd_str[i] = NULL;
-        dprintf("Command %i ('%s') unregistered\n", i, cmd);
+        printd("Command %i ('%s') unregistered\n", i, cmd);
     }
 }
 
 static void sh_telnet_negotiation(FILE *cio, uint8_t cmd, uint8_t arg, struct shell_sess *sess)
 {
-	dprintf("Negotiation commands are unsupported for now, ignoring...\n");
+	printd("Negotiation commands are unsupported for now, ignoring...\n");
 }
 
 static int sh_exec(FILE *cio, char *argb, size_t argb_len)
@@ -419,11 +438,14 @@ static int sh_exec(FILE *cio, char *argb, size_t argb_len)
     }
 
  out:
-    if (argc == 0)
+    if (argc == 0) {
+        printd("Ignoring empty command\n");
         return 0; /* nothing was typed */
+    }
 
     cmdi = shell_get_cmd_index(argv[0]);
     if (cmdi < 0) {
+        printd("%s: command not found\n", argv[0]);
         fprintf(cio, "%s: command not found\n", argv[0]);
         return 0;
     }
@@ -431,6 +453,7 @@ static int sh_exec(FILE *cio, char *argb, size_t argb_len)
     ret = sh->cmd_func[cmdi](cio, argc, argv);
     if (ret < 0)
         fprintf(cio, "%s: command returned %d\n", argv[0], ret);
+    printd("%s: command returned %d\n", argv[0], ret);
 
     return ret;
 }
@@ -469,8 +492,11 @@ respawn:
                 sess->state == SSS_KILLING)
                 goto terminate;
             ret = fgetc(sess->cio);
-            if (ret == EOF)
-	        goto terminate;
+            printd("%s: fgetc: %d %c\n", sess->name, ret, ret > 0 ? ret : '\0');
+            if (ret == EOF) {
+                printd("%s: fgetc returned EOF: Connection closed\n", sess->name);
+                goto terminate;
+            }
             argb[argb_p] = (char) ret;
             if (sess->state == SSS_CLOSING ||
                 sess->state == SSS_KILLING)
@@ -497,7 +523,7 @@ respawn:
 			/* we don't support subnegotiations: ignore */
 			in_tsn = 0;
 			in_tsn_sb = 0;
-			dprintf("Ignored telnet subnegotiation\n");
+			printd("Ignored telnet subnegotiation\n");
 		    }
 		    continue; /* ignore subnegotiation characters */
 	        }
@@ -507,7 +533,7 @@ respawn:
 		    in_tsn_sb = 1;
 	        } else if (tsnb_p == 2) { /* command completed */
 		    in_tsn = 0;
-		    dprintf("Received telnet negotiation command: %02X %02X\n",
+		    printd("Received telnet negotiation command: %02X %02X\n",
 		           tsnb[0], tsnb[1]);
 		    sh_telnet_negotiation(sess->cio, tsnb[0], tsnb[1], sess);
 	        }
@@ -538,7 +564,7 @@ respawn:
                 argb_p++;
                 break;
             default:
-	        dprintf("Ignoring non-ASCII/control character: %02x\n",
+	        printd("Ignoring non-ASCII/control character: %02x\n",
 	                (unsigned char) argb[argb_p]);
 	        break;
             }
@@ -548,13 +574,17 @@ respawn:
         if (sess->echo)
             fprintf(sess->cio, "\n");
 
+	printd("Parsing command line: %s\n", argb);
         ret = sh_exec(sess->cio, argb, argb_p + 1);
         fflush(sess->cio);
+	printd("Command line parsing finished: return code %d\n", ret);
         if (ret == SH_CLOSE) {
+	    printd("Close session\n");
 	    sess->state = SSS_CLOSING;
             break;
         }
     }
+
     if (sh->goodbye)
         fprintf(sess->cio, "%s\n", sh->goodbye);
     fflush(sess->cio);
@@ -563,6 +593,7 @@ respawn:
         goto respawn;
 
 terminate:
+    printd("Terminate session %s\n", sess->name);
 #ifdef HAVE_LWIP
     if (sess->type == SST_REMOTE)
 	    shrsess_close(sess);
@@ -584,12 +615,13 @@ static err_t shlsess_accept(void)
         err = ERR_MEM;
         goto err_out;
     }
-    sess = _xmalloc(sizeof(*sess), PAGE_SIZE);
+    sess = malloc(sizeof(*sess));
     if (!sess) {
         err = ERR_MEM;
         goto err_out;
     }
 
+#ifdef __MINIOS__
     sess->cons_fd = open("/var/log/", O_RDWR); /* workaround to
                                                 * access stdin/stdout */
     if (sess->cons_fd < 0) {
@@ -597,6 +629,9 @@ static err_t shlsess_accept(void)
         goto err_free_sess;
     }
     sess->cio = fdopen(sess->cons_fd, "r+");
+#else
+    sess->cio = stdin; /* FIXME */
+#endif
 
     sess->tpcb = NULL;
     sess->type = SST_LOCAL;
@@ -620,15 +655,15 @@ static err_t shlsess_accept(void)
     }
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-    dprintf("Local session opened (%s)\n", sess->name);
+    printd("Local session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
-    xfree(sess->prompt);
+    free(sess->prompt);
 err_close_cons:
     close(sess->cons_fd);
 err_free_sess:
-    xfree(sess);
+    free(sess);
 err_out:
     return err;
 }
@@ -641,13 +676,13 @@ static void shlsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    xfree(sess->prompt);
+    free(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
 
-    dprintf("Local session closed (%s)\n", sess->name);
-    xfree(sess);
+    printd("Local session closed (%s)\n", sess->name);
+    free(sess);
 }
 
 
@@ -658,18 +693,29 @@ static void shlsess_close(struct shell_sess *sess)
 #define RXBUF_NB_AVAIL(s) ((SH_RXBUFLEN  + (s)->cio_rxbuf_widx - (s)->cio_rxbuf_ridx) & SH_RXBUFMASK)
 #define RXBUF_NB_FREE(s)  ((SH_RXBUFMASK + (s)->cio_rxbuf_ridx - (s)->cio_rxbuf_widx) & SH_RXBUFMASK)
 
-static ssize_t shrsess_cio_read(void *argp, char *buf, int maxlen)
+#ifdef USE_FOPENCOOKIE
+static ssize_t shrsess_cio_read(void *argp, char *buf, size_t maxlen)
+#else
+static int shrsess_cio_read(void *argp, char *buf, int maxlen)
+#endif
 {
     struct shell_sess *sess = argp;
-    int i;
-    int avail;
+#ifdef USE_FOPENCOOKIE
+    ssize_t i, avail;
+#else
+    int i, avail;
+#endif
+
+    printd("%s: Read incoming data (max: %d bytes)...\n", sess->name, maxlen);
 
 retry:
-    if (sess->state == SSS_CLOSING || sess->state == SSS_KILLING)
-        return EOF;
+    if (sess->state == SSS_CLOSING || sess->state == SSS_KILLING) {
+        errno = EIO;
+        return -1;
+    }
 
     avail = min(RXBUF_NB_AVAIL(sess), maxlen);
-    if (!avail && maxlen) {
+    if ((avail == 0) && (maxlen > 0)) {
         /* we need to wait for further input of data */
         schedule(); /* TODO: use wait queue */
         goto retry;
@@ -678,33 +724,23 @@ retry:
 	buf[i] = sess->cio_rxbuf[sess->cio_rxbuf_ridx];
         sess->cio_rxbuf_ridx = (sess->cio_rxbuf_ridx + 1) & SH_RXBUFMASK;
     }
-    /*
-#ifdef SHELL_DEBUG
-    dprintf("Received %u bytes from client: '", avail);
-    for (i = 0; i < avail; i++)
-	    dprintf("%02x:", (unsigned char) buf[i]);
-    dprintf("'\n");
-#endif
-    */
-    return (ssize_t) avail;
+
+    printd("%s: Received %d bytes from client\n", sess->name, avail);
+    return avail;
 }
 
-static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
+#ifdef USE_FOPENCOOKIE
+static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
+#else
+static int shrsess_cio_write(void *argp, const char *buf, int len)
+#endif
 {
     struct shell_sess *sess = argp;
     err_t err = ERR_OK;
     int i = 0;
     uint16_t avail, sendlen;
-    /*
-#ifdef SHELL_DEBUG
-    dprintf("Sending %u bytes to client: '", len);
-    for (i = 0; i < len; i++)
-	dprintf("%c", buf[i]);
-    dprintf("'\n");
-    fflush(stdout);
-    i = 0;
-#endif
-    */
+
+    printd("%s: Sending %d bytes to client...\n", sess->name, len);
     while (i < len) {
 	    while((avail = tcp_sndbuf(sess->tpcb)) < 1) {
 		    if (sess->state == SSS_CLOSING ||
@@ -734,8 +770,9 @@ static ssize_t shrsess_cio_write(void *argp, const char *buf, int len)
 	    i += sendlen;
 	    tcp_output(sess->tpcb);
     }
+    printd("%s: Sending done (%d bytes)\n", sess->name, len);
 
-    return (ssize_t) len;
+    return len;
 }
 
 static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
@@ -749,7 +786,7 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
         err = ERR_MEM;
         goto err_out;
     }
-    sess = _xmalloc(sizeof(*sess), PAGE_SIZE);
+    sess = malloc(sizeof(*sess));
     if (!sess) {
         err = ERR_MEM;
         goto err_out;
@@ -771,10 +808,18 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
     sess->cio_rxbuf_ridx = 0;
     sess->cio_rxbuf_widx = 0;
+#ifdef USE_FOPENCOOKIE
+    sess->cio_funcs.read = shrsess_cio_read;
+    sess->cio_funcs.write = shrsess_cio_write;
+    sess->cio_funcs.seek = NULL;
+    sess->cio_funcs.close = NULL;
+    sess->cio = fopencookie(sess, "r+", sess->cio_funcs);
+#else
     sess->cio = funopen(sess,
                         shrsess_cio_read,
                         shrsess_cio_write,
                         NULL, NULL);
+#endif
     if (!sess->cio) {
 	err = ERR_MEM;
 	goto err_free_prompt;
@@ -802,13 +847,13 @@ static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
 
     sh->sess[sess->id] = sess; /* register session */
     sh->nb_sess++;
-    dprintf("Remote session opened (%s)\n", sess->name);
+    printd("Remote session opened (%s)\n", sess->name);
     return ERR_OK;
 
 err_free_prompt:
-    xfree(sess->prompt);
+    free(sess->prompt);
 err_free_sess:
-    xfree(sess);
+    free(sess);
 err_out:
     return err;
 }
@@ -823,7 +868,7 @@ static void shrsess_close(struct shell_sess *sess)
     sh->sess[sess->id]=NULL;
     sh->nb_sess--;
 
-    xfree(sess->prompt);
+    free(sess->prompt);
 
     /* close console descriptor */
     fclose(sess->cio);
@@ -844,8 +889,8 @@ static void shrsess_close(struct shell_sess *sess)
     } /* on SSS_KILLING tpcb is not touched */
 
     /* release memory */
-    dprintf("Remote session closed (%s)\n", sess->name);
-    xfree(sess);
+    printd("Remote session closed (%s)\n", sess->name);
+    free(sess);
 }
 
 static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
@@ -862,6 +907,7 @@ static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_
         }
 
         /* close connection */
+	printd("Unexpected close of session %s: Killing session...\n", sess->name);
         sess->state = SSS_CLOSING;
         return ERR_OK;
     }
@@ -886,6 +932,7 @@ static err_t shrsess_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_
 static void shrsess_error(void *argp, err_t err)
 {
     struct shell_sess *sess = (struct shell_sess *) argp;
+    printd("Receive error on %s: Killing session...\n", sess->name);
     sess->state = SSS_KILLING; /* kill connection on errors */
 }
 
@@ -926,12 +973,12 @@ static int shcmd_who(FILE *cio, int argc, char *argv[])
 {
     /* list opened sessions */
     struct timeval now;
-    uint64_t days = 0;
-    uint64_t hours = 0;
-    uint64_t mins = 0;
-    uint64_t secs;
+    unsigned long days = 0;
+    unsigned long hours = 0;
+    unsigned long mins = 0;
+    unsigned long secs;
     char str_name[32];
-    int32_t i;
+    unsigned int i;
 
     gettimeofday(&now, NULL);
     for (i = 0; i < MAX_NB_SESS; i++){
@@ -961,10 +1008,10 @@ static int shcmd_uptime(FILE *cio, int argc, char *argv[])
 {
     /* shows shell uptime */
     struct timeval now;
-    uint64_t days = 0;
-    uint64_t hours = 0;
-    uint64_t mins = 0;
-    uint64_t secs;
+    unsigned long days = 0;
+    unsigned long hours = 0;
+    unsigned long mins = 0;
+    unsigned long secs;
 
     gettimeofday(&now, NULL);
     secs = (now.tv_sec - sh->ts_start.tv_sec);
@@ -1001,13 +1048,13 @@ static int shcmd_date(FILE *cio, int argc, char *argv[])
 
 static int shcmd_exit(FILE *cio, int argc, char *argv[])
 {
-    /* closes shell */
+    /* close shell */
     return SH_CLOSE;
 }
 
 static int shcmd_clear(FILE *cio, int argc, char *argv[])
 {
-    /* echo args */
+    /* clear screen */
     fprintf(cio, "\e[H\e[J");
     fflush(cio);
     return 0;
@@ -1027,6 +1074,37 @@ static int shcmd_echo(FILE *cio, int argc, char *argv[])
     return 0;
 }
 
+static int shcmd_xargs(FILE *cio, int argc, char *argv[])
+{
+    int ret = 0;
+    int32_t cmdi;
+    char *cmd_argv[2];
+    int i;
+
+    if (argc == 1) {
+        fprintf(cio, "Usage: %s [command] [[args]]...\n", argv[0]);
+        return -1;
+    }
+    cmdi = shell_get_cmd_index(argv[1]);
+    if (cmdi < 0) {
+        fprintf(cio, "%s: command not found\n", argv[1]);
+        return -1;
+    }
+
+    if (argc == 2) {
+        ret = sh->cmd_func[cmdi](cio, 1, &argv[1]);
+    } else {
+        for (i = 2; i < argc; i++) {
+            cmd_argv[0] = argv[1];
+            cmd_argv[1] = argv[i];
+            ret = sh->cmd_func[cmdi](cio, 2, cmd_argv);
+            if (ret < 0)
+                return ret;
+        }
+    }
+    return ret;
+}
+
 static int shcmd_sexec(FILE *cio, int argc, char *argv[])
 {
     /* run a shell command but redirects input/output to sysin/sysout */
@@ -1044,14 +1122,17 @@ static int shcmd_sexec(FILE *cio, int argc, char *argv[])
         fprintf(cio, "%s: command not found\n", argv[1]);
         return -1;
     }
+#ifdef __MINIOS__
     sys_cfd = open("/var/log/", O_RDWR); /* workaround to
 					  * access stdin/stdout */
     if (sys_cfd < 0) {
         fprintf(cio, "%s: Could not open sysin/sysout\n", argv[0]);
         return -1;
     }
-
     sys_cio = fdopen(sys_cfd, "r+");
+#else
+    sys_cio = stdin; /* FIXME */
+#endif
     ret = sh->cmd_func[cmdi](sys_cio, argc - 1, &argv[1]);
     fclose(sys_cio);
     return ret;
@@ -1154,7 +1235,7 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
 
 static int shcmd_free(FILE *cio, int argc, char *argv[])
 {
-    size_t base;
+    uint64_t base;
     char mode = 'm';
 
     /* parsing */
@@ -1186,12 +1267,12 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 
     case 'p': /* pages */
         do {
-	    size_t total_p     = arch_mem_size() >> PAGE_SHIFT;
-	    size_t free_p      = mm_free_pages();
-	    size_t reserved_p  = arch_reserved_mem() >> PAGE_SHIFT;
-	    size_t allocated_p = mm_total_pages() - mm_free_pages();
+	    uint64_t total_p     = arch_mem_size() >> PAGE_SHIFT;
+	    uint64_t free_p      = mm_free_pages();
+	    uint64_t reserved_p  = arch_reserved_mem() >> PAGE_SHIFT;
+	    uint64_t allocated_p = mm_total_pages() - free_p;
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    size_t heap_p      = mm_heap_pages();
+	    uint64_t heap_p      = mm_heap_pages();
 	    allocated_p       -= heap_p; /* excludes heap pages from page allocator */
 #endif
 
@@ -1205,26 +1286,26 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    fprintf(cio, "%12s\n", "free");
 
 	    fprintf(cio, "Pages: ");
-	    fprintf(cio, "%12lu ", total_p);
-	    fprintf(cio, "%12lu ", reserved_p);
-	    fprintf(cio, "%12lu ", allocated_p);
+	    fprintf(cio, "%12"PRIu64" ", total_p);
+	    fprintf(cio, "%12"PRIu64" ", reserved_p);
+	    fprintf(cio, "%12"PRIu64" ", allocated_p);
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12lu ", heap_p);
+	    fprintf(cio, "%12"PRIu64" ", heap_p);
 #endif
-	    fprintf(cio, "%12lu\n", free_p);
+	    fprintf(cio, "%12"PRIu64"\n", free_p);
         } while(0);
         break;
     default: /* mem */
         do {
-	    size_t total_s     = arch_mem_size();
-	    size_t free_s      = mm_free_pages() << PAGE_SHIFT;
-	    size_t other_s     = arch_reserved_mem();
-	    size_t text_s      = ((size_t) &_erodata - (size_t) &_text);  /* text and read only data sections */
-	    size_t data_s      = ((size_t) &_edata - (size_t) &_erodata); /* rw data section */
-	    size_t bss_s       = ((size_t) &_end - (size_t) &_edata); /* bss section */
-	    size_t allocated_s = (mm_total_pages() - mm_free_pages()) << PAGE_SHIFT;
+	    uint64_t total_s     = arch_mem_size();
+	    uint64_t free_s      = mm_free_pages() << PAGE_SHIFT;
+	    uint64_t other_s     = arch_reserved_mem();
+	    uint64_t text_s      = ((uint64_t) &_erodata - (uint64_t) &_text);  /* text and read only data sections */
+	    uint64_t data_s      = ((uint64_t) &_edata - (uint64_t) &_erodata); /* rw data section */
+	    uint64_t bss_s       = ((uint64_t) &_end - (uint64_t) &_edata); /* bss section */
+	    uint64_t allocated_s = (mm_total_pages() - mm_free_pages()) << PAGE_SHIFT;
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    size_t heap_s      = mm_heap_pages() << PAGE_SHIFT;
+	    uint64_t heap_s      = mm_heap_pages() << PAGE_SHIFT;
 	    allocated_s       -= heap_s; /* excludes heap pages from page allocator */
 #endif
 	    other_s -= text_s + data_s + bss_s;
@@ -1242,16 +1323,16 @@ static int shcmd_free(FILE *cio, int argc, char *argv[])
 	    fprintf(cio, "%12s\n", "free");
 
 	    fprintf(cio, "Mem:   ");
-	    fprintf(cio, "%12lu ", total_s / base);
-	    fprintf(cio, "%12lu ", text_s / base);
-	    fprintf(cio, "%12lu ", data_s / base);
-	    fprintf(cio, "%12lu ", bss_s / base);
-	    fprintf(cio, "%12lu ", other_s / base);
-	    fprintf(cio, "%12lu ", allocated_s / base);
+	    fprintf(cio, "%12"PRIu64" ", total_s / base);
+	    fprintf(cio, "%12"PRIu64" ", text_s / base);
+	    fprintf(cio, "%12"PRIu64" ", data_s / base);
+	    fprintf(cio, "%12"PRIu64" ", bss_s / base);
+	    fprintf(cio, "%12"PRIu64" ", other_s / base);
+	    fprintf(cio, "%12"PRIu64" ", allocated_s / base);
 #if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12lu ", heap_s / base);
+	    fprintf(cio, "%12"PRIu64" ", heap_s / base);
 #endif
-	    fprintf(cio, "%12lu\n", free_s /base);
+	    fprintf(cio, "%12"PRIu64"\n", free_s /base);
         } while(0);
         break;
     }
@@ -1309,14 +1390,12 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "UP ");
 		if (flags & NETIF_FLAG_BROADCAST)
 			fprintf(cio, "BROADCAST ");
-		if (flags & NETIF_FLAG_POINTTOPOINT)
-			fprintf(cio, "P2P ");
-		if (flags & NETIF_FLAG_DHCP)
-			fprintf(cio, "DHCP ");
 		if (flags & NETIF_FLAG_ETHARP)
 			fprintf(cio, "ARP ");
 		if (flags & NETIF_FLAG_ETHERNET)
 			fprintf(cio, "ETHERNET ");
+		if (netif->dhcp)
+			fprintf(cio, "DHCP ");
 		fprintf(cio, "MTU:%u\n", netif->mtu);
 	        /* ip addr */
 		if (is_up) {
@@ -1339,4 +1418,15 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 	}
 	return 0;
 }
+
+#if LWIP_STATS_DISPLAY
+#include <lwip/stats.h>
+
+static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
+{
+	stats_display();
+	fprintf(cio, "lwIP stats dumped to system output\n");
+	return 0;
+}
+#endif
 #endif
