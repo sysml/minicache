@@ -19,6 +19,8 @@ MCOBJS						= ring.o \
 						  shfs_fio.o \
 						  shfs_tools.o \
 						  http_parser.o \
+						  http_fio.o \
+						  http_link.o \
 						  http.o \
 						  minicache.o \
 						  target/$(TARGET)/blkdev.o
