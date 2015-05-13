@@ -21,4 +21,14 @@ struct http_req_link_origin {
 	struct http_req_link_state *client;
 };
 
+static inline void httpreq_link_prepare_hdr(struct http_req *hreq)
+{
+	return;
+}
+
+static inline int httpreq_link_build_hdr(struct http_req *hreq)
+{
+	return 0;
+}
+
 #endif /* _HTTP_LINK_H_ */

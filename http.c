@@ -693,41 +693,9 @@ static int httprecv_hdr_value(struct http_parser *parser, const char *buf, size_
 	return 0;
 }
 
-/* returns the field line number on success, -1 if it was not found */
-static inline int http_reqhdr_findfield(struct http_req *hreq, const char *field)
-{
-	register unsigned l;
-
-	for (l = 0; l < hreq->request_hdr.nb_lines; ++l) {
-		if (strncasecmp(field, hreq->request_hdr.line[l].field.b,
-		                hreq->request_hdr.line[l].field.len) == 0) {
-			return (int) l;
-		}
-	}
-
-	return -1; /* not found */
-}
-
 /*******************************************************************************
  * HTTP Request handling
  ******************************************************************************/
-#define ADD_RESHDR_SLINE(hreq, i, shdr_code)	  \
-	do { \
-		(hreq)->response_hdr.sline[(i)].b = _http_shdr[(shdr_code)]; \
-		(hreq)->response_hdr.sline[(i)].len = _http_shdr_len[(shdr_code)]; \
-		++(i); \
-	} while(0)
-
-#define ADD_RESHDR_DLINE(hreq, i, fmt, ...)	  \
-	do { \
-		(hreq)->response_hdr.dline[(i)].len = \
-			snprintf((hreq)->response_hdr.dline[(i)].b, \
-			         HTTPHDR_BUFFER_MAXLEN, \
-			         (fmt), \
-			         ##__VA_ARGS__); \
-		++(i); \
-	} while(0)
-
 static int httprecv_req_complete(struct http_parser *parser)
 {
 	struct http_sess *hsess = container_of(parser, struct http_sess, parser);
@@ -777,18 +745,16 @@ static int httprecv_req_complete(struct http_parser *parser)
 		_hdr_dbuffer_terminate(&hreq->request_hdr.line[l].value);
 	}
 	hreq->request_hdr.url[hreq->request_hdr.url_len++] = '\0';
-	hreq->state = HRS_BUILDING_RESP;
+	hreq->state = HRS_PREPARING_HDR;
 
 	return 0;
 }
 
-static inline void httpreq_build_response(struct http_req *hreq)
+static inline void httpreq_prepare_hdr(struct http_req *hreq)
 {
 	register size_t url_offset = 0;
-	register int ret;
 	register size_t nb_slines = 0;
 	register size_t nb_dlines = 0;
-	register uint32_t l;
 #ifdef HTTP_TESTFILE
 	hash512_t h;
 #endif
@@ -847,100 +813,34 @@ static inline void httpreq_build_response(struct http_req *hreq)
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
 	hreq->stats.el_stats = shfs_stats_from_fd(hreq->fd);
 #endif
-	if (shfs_fio_islink(hreq->fd) &&
-	    shfs_fio_link_type(hreq->fd) == SHFS_LTYPE_REDIRECT)
-		goto red307_hdr;
+	if (shfs_fio_islink(hreq->fd)) {
+		if (shfs_fio_link_type(hreq->fd) == SHFS_LTYPE_REDIRECT)
+			goto red307_hdr; /* 307 temporary moved */
+
+		/**
+		 * REMOTE LINK HANDLING
+		 * Note: header will be built in next phase (HRS_BUILDING_HDR)
+		 * Here, upstream connection is established (if non existent)
+		 */
+		hreq->response_hdr.nb_slines = nb_slines;
+		hreq->response_hdr.nb_dlines = nb_dlines;
+		httpreq_link_prepare_hdr(hreq);
+		return;
+	}
 
 	/**
-	 * FILE HEADER
+	 * LOCAL FILE HEADER
 	 */
-	httpreq_fio_init(hreq);
-
-	shfs_fio_size(hreq->fd, &hreq->f.fsize);
+	/* call build HDR directly on local file I/O -> skip HRS_BUILDING_HDR phase switch */
+	hreq->response_hdr.nb_slines = nb_slines;
+	hreq->response_hdr.nb_dlines = nb_dlines;
+	httpreq_fio_build_hdr(hreq);
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	for (i = 0; i < SHFS_STATS_HTTP_DPCR; ++i)
 		hreq->stats.dpc_threshold[i] = SHFS_STATS_HTTP_DPC_THRESHOLD(hreq->f.fsize, i);
 #endif
-
-	/* File range requested? */
-	hreq->response_hdr.code = 200;	/* 200 OK */
-	hreq->f.rfirst = 0;
-	hreq->f.rlast  = hreq->f.fsize - 1;
-	ret = http_reqhdr_findfield(hreq, "range");
-	if (ret >= 0) {
-		/* Because range requests require different answer codes
-		 * (e.g., 206 OK or 416 EINVAL), we need to check the
-		 * range request here already.
-		 * http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.16 */
-		hreq->response_hdr.code = 416;
-		if (strncasecmp("bytes=", hreq->request_hdr.line[ret].value.b, 6) == 0) {
-			uint64_t rfirst;
-			uint64_t rlast;
-
-			ret = sscanf(hreq->request_hdr.line[ret].value.b + 6,
-			             "%"PRIu64"-%"PRIu64,
-			             &rfirst, &rlast);
-			if (ret == 1) {
-				/* only rfirst specified */
-				if (rfirst < hreq->f.rlast) {
-					hreq->f.rfirst = rfirst;
-					hreq->response_hdr.code = 206;
-				}
-			} else if (ret == 2) {
-				/* both, rfirst and rlast, specified */
-				if ((rfirst < rlast) &&
-				    (rfirst < hreq->f.rlast) &&
-				    (rlast <= hreq->f.rlast)) {
-					hreq->f.rfirst = rfirst;
-					hreq->f.rlast = rlast;
-					hreq->response_hdr.code = 206;
-				}
-			}
-		}
-
-		if (hreq->response_hdr.code == 416) {
-			/* (parsing/out of range) error: response with 416 error header */
-			printd("Could not parse range request\n");
-			goto err416_hdr;
-		}
-
-		printd("Client requested range of element: %"PRIu64"-%"PRIu64"\n",
-		        hreq->rfirst, hreq->rlast);
-	}
-
-	/* HTTP OK [first line] (code can be 216 or 200) */
-	if (hreq->response_hdr.code == 206)
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_206(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	else
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	hreq->type = HRT_FIOMSG;
-
-	/* MIME (by element or default) */
-	shfs_fio_mime(hreq->fd, strsbuf, sizeof(strsbuf));
-	if (strsbuf[0] == '\0')
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_DEFAULT_TYPE);
-	else
-		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
-
-	/* Content length */
-	hreq->rlen   = (hreq->f.rlast + 1) - hreq->f.rfirst;
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
-
-	/* Content range */
-	if (hreq->response_hdr.code == 206)
-		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
-		                 _http_dhdr[HTTP_DHDR_RANGE],
-		                 hreq->f.rfirst, hreq->f.rlast, hreq->f.fsize);
-
-	/* Initialize volchk range values for I/O */
-	if (hreq->rlen != 0) {
-		hreq->f.volchk_first = shfs_volchk_foff(hreq->fd, hreq->f.rfirst);                     /* first volume chunk of file */
-		hreq->f.volchk_last  = shfs_volchk_foff(hreq->fd, hreq->f.rlast + hreq->f.rfirst);       /* last volume chunk of file */
-		hreq->f.volchkoff_first = shfs_volchkoff_foff(hreq->fd, hreq->f.rfirst);               /* first byte in first chunk */
-		hreq->f.volchkoff_last  = shfs_volchkoff_foff(hreq->fd, hreq->f.rlast + hreq->f.rfirst); /* last byte in last chunk */
-	}
-
-	goto finalize_hdr;
+	hreq->state = HRS_FINALIZING_HDR;
+	return;
 
 	/**
 	 * REDIRECT HEADER
@@ -955,7 +855,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 			 _http_dhdr[HTTP_DHDR_LOCATION],
 			 strsbuf, shfs_fio_link_rport(hreq->fd), strlbuf);
 	hreq->type = HRT_NOMSG;
-	goto finalize_hdr;
+	goto err_out;
 
 	/**
 	 * TESTFILE HEADER
@@ -970,7 +870,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_testfile;
 	hreq->rlen = _http_testfile_len;
-	goto finalize_hdr;
+	goto err_out;
 #endif
 
 	/**
@@ -987,15 +887,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err404p;
 	hreq->rlen = _http_err404p_len;
-	goto finalize_hdr;
-
- err416_hdr:
-	/* 416 Range request error */
-	hreq->response_hdr.code = 416;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
-	hreq->type = HRT_NOMSG;
-	goto finalize_hdr;
+	goto err_out;
 
  err500_hdr:
 	/* 500 Internal server error */
@@ -1007,7 +899,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err500p;
 	hreq->rlen = _http_err500p_len;
-	goto finalize_hdr;
+	goto err_out;
 
  err501_hdr:
 	/* 501 Invalid request */
@@ -1019,7 +911,37 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err501p;
 	hreq->rlen = _http_err501p_len;
-	goto finalize_hdr;
+	goto err_out;
+
+ err_out:
+	hreq->response_hdr.nb_slines = nb_slines;
+	hreq->response_hdr.nb_dlines = nb_dlines;
+	hreq->state = HRS_FINALIZING_HDR;
+	return;
+}
+
+static inline void httpreq_build_hdr(struct http_req *hreq)
+{
+	register size_t nb_slines = hreq->response_hdr.nb_slines;
+	register size_t nb_dlines = hreq->response_hdr.nb_dlines;
+	int ret;
+
+	/* For now, just remote links utilize this phase for connecting to 
+	 * upstream server. All other reponses are already build
+	 * Because of this it might be possible that this function needs
+	 * to be called multiple times until the connection was established */
+	ASSERT(shfs_fio_islink(hreq->fd));
+	ASSERT(shfs_fio_link_type(hreq->fd) != SHFS_LTYPE_REDIRECT);
+
+	ret = httpreq_link_build_hdr(hreq);
+	if (ret == -EAGAIN)
+		return; /* stay in current phase because we are not done yet */
+	if (ret < 0)
+		goto err503_hdr; /* an unknown error happend -> send out a 503 error page instead */
+
+	/* we are done -> switch to next phase */
+	hreq->state = HRS_FINALIZING_HDR;
+	return;
 
  err503_hdr:
 	/* 503 Service unavailable */
@@ -1033,12 +955,16 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err503p;
 	hreq->rlen = _http_err503p_len;
-	goto finalize_hdr;
+	hreq->state = HRS_FINALIZING_HDR;
+	return;
+}
 
-	/**
-	 * FINALIZE
-	 */
- finalize_hdr:
+static inline void httpreq_finalize_hdr(struct http_req *hreq)
+{
+	register size_t nb_slines = hreq->response_hdr.nb_slines;
+	register size_t nb_dlines = hreq->response_hdr.nb_dlines;
+	register uint32_t l;
+
 	/* Default header lines */
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_SERVER);
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_ACC_BYTERANGE);
@@ -1061,9 +987,6 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	hreq->response_hdr.total_len = hreq->response_hdr.eoh_off + _http_sep_len;
 	hreq->response_hdr.nb_slines = nb_slines;
 	hreq->response_hdr.nb_dlines = nb_dlines;
-
-	/* Switch this request object to reply phase */
-	hreq->state = HRS_RESPONDING_HDR;
 
 #ifdef HTTP_DEBUG
 	printd("Response:\n");
@@ -1096,9 +1019,7 @@ static inline void httpreq_build_response(struct http_req *hreq)
 	}
 #endif
 #endif
-	return;
 }
-
 
 /* might be called multiple times until hdr was sent out */
 static inline err_t httpreq_write_hdr(struct http_req *hreq, size_t *sent)
@@ -1279,8 +1200,28 @@ err_t httpsess_respond(struct http_sess *hsess)
 	hsess->_in_respond = 1;
 	hreq = hsess->rqueue_head;
 	switch (hreq->state) {
-	case HRS_BUILDING_RESP:
-		httpreq_build_response(hreq);
+	case HRS_PREPARING_HDR: /* atomic -> direct state transition */
+		httpreq_prepare_hdr(hreq);
+		if (hreq->state == HRS_FINALIZING_HDR) {
+			/* skipping next phase requested */
+			goto case_FINALIZING_HDR;
+		}
+		goto case_BUILDING_HDR;
+
+	case_BUILDING_HDR:
+		hreq->state = HRS_BUILDING_HDR;
+	case HRS_BUILDING_HDR:
+		httpreq_build_hdr(hreq); /* might need to be re-called */
+		if (hreq->state == HRS_FINALIZING_HDR) {
+			/* we are done -> switch to next phase */
+			goto case_FINALIZING_HDR;
+		}
+		break;
+
+	case_FINALIZING_HDR: /* atomic -> direct state transition */
+		hreq->state = HRS_FINALIZING_HDR;
+	case HRS_FINALIZING_HDR:
+		httpreq_finalize_hdr(hreq);
 		goto case_HRS_RESPONDING_HDR;
 
 	case_HRS_RESPONDING_HDR:
@@ -1356,7 +1297,8 @@ err_t httpsess_respond(struct http_sess *hsess)
 
 	default:
 		/* unknown state?! */
-		printd("FATAL: Invalid send state\n");
+		printd("FATAL: HTTP request in invalid state\n");
+		BUG_ON(1);
 		goto err_close;
 	}
 	hsess->_in_respond = 0;

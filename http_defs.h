@@ -5,6 +5,7 @@
 #include <lwip/tcp.h>
 
 #include "http_parser.h"
+#include "http_data.h"
 
 #include "mempool.h"
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
@@ -142,7 +143,7 @@ struct http_sess {
 
 	int retry_replychain; /* marker for rare cases: reply could not be initiated
 	                       * within recv because of ERR_MEM */
-	int _in_respond;      /* diables recursive httpsess_respond calls */
+	int _in_respond;      /* diables recursive httpsess_respond calls DELETEME */
 	dlist_el(ioretry_chain);
 };
 
@@ -150,7 +151,9 @@ enum http_req_state {
 	HRS_UNDEF = 0,
 	HRS_PARSING_HDR,
 	HRS_PARSING_MSG,
-	HRS_BUILDING_RESP,
+	HRS_PREPARING_HDR,
+	HRS_BUILDING_HDR,
+	HRS_FINALIZING_HDR,
 	HRS_RESPONDING_HDR,
 	HRS_RESPONDING_MSG,
 	HRS_RESPONDING_EOM
@@ -248,6 +251,38 @@ struct http_req {
 	} stats;
 #endif
 };
+
+#define ADD_RESHDR_SLINE(hreq, i, shdr_code)	  \
+	do { \
+		(hreq)->response_hdr.sline[(i)].b = _http_shdr[(shdr_code)]; \
+		(hreq)->response_hdr.sline[(i)].len = _http_shdr_len[(shdr_code)]; \
+		++(i); \
+	} while(0)
+
+#define ADD_RESHDR_DLINE(hreq, i, fmt, ...)	  \
+	do { \
+		(hreq)->response_hdr.dline[(i)].len = \
+			snprintf((hreq)->response_hdr.dline[(i)].b, \
+			         HTTPHDR_BUFFER_MAXLEN, \
+			         (fmt), \
+			         ##__VA_ARGS__); \
+		++(i); \
+	} while(0)
+
+/* returns the field line number on success, -1 if it was not found */
+static inline int http_reqhdr_findfield(struct http_req *hreq, const char *field)
+{
+	register unsigned l;
+
+	for (l = 0; l < hreq->request_hdr.nb_lines; ++l) {
+		if (strncasecmp(field, hreq->request_hdr.line[l].field.b,
+		                hreq->request_hdr.line[l].field.len) == 0) {
+			return (int) l;
+		}
+	}
+
+	return -1; /* not found */
+}
 
 #define httpsess_register_ioretry(hsess) \
 	do { \

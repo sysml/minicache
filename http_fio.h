@@ -171,6 +171,109 @@ static inline void httpreq_fio_init(struct http_req *hreq)
 	hreq->f.cce_t = NULL;
 }
 
+static inline int httpreq_fio_build_hdr(struct http_req *hreq)
+{
+	register size_t nb_slines = hreq->response_hdr.nb_slines;
+	register size_t nb_dlines = hreq->response_hdr.nb_dlines;
+	char strsbuf[64];
+	int ret;
+
+	httpreq_fio_init(hreq);
+
+	shfs_fio_size(hreq->fd, &hreq->f.fsize);
+
+	/* File range requested? */
+	hreq->response_hdr.code = 200;	/* 200 OK */
+	hreq->f.rfirst = 0;
+	hreq->f.rlast  = hreq->f.fsize - 1;
+	ret = http_reqhdr_findfield(hreq, "range");
+	if (ret >= 0) {
+		/* Because range requests require different answer codes
+		 * (e.g., 206 OK or 416 EINVAL), we need to check the
+		 * range request here already.
+		 * http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.16 */
+		hreq->response_hdr.code = 416;
+		if (strncasecmp("bytes=", hreq->request_hdr.line[ret].value.b, 6) == 0) {
+			uint64_t rfirst;
+			uint64_t rlast;
+
+			ret = sscanf(hreq->request_hdr.line[ret].value.b + 6,
+			             "%"PRIu64"-%"PRIu64,
+			             &rfirst, &rlast);
+			if (ret == 1) {
+				/* only rfirst specified */
+				if (rfirst < hreq->f.rlast) {
+					hreq->f.rfirst = rfirst;
+					hreq->response_hdr.code = 206;
+				}
+			} else if (ret == 2) {
+				/* both, rfirst and rlast, specified */
+				if ((rfirst < rlast) &&
+				    (rfirst < hreq->f.rlast) &&
+				    (rlast <= hreq->f.rlast)) {
+					hreq->f.rfirst = rfirst;
+					hreq->f.rlast = rlast;
+					hreq->response_hdr.code = 206;
+				}
+			}
+		}
+
+		if (hreq->response_hdr.code == 416) {
+			/* (parsing/out of range) error: response with 416 error header */
+			printd("Could not parse range request\n");
+			goto err416_hdr;
+		}
+
+		printd("Client requested range of element: %"PRIu64"-%"PRIu64"\n",
+		        hreq->rfirst, hreq->rlast);
+	}
+
+	/* HTTP OK [first line] (code can be 216 or 200) */
+	if (hreq->response_hdr.code == 206)
+		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_206(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	else
+		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	hreq->type = HRT_FIOMSG;
+
+	/* MIME (by element or default) */
+	shfs_fio_mime(hreq->fd, strsbuf, sizeof(strsbuf));
+	if (strsbuf[0] == '\0')
+		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_DEFAULT_TYPE);
+	else
+		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
+
+	/* Content length */
+	hreq->rlen   = (hreq->f.rlast + 1) - hreq->f.rfirst;
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
+
+	/* Content range */
+	if (hreq->response_hdr.code == 206)
+		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
+		                 _http_dhdr[HTTP_DHDR_RANGE],
+		                 hreq->f.rfirst, hreq->f.rlast, hreq->f.fsize);
+
+	/* Initialize volchk range values for I/O */
+	if (hreq->rlen != 0) {
+		hreq->f.volchk_first = shfs_volchk_foff(hreq->fd, hreq->f.rfirst);                     /* first volume chunk of file */
+		hreq->f.volchk_last  = shfs_volchk_foff(hreq->fd, hreq->f.rlast + hreq->f.rfirst);       /* last volume chunk of file */
+		hreq->f.volchkoff_first = shfs_volchkoff_foff(hreq->fd, hreq->f.rfirst);               /* first byte in first chunk */
+		hreq->f.volchkoff_last  = shfs_volchkoff_foff(hreq->fd, hreq->f.rlast + hreq->f.rfirst); /* last byte in last chunk */
+	}
+	goto out;
+
+ err416_hdr:
+	/* 416 Range request error */
+	hreq->response_hdr.code = 416;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+	hreq->type = HRT_NOMSG;
+
+ out:
+	hreq->response_hdr.nb_slines = nb_slines;
+	hreq->response_hdr.nb_dlines = nb_dlines;
+	return 0;
+}
+
 static inline void httpreq_fio_close(struct http_req *hreq)
 {
 	register unsigned i;
