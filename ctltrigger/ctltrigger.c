@@ -242,7 +242,7 @@ static inline int ctldir_lock(struct xs_handle *xs, unsigned int domid, const ch
 	unsigned int wnum;
 	int ignore = 1; /* ignore first watch fire that happens on watch creation */
 
-	snprintf(path, sizeof(path), "%s/%u/%s/lock", XSBASE, domid, scope);
+	snprintf(path, sizeof(path), "%s/%u/data/%s/lock", XSBASE, domid, scope);
 	if (nowait) {
 		ret = ctldir_reserve_lock(xs, path);
 	} else {
@@ -314,7 +314,7 @@ static inline int ctldir_unlock(struct xs_handle *xs, unsigned int domid, const 
 		goto err_out;
 	}
 
-	snprintf(path, sizeof(path), "%s/%u/%s/lock", XSBASE, domid, scope);
+	snprintf(path, sizeof(path), "%s/%u/data/%s/lock", XSBASE, domid, scope);
 	dprintf(D_L0, "Release lock %s\n", path);
 	if (!xs_write(xs, xts, path, "0", 1)) {
 		eprintf("Could not write to XenStore entry %s: %s\n", path, strerror(errno));
@@ -348,7 +348,7 @@ static inline int ctldir_has_trigger(struct xs_handle *xs, unsigned int domid, c
 	int ival;
 	char *reply;
 
-	snprintf(path, sizeof(path), "%s/%u/%s/feature-%s", XSBASE, domid, scope, trigger);
+	snprintf(path, sizeof(path), "%s/%u/data/%s/feature-%s", XSBASE, domid, scope, trigger);
 	dprintf(D_L1, "Check %s\n", path);
 	reply = (char *) xs_read(xs, XBT_NULL, path, &len);
 	if (!reply || len == 0) {
@@ -382,8 +382,8 @@ static inline char *ctldir_trigger(struct xs_handle *xs, unsigned int domid, con
 	unsigned int wnum;
 	int ignores = 1;
 
-	snprintf(ipath, sizeof(ipath), "%s/%u/%s/%s-in", XSBASE, domid, scope, trigger);
-	snprintf(opath, sizeof(opath), "%s/%u/%s/%s-out", XSBASE, domid, scope, trigger);
+	snprintf(ipath, sizeof(ipath), "%s/%u/data/%s/%s-in", XSBASE, domid, scope, trigger);
+	snprintf(opath, sizeof(opath), "%s/%u/data/%s/%s-out", XSBASE, domid, scope, trigger);
 	if (args) /* whenever no args are passed, "" is writen to XenStore */
 		iargs = args;
 

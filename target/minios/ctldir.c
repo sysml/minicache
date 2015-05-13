@@ -127,6 +127,7 @@ static struct xenbus_event *xenbus_wait_for_watch_return_event(xenbus_event_queu
 static void ctldir_watcherthread(void *argp);
 
 struct ctldir *create_ctldir(const char *name) {
+	const char *dataname = "data";
 	struct ctldir *cd;
 	int ret;
 
@@ -136,13 +137,19 @@ struct ctldir *create_ctldir(const char *name) {
 		goto err_out;
 	}
 
-	strncpy(cd->basename, name, sizeof(cd->basename) - 1);
-	cd->basename[sizeof(cd->basename) - 1] = '\0';
-	snprintf(cd->threadname, sizeof(cd->threadname), "ctlwatch-%s", cd->basename);
+	snprintf(cd->basename, sizeof(cd->basename), "%s/%s", dataname, name);
+	snprintf(cd->threadname, sizeof(cd->threadname), "ctlwatch-%s", name);
 	cd->watcher = NULL;
 	cd->lock_name = "lock";
 	cd->nb_trigger = 0;
 	cd->xseq = NULL;
+
+	/* check if data dir is writable */
+	ret = _xb_write(XBT_NIL, dataname, "");
+	if (ret < 0) {
+		errno = EACCES;
+		goto err_free_cd;
+	}
 
 	/* create base dir or check if it is writable */
 	ret = _xb_write(XBT_NIL, cd->basename, "");
