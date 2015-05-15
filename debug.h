@@ -3,6 +3,7 @@
 
 #include <target/sys.h>
 #include <sys/time.h>
+#include <inttypes.h>
 
 extern struct timeval __debug_tsref;
 

@@ -94,14 +94,16 @@ int shfs_alloc_cache(void)
 #ifdef SHFS_CACHE_GROW
     if (SHFS_CACHE_POOL_NB_BUFFERS) {
 #endif
-    cc->pool = alloc_mempool(SHFS_CACHE_POOL_NB_BUFFERS,
-                             shfs_vol.chunksize,
-                             shfs_vol.ioalign,
-                             0,
-                             0,
-                             _cce_pobj_init,
-                             NULL,
-                             sizeof(struct shfs_cache_entry));
+    cc->pool = alloc_enhanced_mempool(SHFS_CACHE_POOL_NB_BUFFERS,
+				      shfs_vol.chunksize,
+				      shfs_vol.ioalign,
+				      0,
+				      0,
+				      sizeof(struct shfs_cache_entry),
+				      1,
+				      NULL, NULL,
+				      _cce_pobj_init, NULL,
+				      NULL, NULL);
     if (!cc->pool) {
 	    ret = -ENOMEM;
 	    goto err_free_cc;

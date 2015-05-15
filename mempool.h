@@ -1,8 +1,8 @@
 /*
- * Simple memory pool implementation for MiniOS
+ * Simple memory pool implementation
  *
- * Copyright(C) 2013 NEC Laboratories Europe. All rights reserved.
- *                   Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Copyright(C) 2013-2015 NEC Laboratories Europe. All rights reserved.
+ *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 #ifndef _MEMPOOL_H_
 #define _MEMPOOL_H_
@@ -20,7 +20,9 @@
  *          || struct mempool_obj ||
  *          ||                    ||
  *          || - -private area- - ||
- *          ++--------------------++\
+ *          ++--------------------++
+ *
+ * *base -> +----------------------+\
  *          |      HEAD ROOM       | |
  *          |   ^              ^   |  > lhr
  * *data ->/+---|--------------|---+/
@@ -38,14 +40,18 @@
  *
  * If an align is passed to the memory pool allocator, the beginning of
  * the object data area (regardingless to head- and tailroom) will be aligned.
+ *
+ * NOTE: this object meta data should never be changed other than by
+ *       functions and macros defined by this header file
  */
 struct mempool_obj {
-  struct mempool *p_ref; /* ptr to depending mempool (DO NOT CHANGE!) */
+  struct mempool *p_ref; /* ptr to depending mempool */
+  void *private;         /* ptr to private meta data area */
+  void *base;            /* ptr to data base */
+  void *data;            /* ptr to current data */
   size_t lhr;            /* left headroom space */
   size_t ltr;            /* left tailroom space */
   size_t len;            /* length of data area */
-  void *data;            /* ptr to data area */
-  void *private;         /* ptr to private meta data area (DO NOT CHANGE!) */
 };
 
 /*
@@ -74,24 +80,49 @@ struct mempool_obj {
  *          v                      v
  */
 struct mempool {
-  uint32_t nb_objs;
+  struct ring *free_objs;
+  void (*obj_pick_func)(struct mempool_obj *, void *);
+  void *obj_pick_func_argp;
   size_t obj_size;
   size_t obj_headroom;
   size_t obj_tailroom;
-  size_t obj_data_offset;
-  size_t obj_private_len;
-  void (*obj_init_func)(struct mempool_obj *, void *);
-  void *obj_init_func_argp;
-  struct ring *free_objs;
+  //size_t obj_data_offset;
+  //size_t obj_private_len;
+  void (*obj_put_func)(struct mempool_obj *, void *);
+  void *obj_put_func_argp;
+  uint32_t nb_objs;
+  void *obj_data_area; /* points to data allocation when sep_obj_data = 1 */
 };
 
 /*
- * Callback obj_init_func will be called while objects are picked from this memory pool
+ * Callback obj_init_func will be called while objects are initialized for this memory pool
  *  void obj_init_func(struct mempool_obj *obj, void *argp)
+ * Callback obj_pick_func will be called whenever objects are picked from this memory pool
+ *  void obj_pick_func(struct mempool_obj *obj, void *argp)
+ * Callback obj_put_func will be called whenever objects are put back to this memory pool
+ *  void obj_put_func(struct mempool_obj *obj, void *argp)
+ * split_obj_data (bool) defines if object data shall be splitted from meta data allocation.
+ *  Depending on the object data alignments, this might be more memory space efficient
  */
-struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp, size_t obj_private_len);
-#define alloc_simple_mempool(nb_objs, obj_size) alloc_mempool((nb_objs), (obj_size), 0, 0, 0, NULL, NULL, 0)
+struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
+  size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+  void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+  void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+  void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp);
+#define alloc_mempool(nb_objs, obj_size, obj_data_align, obj_headroom, obj_tailroom, obj_pick_func, obj_pick_func_argp, obj_private_len) \
+  alloc_enhanced_mempool((nb_objs), (obj_size), (obj_data_align), (obj_headroom), (obj_tailroom), (obj_private_len), 0, NULL, NULL, (obj_pick_func), (obj_pick_func_argp), NULL, NULL)
+#define alloc_simple_mempool(nb_objs, obj_size) \
+  alloc_enhanced_mempool((nb_objs), (obj_size), 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL)
 void free_mempool(struct mempool *p);
+
+#define mempool_reset_obj(obj)						  \
+  do {									  \
+    struct mempool *_p = (obj)->p_ref;					  \
+    (obj)->len = _p->obj_size;						  \
+    (obj)->lhr = _p->obj_headroom;					  \
+    (obj)->ltr = _p->obj_tailroom;					  \
+    (obj)->data = (void *) (((uintptr_t) (obj)->base) + _p->obj_headroom); \
+  } while(0)
 
 /*
  * Pick an object from a memory pool
@@ -104,13 +135,10 @@ static inline struct mempool_obj *mempool_pick(struct mempool *p)
   if (unlikely(!obj))
 	return NULL;
 
-  /* initialize object size */
-  obj->len = p->obj_size;
-  obj->lhr = p->obj_headroom;
-  obj->ltr = p->obj_tailroom;
-  obj->data = (void *)((uintptr_t) obj + p->obj_data_offset);
-  if (p->obj_init_func)
-	p->obj_init_func(obj, p->obj_init_func_argp);
+  /* initialize object */
+  mempool_reset_obj(obj);
+  if (p->obj_pick_func)
+	p->obj_pick_func(obj, p->obj_pick_func_argp);
   return obj;
 }
 
@@ -125,13 +153,10 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
 	return -1;
 
   for (i=0; i<count; i++) {
-	/* initialize object size */
-	objs[i]->len = p->obj_size;
-	objs[i]->lhr = p->obj_headroom;
-	objs[i]->ltr = p->obj_tailroom;
-	objs[i]->data = (void *)((uintptr_t) objs[i] + p->obj_data_offset);
-	if (p->obj_init_func)
-	  p->obj_init_func(objs[i], p->obj_init_func_argp);
+	/* initialize object */
+	mempool_reset_obj(objs[i]);
+	if (p->obj_pick_func)
+	  p->obj_pick_func(objs[i], p->obj_pick_func_argp);
   }
   return 0;
 }
@@ -142,10 +167,12 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
  * Put an object back to its depending memory pool.
  * This is like free() for memory pool objects
  */
-//#define mempool_put(obj) ring_enqueue((obj)->p_ref->free_objs, obj);
 static inline void mempool_put(struct mempool_obj *obj)
 {
-  ring_enqueue(obj->p_ref->free_objs, obj); /* never fails on right usage because pool's ring can hold all of it's object references */
+  struct mempool *p = obj->p_ref;
+  ring_enqueue(p->free_objs, obj); /* never fails on right usage because pool's ring can hold all of it's object references */
+  if (p->obj_put_func)
+	p->obj_put_func(obj, p->obj_put_func_argp);
 }
 
 /*
@@ -154,8 +181,18 @@ static inline void mempool_put(struct mempool_obj *obj)
  */
 static inline void mempool_put_multiple(struct mempool_obj *objs[], uint32_t count)
 {
-  if (likely(count > 0))
-	ring_enqueue_multiple(objs[0]->p_ref->free_objs, (void **) objs, count);
+  struct mempool *p;
+
+  if (unlikely(count == 0))
+    return;
+
+  p = objs[0]->p_ref;
+  ring_enqueue_multiple(p->free_objs, (void **) objs, count);
+  if (p->obj_put_func) {
+	uint32_t i;
+	for (i=0; i<count; i++)
+		p->obj_put_func(objs[i], p->obj_put_func_argp);
+  }
 }
 
 /*
