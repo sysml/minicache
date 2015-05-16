@@ -66,6 +66,20 @@ void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen); /* null-termination is 
 #define shfs_is_foff_in_bound(f, foff) \
 	((f)->hentry->f_attr.len > (foff))
 
+/**
+ * File cookies
+ */
+#define shfs_fio_get_cookie(f) \
+	((f)->cookie)
+static inline int shfs_fio_set_cookie(SHFS_FD f, void *cookie) {
+  if (f->cookie)
+    return -EBUSY;
+  f->cookie = cookie;
+  return 0;
+}
+#define shfs_fio_clear_cookie(f) \
+  do { (f)->cookie = NULL; } while (0)
+
 /*
  * Simple but synchronous file read
  * Note: Busy-waiting is used

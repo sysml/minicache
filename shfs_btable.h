@@ -46,6 +46,8 @@ struct shfs_bentry {
 #ifdef SHFS_STATS
 	struct shfs_el_stats hstats;
 #endif /* SHFS_STATS */
+
+	void *cookie; /* shfs_fio: upper layer software can attach cookies to open files */
 #endif
 };
 

@@ -137,8 +137,10 @@ SHFS_FD shfs_fio_open(const char *path)
 	}
 
 	++shfs_nb_open;
-	if (bentry->refcount == 0) /* lock file for updates */
-		trydown(&bentry->updatelock);
+	if (bentry->refcount == 0) {
+		trydown(&bentry->updatelock); /* lock file for updates */
+		shfs_fio_clear_cookie(bentry);
+	}
 	++bentry->refcount;
 #ifdef SHFS_STATS
 	estats = shfs_stats_from_bentry(bentry);
