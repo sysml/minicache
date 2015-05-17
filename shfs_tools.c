@@ -71,11 +71,11 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		/* ltype, mime */
 		if (SHFS_HENTRY_ISLINK(hentry)) {
 			switch(hentry->l_attr.type) {
-			case SHFS_LTYPE_RELACLONE_MPEG:
-				fprintf(cio, "%5s ", "rlmpg");
+			case SHFS_LTYPE_RAW:
+				fprintf(cio, "%5s ", "raw");
 				break;
-			case SHFS_LTYPE_ABSCLONE:
-				fprintf(cio, "%5s ", "abscl");
+			case SHFS_LTYPE_AUTO:
+				fprintf(cio, "%5s ", "auto");
 				break;
 			default: /* SHFS_LTYPE_REDIRECT */
 				fprintf(cio, "%5s ", "redir");
@@ -155,11 +155,11 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 				argv[i], strsbuf, shfs_fio_link_rport(f), strlbuf);
 
 			switch (shfs_fio_link_type(f)) {
-			case SHFS_LTYPE_RELACLONE_MPEG:
-				fprintf(cio, "relative clone (MPEG)");
+			case SHFS_LTYPE_RAW:
+				fprintf(cio, "relative clone (raw)");
 				break;
-			case SHFS_LTYPE_ABSCLONE:
-				fprintf(cio, "clone");
+			case SHFS_LTYPE_AUTO:
+				fprintf(cio, "relative clone (autodetect)");
 				break;
 			default: /* SHFS_LTYPE_REDIRECT */
 				fprintf(cio, "redirect");

@@ -146,9 +146,9 @@ struct shfs_hdr_config {
 #define SHFS_EFLAG_LINK      0x4
 
 /* l_attr.type */
-#define SHFS_LTYPE_REDIRECT       0x0
-#define SHFS_LTYPE_ABSCLONE       0x1
-#define SHFS_LTYPE_RELACLONE_MPEG 0x2
+#define SHFS_LTYPE_REDIRECT  0x0
+#define SHFS_LTYPE_RAW       0x1
+#define SHFS_LTYPE_AUTO      0x2
 
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */

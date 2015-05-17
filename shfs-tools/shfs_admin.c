@@ -83,7 +83,8 @@ static void print_usage(char *argv0)
 	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
 	printf("  For each add-lnk token:\n");
-	printf("    -t, --type [TYPE]          sets the type for a linked object\n");
+	printf("    -t, --type [TYPE]          sets the TYPE for a linked object\n");
+	printf("                               TYPE can be: redirect, raw, auto\n");
 	printf("  -r, --rm-obj [HASH]          removes an object from the volume\n");
 	printf("  -c, --cat-obj [HASH]         exports an object to stdout\n");
 	printf("  -d, --set-default [HASH]     sets the object with HASH as default\n");
@@ -147,8 +148,12 @@ static inline int parse_args_set_ltype(enum ltype *out, const char *arg)
 		*out = LREDIRECT;
 		return 0;
 	}
-	if (strcasecmp("mpeg", arg) == 0) {
-		*out = LMPEG;
+	if (strcasecmp("raw", arg) == 0) {
+		*out = LRAW;
+		return 0;
+	}
+	if (strcasecmp("auto", arg) == 0) {
+		*out = LAUTO;
 		return 0;
 	}
 	return -EINVAL;
@@ -1105,7 +1110,7 @@ static int actn_addlink(struct token *j)
 		dprintf(D_L1, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
 	else
 		dprintf(D_L1, " Path: /\n");
-	dprintf(D_L1, " Type: %s\n", j->optltype == LMPEG ? "Relative clone (MPEG)" : "Redirect");
+	dprintf(D_L1, " Type: %s\n", j->optltype == LRAW ? "Relative clone (raw)" : (j->optltype == LAUTO ? "Relative clone (autodetect)" : "Redirect"));
 
 	/* calculate hash */
 	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
@@ -1163,8 +1168,11 @@ static int actn_addlink(struct token *j)
 	hentry->flags = SHFS_EFLAG_LINK;
 	hentry->l_attr.rport = u.port;
 	switch(j->optltype) {
-	case LMPEG:
-		hentry->l_attr.type = SHFS_LTYPE_RELACLONE_MPEG;
+	case LRAW:
+		hentry->l_attr.type = SHFS_LTYPE_RAW;
+		break;
+	case LAUTO:
+		hentry->l_attr.type = SHFS_LTYPE_AUTO;
 		break;
 	default:
 		hentry->l_attr.type = SHFS_LTYPE_REDIRECT;
@@ -1174,7 +1182,7 @@ static int actn_addlink(struct token *j)
 	if (u.field_set & (1 << UF_PATH) &&
 	    u.field_data[UF_PATH].len > 1) {
 		strncpy(hentry->l_attr.rpath,
-			j->path + u.field_data[1 << UF_PATH].off + 1,
+			j->path + u.field_data[UF_PATH].off + 1,
 			sizeof(hentry->l_attr.rpath));
 	} else {
 		hentry->l_attr.rpath[0] = '\0';
@@ -1447,11 +1455,11 @@ static int actn_ls(struct token *token)
 		/* ltype, mime */
 		if (SHFS_HENTRY_ISLINK(hentry)) {
 			switch (hentry->l_attr.type) {
-			case SHFS_LTYPE_RELACLONE_MPEG:
-				printf("%5s ", "rlmpg");
+			case SHFS_LTYPE_RAW:
+				printf("%5s ", "raw");
 				break;
-			case SHFS_LTYPE_ABSCLONE:
-				printf("%5s ", "abscl");
+			case SHFS_LTYPE_AUTO:
+				printf("%5s ", "auto");
 				break;
 			default: /* SHFS_LTYPE_REDIRECT */
 				printf("%5s ", "redir");

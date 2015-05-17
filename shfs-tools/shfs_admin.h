@@ -25,7 +25,8 @@ enum action {
 
 enum ltype {
 	LREDIRECT = 0,
-	LMPEG,
+	LRAW,
+	LAUTO
 };
 
 struct token {
