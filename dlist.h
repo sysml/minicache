@@ -22,6 +22,8 @@ struct dlist_head {
 	void *first;
 	void *last;
 };
+#define dlist_head(dlname) \
+	struct dlist_head (dlname)
 
 #define dlist_init_head(head)\
 	do { \

@@ -62,11 +62,16 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 		goto err_free_sesspool;
 	}
 
+	/* initialize http link system */
+	ret = http_link_init(hs);
+	if (ret < 0)
+		goto err_free_reqpool;
+
 	/* register TCP listener */
 	hs->tpcb = tcp_new();
 	if (!hs->tpcb) {
 		ret = -ENOMEM;
-		goto err_free_reqpool;
+		goto err_exit_link;
 	}
 	err = tcp_bind(hs->tpcb, IP_ADDR_ANY, HTTP_LISTEN_PORT);
 	if (err != ERR_OK) {
@@ -98,10 +103,12 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 #if defined HAVE_SHELL && defined HTTP_INFO
 	shell_register_cmd("http-info", shcmd_http_info);
 #endif
-	return ret;
+	return 0;
 
  err_free_tcp:
 	tcp_abort(hs->tpcb);
+ err_exit_link:
+	http_link_exit(hs);
  err_free_reqpool:
 	free_mempool(hs->req_pool);
  err_free_sesspool:
@@ -123,6 +130,7 @@ void exit_http(void)
 	BUG_ON(hs->nb_sess != 0);
 
 	tcp_close(hs->tpcb);
+	http_link_exit(hs);
 	free_mempool(hs->req_pool);
 	free_mempool(hs->sess_pool);
 	target_free(hs);
@@ -227,6 +235,7 @@ static inline void httpreq_close(struct http_req *hreq)
 			httpreq_fio_close(hreq);
 			break;
 		case HRT_LINKMSG:
+			httpreq_link_close(hreq);
 			break;
 		default:
 			break;
@@ -824,7 +833,11 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 		 */
 		hreq->response_hdr.nb_slines = nb_slines;
 		hreq->response_hdr.nb_dlines = nb_dlines;
-		httpreq_link_prepare_hdr(hreq);
+		if (httpreq_link_prepare_hdr(hreq) < 0) {
+			shfs_fio_close(hreq->fd);
+			hreq->fd = NULL;
+			goto err500_hdr;
+		}
 		return;
 	}
 
@@ -1412,8 +1425,9 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 #ifdef HTTP_INFO
 static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 {
-	uint32_t nb_sess, max_nb_sess;
+	uint16_t nb_sess, max_nb_sess;
 	uint32_t nb_reqs, max_nb_reqs;
+	uint16_t nb_links, max_nb_links;
 	unsigned long pver;
 	size_t fio_nb_buffers = 0;
 	size_t link_nb_buffers = 0;
@@ -1427,12 +1441,13 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 
 	/* copy values in order to print them
 	 * (writing to cio can lead to thread switching) */
-	nb_sess     = hs->nb_sess;
-	max_nb_sess = hs->max_nb_sess;
-	nb_reqs     = hs->nb_reqs;
-	max_nb_reqs = hs->max_nb_reqs;
-	pver        = http_parser_version();
-
+	nb_sess      = hs->nb_sess;
+	max_nb_sess  = hs->max_nb_sess;
+	nb_reqs      = hs->nb_reqs;
+	max_nb_reqs  = hs->max_nb_reqs;
+	nb_links     = hs->nb_links;
+	max_nb_links = hs->max_nb_links;
+	pver         = http_parser_version();
 	if (shfs_mounted) {
 		fio_nb_buffers = httpreq_fio_nb_buffers(shfs_vol.chunksize);
 		fio_bffrlen = shfs_vol.chunksize * fio_nb_buffers;
@@ -1442,12 +1457,13 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 
 	/* thread switching might happen from here on */
 	fprintf(cio, " Listen port:                           %8"PRIu16"\n", HTTP_LISTEN_PORT);
-	fprintf(cio, " Number of sessions:                   %4"PRIu16"/%4"PRIu16"\n", nb_sess, max_nb_sess);
-	fprintf(cio, " Number of requests:                   %4"PRIu32"/%4"PRIu32"\n", nb_reqs, max_nb_reqs);
+	fprintf(cio, " Number of sessions:                   %4"PRIu16"/%4"PRIu16"\n", nb_sess,  max_nb_sess);
+	fprintf(cio, " Number of requests:                   %4"PRIu32"/%4"PRIu32"\n", nb_reqs,  max_nb_reqs);
+	fprintf(cio, " Number of active uplinks:             %4"PRIu16"/%4"PRIu16"\n", nb_links, max_nb_links);
 	if (fio_nb_buffers) {
-		fprintf(cio, " File-I/O Chunkbuffer chain length:     %8"PRIu64, (uint64_t) fio_nb_buffers);
+		fprintf(cio, " File-I/O chunkbuffer chain length:     %8"PRIu64, (uint64_t) fio_nb_buffers);
 		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) fio_bffrlen / 1024);
-		fprintf(cio, " Remote link Chunkbuffer chain length:  %8"PRIu64, (uint64_t) link_nb_buffers);
+		fprintf(cio, " Remote link chunkbuffer chain length:  %8"PRIu64, (uint64_t) link_nb_buffers);
 		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) link_bffrlen / 1024);
 	}
 	fprintf(cio, " Maximum TCP send buffer:               %8"PRIu64" KiB", (uint64_t) HTTPREQ_TCP_MAXSNDBUF / 1024);

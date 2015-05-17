@@ -25,6 +25,8 @@
 
 #define HTTP_LISTEN_PORT          80
 #define HTTP_TCP_PRIO             TCP_PRIO_MAX
+#define HTTP_MAXNB_LINKS          32
+#define HTTP_LINK_TCP_PRIO        TCP_PRIO_MAX
 
 #define HTTP_POLL_INTERVAL        10 /* = x * 500ms; 10 = 5s */
 #define HTTP_KEEPALIVE_TIMEOUT     3 /* = x * HTTP_POLL_INTERVAL */
@@ -81,16 +83,20 @@ struct http_srv {
 	struct tcp_pcb *tpcb;
 	struct mempool *sess_pool;
 	struct mempool *req_pool;
+	struct mempool *link_pool;
 	struct http_parser_settings parser_settings;
 
 	uint16_t nb_sess;
 	uint16_t max_nb_sess;
 	uint32_t nb_reqs;
 	uint32_t max_nb_reqs;
+	uint16_t nb_links;
+	uint16_t max_nb_links;
 
 	struct http_sess *hsess_head;
 	struct http_sess *hsess_tail;
 
+	struct dlist_head links;
 	struct dlist_head ioretry_chain;
 };
 
@@ -145,6 +151,8 @@ struct http_sess {
 	                       * within recv because of ERR_MEM */
 	int _in_respond;      /* diables recursive httpsess_respond calls DELETEME */
 	dlist_el(ioretry_chain);
+
+	//struct http_srv *hs;
 };
 
 enum http_req_state {
@@ -184,9 +192,13 @@ struct http_req_fio_state { /* defined in http_fio.h */
 	unsigned int cce_max_nb;
 };
 
-struct http_req_link_state { /* defined in http_link.h */
+struct http_req_link_origin; /* defined in http_link.h */
+
+struct http_req_link_state {
 	struct http_req_link_origin *origin;
 	uint64_t pos;
+
+	dlist_el(clients);
 };
 
 struct http_req {
