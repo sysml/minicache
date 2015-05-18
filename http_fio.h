@@ -225,7 +225,7 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 		}
 
 		printd("Client requested range of element: %"PRIu64"-%"PRIu64"\n",
-		        hreq->rfirst, hreq->rlast);
+		        hreq->f.rfirst, hreq->f.rlast);
 	}
 
 	/* HTTP OK [first line] (code can be 216 or 200) */
@@ -233,7 +233,6 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_206(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
 	else
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	hreq->type = HRT_FIOMSG;
 
 	/* MIME (by element or default) */
 	shfs_fio_mime(hreq->fd, strsbuf, sizeof(strsbuf));

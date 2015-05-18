@@ -46,6 +46,8 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 
 		hreq->l.origin = o;
 		++o->nb_clients;
+
+		printd("origin found %p, request %p joined\n", o, hreq);
 		return 0;
 	}
 
@@ -55,9 +57,6 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 		return -ENOMEM;
 	o = (struct http_req_link_origin *) pobj->data;
 	o->pobj = pobj;
-
-	/* add cookie to file descriptor (never fails) */
-	shfs_fio_set_cookie(hreq->fd, o);
 
 	/* append origin to list of origins */
 	dlist_init_el(o, links);
@@ -72,6 +71,11 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 
 	hreq->l.origin = o;
 	o->nb_clients = 1;
+
+	/* add cookie to file descriptor (never fails) */
+	shfs_fio_set_cookie(hreq->fd, o);
+
+	printd("new origin %p with request %p created\n", o, hreq);
 	return 0;
 }
 
@@ -94,6 +98,7 @@ static inline void httpreq_link_close(struct http_req *hreq)
 
 	--o->nb_clients;
 	dlist_unlink(&hreq->l, o->clients, clients);
+	printd("request %p removed from origin %p\n", hreq, o);
 	if (o->nb_clients == 0) {
 		/* close connection to origin */
 		shfs_fio_clear_cookie(hreq->fd);
@@ -101,6 +106,7 @@ static inline void httpreq_link_close(struct http_req *hreq)
 		dlist_unlink(o, hs->links, links);
 
 		mempool_put(o->pobj);
+		printd("origin %p destroyed\n", o);
 	}
 }
 

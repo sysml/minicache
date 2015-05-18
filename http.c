@@ -770,6 +770,9 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	register unsigned int i;
 #endif
+#ifdef HTTP_DEBUG
+	unsigned l;
+#endif
 	char strsbuf[64];
 	char strlbuf[128];
 
@@ -831,6 +834,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 		 * Note: header will be built in next phase (HRS_BUILDING_HDR)
 		 * Here, upstream connection is established (if non existent)
 		 */
+		hreq->type = HRT_LINKMSG;
 		hreq->response_hdr.nb_slines = nb_slines;
 		hreq->response_hdr.nb_dlines = nb_dlines;
 		if (httpreq_link_prepare_hdr(hreq) < 0) {
@@ -845,6 +849,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	 * LOCAL FILE HEADER
 	 */
 	/* call build HDR directly on local file I/O -> skip HRS_BUILDING_HDR phase switch */
+	hreq->type = HRT_FIOMSG;
 	hreq->response_hdr.nb_slines = nb_slines;
 	hreq->response_hdr.nb_dlines = nb_dlines;
 	httpreq_fio_build_hdr(hreq);
@@ -1015,22 +1020,9 @@ static inline void httpreq_finalize_hdr(struct http_req *hreq)
 	printd(" Body length:   %lu\n", hreq->rlen + _http_sep_len);
 #endif
 #ifdef HTTP_DEBUG_PRINTACCESS
-#ifdef HTTP_URL_CUTARGS
-	if (hreq->request_hdr.argp &&
-	    &(hreq->request_hdr.url[url_offset]) != hreq->request_hdr.argp) {
-		printk("[%03u] %s%c%s\n",
-		       hreq->response_hdr.code,
-		       hreq->request_hdr.url,
-		       HTTPURL_ARGS_INDICATOR,
-		       hreq->request_hdr.argp + 1);
-	} else {
-#endif
 	printk("[%03u] %s\n",
 	       hreq->response_hdr.code,
 	       hreq->request_hdr.url);
-#ifdef HTTP_URL_CUTARGS
-	}
-#endif
 #endif
 }
 

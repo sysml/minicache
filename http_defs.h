@@ -25,7 +25,7 @@
 
 #define HTTP_LISTEN_PORT          80
 #define HTTP_TCP_PRIO             TCP_PRIO_MAX
-#define HTTP_MAXNB_LINKS          32
+#define HTTP_MAXNB_LINKS          4 /* nb of simultaneous links to an origin server */
 #define HTTP_LINK_TCP_PRIO        TCP_PRIO_MAX
 
 #define HTTP_POLL_INTERVAL        10 /* = x * 500ms; 10 = 5s */
