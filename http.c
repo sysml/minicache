@@ -835,8 +835,8 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 		 * Here, upstream connection is established (if non existent)
 		 */
 		hreq->type = HRT_LINKMSG;
-		hreq->response_hdr.nb_slines = nb_slines;
-		hreq->response_hdr.nb_dlines = nb_dlines;
+		hreq->response_hdr.nb_slines = 0;
+		hreq->response_hdr.nb_dlines = 0;
 		if (httpreq_link_prepare_hdr(hreq) < 0) {
 			shfs_fio_close(hreq->fd);
 			hreq->fd = NULL;
@@ -850,8 +850,8 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	 */
 	/* call build HDR directly on local file I/O -> skip HRS_BUILDING_HDR phase switch */
 	hreq->type = HRT_FIOMSG;
-	hreq->response_hdr.nb_slines = nb_slines;
-	hreq->response_hdr.nb_dlines = nb_dlines;
+	hreq->response_hdr.nb_slines = 0;
+	hreq->response_hdr.nb_dlines = 0;
 	httpreq_fio_build_hdr(hreq);
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	for (i = 0; i < SHFS_STATS_HTTP_DPCR; ++i)
@@ -940,8 +940,8 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 
 static inline void httpreq_build_hdr(struct http_req *hreq)
 {
-	register size_t nb_slines = hreq->response_hdr.nb_slines;
-	register size_t nb_dlines = hreq->response_hdr.nb_dlines;
+	register size_t nb_slines = 0;
+	register size_t nb_dlines = 0;
 	int ret;
 
 	/* For now, just remote links utilize this phase for connecting to 
@@ -973,6 +973,8 @@ static inline void httpreq_build_hdr(struct http_req *hreq)
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err503p;
 	hreq->rlen = _http_err503p_len;
+	hreq->response_hdr.nb_slines = nb_slines;
+	hreq->response_hdr.nb_dlines = nb_dlines;
 	hreq->state = HRS_FINALIZING_HDR;
 	return;
 }

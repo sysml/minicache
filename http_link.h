@@ -14,23 +14,35 @@
 
 enum http_req_link_origin_state {
 	HRLO_UNKNOWN = 0,
-	HRLO_CONNECT,
+	HRLO_ERROR,
 	HRLO_WAIT,
-	HRLO_CONNECTED,
+	HRLO_RESOLVE,
+	HRLO_CONNECT,
+	HRLO_REQUEST
 };
 
 struct http_req_link_origin {
-	struct mempool_obj *pobj;
+	struct tcp_pcb *tpcb;
+	ip_addr_t rip;
+	uint16_t rport;
+
 	dlist_el(links);
 	dlist_head(clients);
 	uint32_t nb_clients;
 
 	enum http_req_link_origin_state state;
 	struct shfs_cache_entry *cce[HTTPREQ_LINK_MAXNB_BUFFERS];
+
+	struct mempool_obj *pobj;
 };
 
 int http_link_init(struct http_srv *hs);
 void http_link_exit(struct http_srv *hs);
+err_t httplink_connected(void *argp, struct tcp_pcb * tpcb, err_t err);
+err_t httplink_sent   (void *argp, struct tcp_pcb *tpcb, uint16_t len);
+err_t httplink_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
+void  httplink_error  (void *argp, err_t err);
+err_t httplink_poll   (void *argp, struct tcp_pcb *tpcb);
 
 static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 {
@@ -43,7 +55,6 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 		/* append this request to client list (join) */
 		dlist_init_head(o->clients);
 		dlist_append(&hreq->l, o->clients, clients);
-
 		hreq->l.origin = o;
 		++o->nb_clients;
 
@@ -54,9 +65,20 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	/* create a new upstream link */
 	pobj = mempool_pick(hs->link_pool);
 	if (!pobj)
-		return -ENOMEM;
+		goto err_out;
 	o = (struct http_req_link_origin *) pobj->data;
 	o->pobj = pobj;
+
+	o->tpcb = tcp_new();
+	if (!o->tpcb)
+		goto err_free_o;
+	o->state = HRLO_RESOLVE;
+	tcp_arg(o->tpcb, o);
+	tcp_recv(o->tpcb, httplink_recv); /* recv callback */
+	tcp_sent(o->tpcb, httplink_sent); /* sent ack callback */
+	tcp_err (o->tpcb, httplink_error); /* err callback */
+	//tcp_poll(o->tpcb, httplink_poll, HTTP_POLL_INTERVAL); /* poll callback */
+	tcp_setprio(o->tpcb, HTTP_LINK_TCP_PRIO);
 
 	/* append origin to list of origins */
 	dlist_init_el(o, links);
@@ -65,10 +87,6 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 
 	/* append this request to client list */
 	dlist_append(&hreq->l, o->clients, clients);
-
-	/* initial state */
-	o->state = HRLO_CONNECT;
-
 	hreq->l.origin = o;
 	o->nb_clients = 1;
 
@@ -77,18 +95,68 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 
 	printd("new origin %p with request %p created\n", o, hreq);
 	return 0;
+
+ err_free_o:
+	mempool_put(pobj);
+ err_out:
+	return -ENOMEM;
 }
+
+void httpreq_link_dnscb(const char *name, ip_addr_t *ipaddr, void *argp);
 
 static inline int httpreq_link_build_hdr(struct http_req *hreq)
 {
 	//struct http_srv *hs = hreq->hsess->hs;
 	struct http_req_link_origin *o = hreq->l.origin;
+	err_t err;
+	int ret;
 
-	if (o->state != HRLO_CONNECTED)
-		return -EAGAIN; /* stay in phase */
+	/* connection procedure */
+	switch(o->state) {
+	case HRLO_RESOLVE:
+	  /* resolv remote host name */
+	  printd("Resolving origin host address...\n");
+	  o->rport = shfs_fio_link_rport(hreq->fd);
+	  ret = shfshost2ipaddr(shfs_fio_link_rhost(hreq->fd), &o->rip, httpreq_link_dnscb, hreq);
+	  if (ret < 0) {
+	    printd("Resolution of origin host address failed: %d\n", ret);
+	    goto err_out;
+	  }
+	  if (ret >= 1)
+	    goto wait_out;
+	  printd("Resolution could be done directly\n");
+	  o->state = HRLO_CONNECT;
+	  goto case_HRLO_CONNECT;
+
+	case_HRLO_CONNECT:
+	case HRLO_CONNECT:
+	  /* connect to remote */
+	  printd("Connecting to origin host...\n");
+	  err = tcp_connect(o->tpcb, &o->rip, o->rport, httplink_connected);
+	  if (err != ERR_OK)
+	    goto err_out;
+	  goto wait_out;
+
+	case HRLO_REQUEST:
+	  return -EINVAL; /* will end up in err500_hdr */
+
+	case HRLO_ERROR:
+	  goto err_out;
+
+	default: /* HRLO_WAIT */
+	  return -EAGAIN; /* stay in phase */
+	}
 
 	/* build response */
 	return 0; /* next phase */
+
+ wait_out:
+	o->state = HRLO_WAIT;
+	return -EAGAIN;
+
+ err_out:
+	o->state = HRLO_WAIT;
+	return -1;
 }
 
 static inline void httpreq_link_close(struct http_req *hreq)
