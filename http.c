@@ -63,7 +63,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
 	}
 
 	/* initialize http link system */
-	ret = http_link_init(hs);
+	ret = httplink_init(hs);
 	if (ret < 0)
 		goto err_free_reqpool;
 
@@ -108,7 +108,7 @@ int init_http(uint16_t nb_sess, uint32_t nb_reqs)
  err_free_tcp:
 	tcp_abort(hs->tpcb);
  err_exit_link:
-	http_link_exit(hs);
+	httplink_exit(hs);
  err_free_reqpool:
 	free_mempool(hs->req_pool);
  err_free_sesspool:
@@ -130,7 +130,7 @@ void exit_http(void)
 	BUG_ON(hs->nb_sess != 0);
 
 	tcp_close(hs->tpcb);
-	http_link_exit(hs);
+	httplink_exit(hs);
 	free_mempool(hs->req_pool);
 	free_mempool(hs->sess_pool);
 	target_free(hs);

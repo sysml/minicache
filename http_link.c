@@ -1,6 +1,6 @@
 #include "http_link.h"
 
-int http_link_init(struct http_srv *hs)
+int httplink_init(struct http_srv *hs)
 {
   hs->link_pool = alloc_simple_mempool(HTTP_MAXNB_LINKS, sizeof(struct http_req_link_origin));
   if (!hs->link_pool)
@@ -13,7 +13,7 @@ int http_link_init(struct http_srv *hs)
   return 0;
 }
 
-void http_link_exit(struct http_srv *hs)
+void httplink_exit(struct http_srv *hs)
 {
   BUG_ON(hs->nb_links != 0);
 
@@ -71,5 +71,14 @@ err_t httplink_poll(void *argp, struct tcp_pcb *tpcb)
 {
   struct http_req_link_origin *o = (struct http_req_link_origin *) argp;
 
+  printd("Polling origin connection %p\n", o);
+  if (o->state == HRLO_WAIT_CONNECT || o->state == HRLO_WAIT_REPLY) {
+    --o->timeout;
+    if (o->timeout == 0) {
+      printd("Timeout expired\n", o);
+      o->state = HRLO_ERROR;
+      httplink_update_clients(o); /* notify clients */
+    }
+  }
   return ERR_OK;
 }

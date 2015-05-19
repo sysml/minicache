@@ -15,16 +15,20 @@
 enum http_req_link_origin_state {
 	HRLO_UNKNOWN = 0,
 	HRLO_ERROR,
-	HRLO_WAIT,
 	HRLO_RESOLVE,
+	HRLO_WAIT_RESOLVE,
 	HRLO_CONNECT,
-	HRLO_REQUEST
+	HRLO_WAIT_CONNECT,
+	HRLO_REQUEST,
+	HRLO_WAIT_REPLY,
+	HRLO_STREAMING
 };
 
 struct http_req_link_origin {
 	struct tcp_pcb *tpcb;
 	ip_addr_t rip;
 	uint16_t rport;
+	uint16_t timeout;
 
 	dlist_el(links);
 	dlist_head(clients);
@@ -36,13 +40,28 @@ struct http_req_link_origin {
 	struct mempool_obj *pobj;
 };
 
-int http_link_init(struct http_srv *hs);
-void http_link_exit(struct http_srv *hs);
+int   httplink_init   (struct http_srv *hs);
+void  httplink_exit   (struct http_srv *hs);
+//void  httplink_close  (struct http_req_link_origin *o);
 err_t httplink_connected(void *argp, struct tcp_pcb * tpcb, err_t err);
 err_t httplink_sent   (void *argp, struct tcp_pcb *tpcb, uint16_t len);
 err_t httplink_recv   (void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 void  httplink_error  (void *argp, err_t err);
 err_t httplink_poll   (void *argp, struct tcp_pcb *tpcb);
+
+static inline void httplink_update_clients(struct http_req_link_origin *o)
+{
+  struct http_req *hreq;
+  struct http_req *hreq_next;
+
+  hreq = dlist_first_el(o->clients, typeof(*hreq));
+  while(hreq) {
+    hreq_next = dlist_next_el(hreq, l.clients);
+    printd("Notifying client %p (hsess %p)\n", hreq, hreq->hsess);
+    httpsess_respond(hreq->hsess);
+    hreq = hreq_next;
+  }
+}
 
 static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 {
@@ -53,8 +72,7 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	o = shfs_fio_get_cookie(hreq->fd);
 	if (o) {
 		/* append this request to client list (join) */
-		dlist_init_head(o->clients);
-		dlist_append(&hreq->l, o->clients, clients);
+		dlist_append(hreq, o->clients, l.clients);
 		hreq->l.origin = o;
 		++o->nb_clients;
 
@@ -77,7 +95,7 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	tcp_recv(o->tpcb, httplink_recv); /* recv callback */
 	tcp_sent(o->tpcb, httplink_sent); /* sent ack callback */
 	tcp_err (o->tpcb, httplink_error); /* err callback */
-	//tcp_poll(o->tpcb, httplink_poll, HTTP_POLL_INTERVAL); /* poll callback */
+	tcp_poll(o->tpcb, httplink_poll, HTTP_POLL_INTERVAL); /* poll callback */
 	tcp_setprio(o->tpcb, HTTP_LINK_TCP_PRIO);
 
 	/* append origin to list of origins */
@@ -86,7 +104,8 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	++hs->nb_links;
 
 	/* append this request to client list */
-	dlist_append(&hreq->l, o->clients, clients);
+	dlist_init_head(o->clients);
+	dlist_append(hreq, o->clients, l.clients);
 	hreq->l.origin = o;
 	o->nb_clients = 1;
 
@@ -122,8 +141,10 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 	    printd("Resolution of origin host address failed: %d\n", ret);
 	    goto err_out;
 	  }
-	  if (ret >= 1)
-	    goto wait_out;
+	  if (ret >= 1) {
+	    o->state = HRLO_WAIT_RESOLVE;
+	    return -EAGAIN;
+	  }
 	  printd("Resolution could be done directly\n");
 	  o->state = HRLO_CONNECT;
 	  goto case_HRLO_CONNECT;
@@ -132,30 +153,29 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 	case HRLO_CONNECT:
 	  /* connect to remote */
 	  printd("Connecting to origin host...\n");
+	  o->timeout = HTTP_LINK_CONNECT_TIMEOUT;
 	  err = tcp_connect(o->tpcb, &o->rip, o->rport, httplink_connected);
 	  if (err != ERR_OK)
 	    goto err_out;
-	  goto wait_out;
+	  o->state = HRLO_WAIT_CONNECT;
+	  return -EAGAIN;
 
 	case HRLO_REQUEST:
-	  return -EINVAL; /* will end up in err500_hdr */
+	  o->timeout = HTTP_LINK_REPLY_TIMEOUT;
+	  goto err_out; /* for now */
 
 	case HRLO_ERROR:
 	  goto err_out;
-
-	default: /* HRLO_WAIT */
+	default: /* HRLO_WAIT_RESOLVE, HRLO_WAIT_CONNECTED */
 	  return -EAGAIN; /* stay in phase */
 	}
 
 	/* build response */
 	return 0; /* next phase */
 
- wait_out:
-	o->state = HRLO_WAIT;
-	return -EAGAIN;
-
- err_out:
-	o->state = HRLO_WAIT;
+ err_out: /* will end up in err500_hdr */
+	printd("Error exit\n");
+	o->state = HRLO_ERROR;
 	return -1;
 }
 
@@ -172,6 +192,9 @@ static inline void httpreq_link_close(struct http_req *hreq)
 		shfs_fio_clear_cookie(hreq->fd);
 		--hs->nb_links;
 		dlist_unlink(o, hs->links, links);
+
+		if (o->tpcb)
+		  tcp_abort(o->tpcb);
 
 		mempool_put(o->pobj);
 		printd("origin %p destroyed\n", o);
