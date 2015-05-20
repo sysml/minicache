@@ -232,9 +232,11 @@ static inline void httpreq_close(struct http_req *hreq)
 	if (hreq->fd) {
 		switch (hreq->type) {
 		case HRT_FIOMSG:
+			printd("Release request %p from file I/O\n", hreq);
 			httpreq_fio_close(hreq);
 			break;
 		case HRT_LINKMSG:
+			printd("Release request %p from link\n", hreq);
 			httpreq_link_close(hreq);
 			break;
 		default:
@@ -954,8 +956,11 @@ static inline void httpreq_build_hdr(struct http_req *hreq)
 	ret = httpreq_link_build_hdr(hreq);
 	if (ret == -EAGAIN)
 		return; /* stay in current phase because we are not done yet */
-	if (ret < 0)
+	if (ret < 0) {
+		httpreq_link_close(hreq);
+		shfs_fio_close(hreq->fd);
 		goto err503_hdr; /* an unknown error happend -> send out a 503 error page instead */
+	}
 
 	/* we are done -> switch to next phase */
 	hreq->state = HRS_FINALIZING_HDR;

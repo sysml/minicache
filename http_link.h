@@ -174,7 +174,7 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 	return 0; /* next phase */
 
  err_out: /* will end up in err500_hdr */
-	printd("Error exit\n");
+	printd("Error happened on origin %p, exiting request %p\n", o, hreq);
 	o->state = HRLO_ERROR;
 	return -1;
 }
