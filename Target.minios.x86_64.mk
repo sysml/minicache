@@ -34,6 +34,8 @@ CFLAGS				+= -Wunused \
 ######################################
 ## vif
 CONFIG_NETFRONT			?= y
+CONFIG_NETFRONT_PERSISTENT_GRANTS ?= y
+CONFIG_NETFRONT_GSO		?= y
 CONFIG_NETFRONT_POLL		 = n
 CONFIG_NETFRONT_POLLTIMEOUT	 = 1
 CONFIG_NETMAP			?= n
@@ -66,7 +68,14 @@ CFLAGS				+= -DCONFIG_LWIP_NUM_TCPCON=1024
 debug				?= n
 CONFIG_DEBUG_LWIP		?= n
 CONFIG_DEBUG_LWIP_MALLOC	?= n
-#CFLAGS	       			+= -DLWIP_STATS_DISPLAY=1
+
+# Enables TCP window scaling
+#CFLAGS				+= -DLWIP_WND_SCALE=1
+
+# Enables LWIP stats in the shell
+CFLAGS	       			+= -DLWIP_STATS_DISPLAY=1
+
+# LWIP debug
 #CFLAGS				+= -DLWIP_IF_DEBUG
 #CFLAGS				+= -DLWIP_TCP_DEBUG
 
