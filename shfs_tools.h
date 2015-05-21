@@ -40,7 +40,11 @@ size_t strshfshost(char *s, size_t slen, struct shfs_host *h);
 #include <lwip/ip_addr.h>
 #include <lwip/dns.h>
 
+#if LWIP_DNS
 static inline int shfshost2ipaddr(const struct shfs_host *h, ip_addr_t *out, dns_found_callback dns_cb, void *dns_cb_argp)
+#else
+static inline int shfshost2ipaddr(const struct shfs_host *h, ip_addr_t *out)
+#endif
 {
 	err_t err;
 	char hname[sizeof(h->name) + 1];
@@ -57,7 +61,7 @@ static inline int shfshost2ipaddr(const struct shfs_host *h, ip_addr_t *out, dns
 		        h->addr[4], h->addr[5], h->addr[6],  h->addr[7]);
 	  return 0;
 #endif
-
+#if LWIP_DNS
 	case SHFS_HOST_TYPE_NAME:
 	  /* FIXME: remove this workaround for null-terminating hostname in SHFS field */
 	  strncpy(hname, h->name, sizeof(h->name));
@@ -68,6 +72,7 @@ static inline int shfshost2ipaddr(const struct shfs_host *h, ip_addr_t *out, dns
 	  if (err == ERR_INPROGRESS)
 	    return 1; /* query sent, callback will be called on answer */
 	  return -EINVAL; /* general error */
+#endif
 	default:
 	  return -ENOTSUP;
 	}

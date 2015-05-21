@@ -145,8 +145,10 @@ struct mcargs {
     struct ip_addr  ip;
     struct ip_addr  mask;
     struct ip_addr  gw;
+#if LWIP_DNS
     struct ip_addr  dns0;
     struct ip_addr  dns1;
+#endif
     unsigned int    nb_http_sess;
 
     int             bd_detect;
@@ -276,8 +278,10 @@ static int parse_args(int argc, char *argv[])
     IP4_ADDR(&args.ip,   192, 168, 128, 124);
     IP4_ADDR(&args.mask, 255, 255, 255, 252);
     IP4_ADDR(&args.gw,     0,   0,   0,   0);
+#if LWIP_DNS
     IP4_ADDR(&args.dns0,   0,   0,   0,   0);
     IP4_ADDR(&args.dns1,   0,   0,   0,   0);
+#endif
     args.nb_bds = 0;
     args.stats_bd = 0; /* disable stats bd */
 #ifdef CAN_DETECT_BLKDEVS
@@ -294,7 +298,10 @@ static int parse_args(int argc, char *argv[])
 #endif
     args.nb_sarp_entries = 0;
     while ((opt = getopt(argc, argv,
-                         "s:i:g:d:b:hc:a:"
+                         "s:i:g:b:hc:a:"
+#if LWIP_DNS
+                         "d:e:"
+#endif
 #ifdef SHFS_STATS
                          "x:"
 #endif
@@ -323,6 +330,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
               }
               break;
+#if LWIP_DNS
          case 'd': /* dns0 */
 	      ret = parse_args_setval_ipv4(&args.dns0, optarg);
 	      if (ret < 0) {
@@ -337,6 +345,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
               }
               break;
+#endif
          case 'a': /* static arp entry */
 	      if (args.nb_sarp_entries == (MAX_NB_STATIC_ARP_ENTRIES - 1)) {
 		   printk("At most %d static ARP entries can be specified\n",

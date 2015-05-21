@@ -20,6 +20,7 @@ void httplink_exit(struct http_srv *hs)
   free_mempool(hs->link_pool);
 }
 
+#if LWIP_DNS
 void httpreq_link_dnscb(const char *name, ip_addr_t *ipaddr, void *argp)
 {
   struct http_req *hreq = (struct http_req *) argp;
@@ -36,6 +37,7 @@ void httpreq_link_dnscb(const char *name, ip_addr_t *ipaddr, void *argp)
 
   httpsess_respond(hreq->hsess);
 }
+#endif
 
 err_t httplink_connected(void *argp, struct tcp_pcb * tpcb, err_t err)
 {

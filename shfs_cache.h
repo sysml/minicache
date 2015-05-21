@@ -10,23 +10,29 @@
 
 #define SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY 2 /* defines in the end roughly the average maximum number of comparisons
 						       * per table entry (Note: the real lenght might be higher) */
-#define SHFS_CACHE_POOL_NB_BUFFERS 64 /* defines minimum cache size,
-                                       * if 0, CACHE_GROW has to be enabled */
+
 #ifndef SHFS_CACHE_READAHEAD
 #define SHFS_CACHE_READAHEAD 2 /* how many chunks shall be read ahead (0 = disabled) */
 #endif
+
+#ifdef __MINIOS__
+#define SHFS_CACHE_POOL_NB_BUFFERS 64 /* defines minimum cache size,
+                                       * if 0, CACHE_GROW has to be enabled */
 
 #define SHFS_CACHE_GROW /* uncomment this line to allow the cache to grow in size by
                          * allocating more buffers on demand (via malloc()). When
 			 * SHFS_GROW_THRESHOLD is defined, left system memory 
 			 * is checked before the allocation */
 
-#ifdef __MINIOS__
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define SHFS_CACHE_GROW_THRESHOLD (256 * 1024) /* 256KB */
 #else
 #define SHFS_CACHE_GROW_THRESHOLD (1 * 1024 * 1024) /* 1MB */
 #endif
+
+#else
+#define SHFS_CACHE_POOL_NB_BUFFERS 2048 /* defines minimum cache size,
+					 * if 0, CACHE_GROW has to be enabled */
 #endif /* __MINIOS__ */
 
 struct shfs_cache_entry {

@@ -121,7 +121,9 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	return -ENOMEM;
 }
 
+#if LWIP_DNS
 void httpreq_link_dnscb(const char *name, ip_addr_t *ipaddr, void *argp);
+#endif
 
 static inline int httpreq_link_build_hdr(struct http_req *hreq)
 {
@@ -136,14 +138,18 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 	  /* resolv remote host name */
 	  printd("Resolving origin host address...\n");
 	  o->rport = shfs_fio_link_rport(hreq->fd);
+#if LWIP_DNS
 	  ret = shfshost2ipaddr(shfs_fio_link_rhost(hreq->fd), &o->rip, httpreq_link_dnscb, hreq);
-	  if (ret < 0) {
-	    printd("Resolution of origin host address failed: %d\n", ret);
-	    goto err_out;
-	  }
 	  if (ret >= 1) {
 	    o->state = HRLO_WAIT_RESOLVE;
 	    return -EAGAIN;
+	  }
+#else
+	  ret = shfshost2ipaddr(shfs_fio_link_rhost(hreq->fd), &o->rip);
+#endif
+	  if (ret < 0) {
+	    printd("Resolution of origin host address failed: %d\n", ret);
+	    goto err_out;
 	  }
 	  printd("Resolution could be done directly\n");
 	  o->state = HRLO_CONNECT;
