@@ -261,7 +261,7 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
 #ifdef HAVE_LWIP
     shell_register_cmd("ifconfig",shcmd_ifconfig);
 #if LWIP_STATS_DISPLAY
-    shell_register_cmd("lwip-stats",shcmd_shcmd_lwipstats);
+    shell_register_cmd("lwip-stats",shcmd_lwipstats);
 #endif
 #endif
 #ifdef SHELL_DEBUG
