@@ -103,6 +103,39 @@ static inline int hash_is_zero(const hash512_t h, uint8_t hlen)
 #endif
 }
 
+static inline int hash_is_max(const hash512_t h, uint8_t hlen)
+{
+#ifdef __x86_64
+	register uint8_t nbleft = hlen & 0x07; /* = mod by 8 */
+	register uint64_t mask64;
+	register uint64_t *p64;
+	register uint8_t i;
+
+	hlen -= nbleft;
+	i = 0;
+	for (; i < hlen; i += 8) {
+		p64 = (uint64_t *) &h[i];
+		if (*p64 != UINT64_MAX)
+			return 0;
+	}
+	if (nbleft) {
+		mask64 = ((uint64_t) 1 << (nbleft << 3)) - 1;
+		p64 = (uint64_t *) &h[i];
+		if ((*p64 & mask64) != mask64)
+			return 0;
+	}
+
+	return 1;
+#else
+	uint8_t i;
+
+	for (i = 0; i < hlen; ++i)
+		if (h[i] != 0xFF)
+			return 0;
+	return 1;
+#endif
+}
+
 static inline void hash_clear(hash512_t h, uint8_t hlen)
 {
 #ifdef __x86_64

@@ -3,6 +3,7 @@
 
 #include <target/sys.h>
 #include <lwip/tcp.h>
+#include <lwip/dns.h>
 
 #include "http_parser.h"
 #include "http_data.h"
@@ -173,6 +174,9 @@ enum http_req_state {
 enum http_req_type {
 	HRT_UNDEF = 0,
 	HRT_SMSG,      /* static message body */
+#ifdef HTTP_TESTFILE
+	HRT_SMSG_INF,  /* static message body, but infinite */
+#endif
 	HRT_FIOMSG,    /* dynamic message body (file from shfs) */
 	HRT_LINKMSG,   /* dynamic message body (uplink described by shfs) */
 	HRT_NOMSG,     /* just response header, no body */
@@ -246,6 +250,7 @@ struct http_req {
 
 	uint64_t rlen; /* (requested) number of bytes of message body */
 	uint64_t alen; /* (acknowledged) number of bytes (of rlen) */
+	int is_stream; /* is true when final data length is unknown while sending */
 
 	/* Static buffer I/O */
 	const char *smsg;
@@ -321,9 +326,9 @@ static inline int http_reqhdr_findfield(struct http_req *hreq, const char *field
 		} \
 	} while(0)
 
-#endif
-
 #define httpsess_flush(hsess) tcp_output((hsess)->tpcb)
 
 err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *len, uint8_t apiflags);
 err_t httpsess_respond(struct http_sess *hsess);
+
+#endif /* _HTTP_DEFS_H_ */

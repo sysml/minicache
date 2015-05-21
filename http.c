@@ -212,6 +212,7 @@ static inline struct http_req *httpreq_open(struct http_sess *hsess)
 	hreq->fd = NULL;
 	hreq->rlen = 0;
 	hreq->alen = 0;
+	hreq->is_stream = 0;
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
 	hreq->stats.dpc_i = 0;
 #endif
@@ -813,9 +814,12 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 
 #ifdef HTTP_TESTFILE
 	if ((hreq->request_hdr.url[url_offset] == HTTPURL_ARGS_INDICATOR) &&
-	    (hash_parse(&hreq->request_hdr.url[url_offset + 1], h, shfs_vol.hlen) == 0) &&
-	    hash_is_zero(h, shfs_vol.hlen))
-		goto testfile_hdr;
+	    (hash_parse(&hreq->request_hdr.url[url_offset + 1], h, shfs_vol.hlen) == 0)) {
+		if (hash_is_zero(h, shfs_vol.hlen))
+			goto testfile_hdr0; /* fixed-size testfile */
+		if (hash_is_max(h, shfs_vol.hlen))
+			goto testfile_hdr1; /* infinite testfile */
+	}
 #endif
 	hreq->fd = shfs_fio_open(&hreq->request_hdr.url[url_offset]);
 	if (!hreq->fd) {
@@ -881,15 +885,27 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	 * TESTFILE HEADER
 	 */
 #ifdef HTTP_TESTFILE
- testfile_hdr:
+ testfile_hdr0: /* testfile with fixed length */
 	hreq->response_hdr.code = 200;
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
+
 	/* Content length */
 	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], _http_testfile_len);
+	hreq->rlen = _http_testfile_len;
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_testfile;
-	hreq->rlen = _http_testfile_len;
+	goto err_out;
+
+ testfile_hdr1: /* infinite testfile */
+	hreq->response_hdr.code = 200;
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_PLAIN);
+
+	hreq->rlen = sizeof(_http_testfile) - 1;
+	hreq->type = HRT_SMSG_INF;
+	hreq->smsg = _http_testfile;
+	hreq->is_stream = 1;
 	goto err_out;
 #endif
 
@@ -1115,7 +1131,7 @@ static inline err_t httpreq_write_hdr(struct http_req *hreq, size_t *sent)
 static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
                                         const char *sbuf, size_t sbuf_len)
 {
-	register size_t apos = *sent;     /* absolute offset in hdr */
+	register size_t apos = *sent;   /* absolute offset in hdr */
 	register const void *ptr;
 	register size_t left;             /* left bytes of sbuffer */
 	register uint16_t avail;
@@ -1131,6 +1147,34 @@ static inline err_t httpsess_write_sbuf(struct http_sess *hsess, size_t *sent,
 	err = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
 
 	*sent += slen;
+	return err;
+}
+
+static inline err_t httpsess_write_sbuf_inf(struct http_sess *hsess, size_t *sent,
+					    const char *sbuf, size_t sbuf_len)
+{
+	register size_t apos;
+	register const void *ptr;
+	register size_t left;             /* left bytes of testfile buffer */
+	register uint16_t avail;
+	uint16_t slen;
+	err_t err;
+
+	do {
+		avail = tcp_sndbuf(hsess->tpcb);
+		if (unlikely(avail == 0))
+			return ERR_OK; /* we need to wait for space on tcp sndbuf */
+
+		apos = (*sent) % sbuf_len;
+		left = (sbuf_len - apos);
+		slen = min3(left, UINT16_MAX, avail);
+
+		ptr = sbuf + apos;
+		err = httpsess_write(hsess, ptr, &slen, TCP_WRITE_FLAG_MORE);
+		*sent += slen;
+	} while(err == ERR_OK && (avail - slen));
+	printd("sent %"PRIu64"\n", *sent);
+
 	return err;
 }
 
@@ -1267,6 +1311,15 @@ err_t httpsess_respond(struct http_sess *hsess)
 				goto case_HRS_RESPONDING_EOM; /* we are done */
 			break;
 
+#ifdef HTTP_TESTFILE
+		case HRT_SMSG_INF:
+			err = httpsess_write_sbuf_inf(hsess, &hsess->sent, hreq->smsg, hreq->rlen);
+			if (unlikely(err))
+				goto err_close;
+			/* we will never be done ;-) */
+			break;
+#endif
+
 		case HRT_FIOMSG:
 			/* send out data from file */
 			err = httpreq_write_fio(hreq, &hsess->sent);
@@ -1339,6 +1392,15 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 			hreq->response_hdr.acked_len += hdr_infly;
 			acked -= hdr_infly;
 		}
+	}
+
+	if (hreq->is_stream) {
+		hreq->alen += acked;
+		//if (acked && hreq->type == HRT_LINKMSG)
+		//	httpreq_ack_link(hreq, acked);
+		*len = 0;
+		*isdone = 0;
+		return;
 	}
 
 	msg_infly = hreq->rlen - hreq->alen;
