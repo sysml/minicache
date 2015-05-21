@@ -43,4 +43,19 @@ typedef struct semaphore sem_t;
 #define target_exit() \
 	do {} while(0)
 
+/*
+#ifdef CONFIG_ARM
+#define target_now_ns() ({ \
+	uint64_t r;						\
+	struct timeval now;					\
+	gettimeofday(&now, NULL);				\
+	r = now.tv_usec * 1000 + now.tv_sec * 1000000000l;	\
+	r; })
+#else
+*/
+#define target_now_ns() (NOW())
+/*
+#endif
+*/
+
 #endif /* _SYS_H_ */

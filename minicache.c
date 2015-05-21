@@ -69,29 +69,14 @@
 
 /* boot time tracing helper */
 #ifdef TRACE_BOOTTIME
-#ifndef __MINIOS__
-#define TT_DECLARE(var) struct timeval (var) = { 0 }
-#define TT_START(var) gettimeofday(&(var), NULL)
-#define TT_END(var) \
-  do {						\
-    struct timeval now;			\
-						\
-    gettimeofday(&now, NULL);			\
-    TV_SUB(&(var), &now, &(var));		\
-  } while(0)
-#define TT_PRINT(desc, var)			\
-  printk(" %-32s: %ld.%06lds\n",		\
-    (desc), (var).tv_sec, (var).tv_usec);
-#else /*__MINIOS__ */
 #define TT_DECLARE(var) uint64_t (var) = 0
-#define TT_START(var) do { (var) = NOW(); } while(0)
-#define TT_END(var) do { (var) = (NOW() - (var)); } while(0)
+#define TT_START(var) do { (var) = target_now_ns(); } while(0)
+#define TT_END(var) do { (var) = (target_now_ns() - (var)); } while(0)
 #define TT_PRINT(desc, var)			\
   printk(" %-32s: %"PRIu64".%06"PRIu64"s\n",		\
 	 (desc),				\
 	 (var) / 1000000000l,			\
 	 ((var) / 1000l) % 1000000l);
-#endif /*__MINIOS__ */
 #else /* TRACE_BOOTTIME */
 #define TT_DECLARE(var) while(0) {}
 #define TT_START(var) while(0) {}
@@ -866,7 +851,7 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
-        ts_now  = NSEC_TO_MSEC(NOW());
+        ts_now  = NSEC_TO_MSEC(target_now_ns());
 	ts_till = UINT64_MAX;
 #endif
 #ifdef CONFIG_LWIP_NOTHREADS

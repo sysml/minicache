@@ -72,7 +72,7 @@ void app_shutdown(unsigned reason);
 #define down(s) (sem_wait((s)) == 0 ? 1 : 0)
 #define trydown(s) (sem_trywait((s)) == 0 ? 1 : 0)
 
-#define NOW() ({ \
+#define target_now() ({ \
 	uint64_t r;						\
 	struct timeval now;					\
 	gettimeofday(&now, NULL);				\
