@@ -1011,10 +1011,10 @@ static inline void httpreq_finalize_hdr(struct http_req *hreq)
 	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_ACC_BYTERANGE);
 
 	/* keepalive */
-	if (hreq->request_hdr.keepalive) {
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_CONN_KEEPALIVE);
-	} else {
+	if (!hreq->request_hdr.keepalive || hreq->is_stream) {
 		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_CONN_CLOSE);
+	} else {
+		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_CONN_KEEPALIVE);
 	}
 
 	/* Calculate final header length */
