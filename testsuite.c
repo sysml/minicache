@@ -16,7 +16,7 @@
 #include <target/ctldir.h>
 #endif
 
-static inline int parse_ipv4(struct ip_addr *out, const char *buf)
+static inline int parse_ipv4(ip4_addr_t *out, const char *buf)
 {
 	int ip0, ip1, ip2, ip3;
 
@@ -53,7 +53,7 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 	struct timeval tm_end;
 	uint64_t usecs, pps, bps;
 
-	struct ip_addr remote_ip;
+	ip4_addr_t remote_ip;
 	u16_t remote_port = 10692;
 
 	unsigned int schedbatch;

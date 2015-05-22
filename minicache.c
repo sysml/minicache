@@ -142,12 +142,12 @@ static inline void minder_print(void)
 struct mcargs {
     int             dhclient;
     struct eth_addr mac;
-    struct ip_addr  ip;
-    struct ip_addr  mask;
-    struct ip_addr  gw;
+    ip4_addr_t      ip;
+    ip4_addr_t      mask;
+    ip4_addr_t      gw;
 #if LWIP_DNS
-    struct ip_addr  dns0;
-    struct ip_addr  dns1;
+    ip4_addr_t      dns0;
+    ip4_addr_t      dns1;
 #endif
     unsigned int    nb_http_sess;
 
@@ -163,7 +163,7 @@ struct mcargs {
 
     /* static arp entries can only be added if DHCP is disabled */
     struct {
-	    struct ip_addr  ip;
+	    ip4_addr_t ip;
 	    struct eth_addr mac;
     } sarp_entry[MAX_NB_STATIC_ARP_ENTRIES];
     unsigned int    nb_sarp_entries;
@@ -193,7 +193,7 @@ static int parse_args_setval_cut(char delimiter, char **out_presnip, char **out_
 	return -1; /* delimiter not found */
 }
 
-static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
+static int parse_args_setval_ipv4cidr(ip4_addr_t *out_ip, ip4_addr_t *out_mask, const char *buf)
 {
 	int ip0, ip1, ip2, ip3;
 	int rprefix;
@@ -223,7 +223,7 @@ static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *ou
 	return 0;
 }
 
-static int parse_args_setval_ipv4(struct ip_addr *out, const char *buf)
+static int parse_args_setval_ipv4(ip4_addr_t *out, const char *buf)
 {
 	int ip0, ip1, ip2, ip3;
 
