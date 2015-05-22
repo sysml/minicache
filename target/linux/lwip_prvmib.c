@@ -176,7 +176,7 @@ static struct mib_external_node sensorentry = {
 
 /* sensortable .1.3.6.1.4.1.26381.1.1 */
 static const s32_t sensortable_ids[1] = { 1 };
-static struct mib_node* const sensortable_nodes[1] = {
+static const struct mib_node* const sensortable_nodes[1] = {
  (struct mib_node* const)&sensorentry
 };
 static const struct mib_array_node sensortable = {
@@ -192,7 +192,7 @@ static const struct mib_array_node sensortable = {
 
 /* example .1.3.6.1.4.1.26381.1 */
 static const s32_t example_ids[1] = { 1 };
-static struct mib_node* const example_nodes[1] = {
+static const struct mib_node* const example_nodes[1] = {
   (struct mib_node* const)&sensortable
 };
 static const struct mib_array_node example = {
@@ -208,7 +208,7 @@ static const struct mib_array_node example = {
 
 /* lwip .1.3.6.1.4.1.26381 */
 static const s32_t lwip_ids[1] = { 1 };
-static struct mib_node* const lwip_nodes[1] = { (struct mib_node* const)&example };
+static const struct mib_node* const lwip_nodes[1] = { (struct mib_node* const)&example };
 static const struct mib_array_node lwip = {
   &noleafs_get_object_def,
   &noleafs_get_value,
@@ -222,7 +222,7 @@ static const struct mib_array_node lwip = {
 
 /* enterprises .1.3.6.1.4.1 */
 static const s32_t enterprises_ids[1] = { 26381 };
-static struct mib_node* const enterprises_nodes[1] = { (struct mib_node* const)&lwip };
+static const struct mib_node* const enterprises_nodes[1] = { (struct mib_node* const)&lwip };
 static const struct mib_array_node enterprises = {
   &noleafs_get_object_def,
   &noleafs_get_value,
@@ -236,7 +236,7 @@ static const struct mib_array_node enterprises = {
 
 /* private .1.3.6.1.4 */
 static const s32_t private_ids[1] = { 1 };
-static struct mib_node* const private_nodes[1] = { (struct mib_node* const)&enterprises };
+static const struct mib_node* const private_nodes[1] = { (struct mib_node* const)&enterprises };
 const struct mib_array_node mib_private = {
   &noleafs_get_object_def,
   &noleafs_get_value,
