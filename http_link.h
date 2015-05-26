@@ -37,6 +37,16 @@ struct http_req_link_origin {
 	enum http_req_link_origin_state state;
 	struct shfs_cache_entry *cce[HTTPREQ_LINK_MAXNB_BUFFERS];
 
+	struct http_parser parser;
+
+	struct {
+		struct http_send_hdr hdr;
+	} request;
+
+	struct {
+		struct http_recv_hdr hdr;
+	} response;
+
 	struct mempool_obj *pobj;
 };
 

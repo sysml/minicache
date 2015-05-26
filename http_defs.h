@@ -7,6 +7,7 @@
 
 #include "http_parser.h"
 #include "http_data.h"
+#include "http_hdr.h"
 
 #include "mempool.h"
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP
@@ -38,10 +39,6 @@
 #define HTTP_LINK_REPLY_TIMEOUT   10 /* = x sec */
 
 #define HTTPHDR_URL_MAXLEN        99 /* MAX: '/' + '?' + 512 bits hash + '\0' */
-#define HTTPHDR_BUFFER_MAXLEN    128
-#define HTTPHDR_REQ_MAXNB_LINES   12
-#define HTTPHDR_RESP_MAXNB_SLINES  8
-#define HTTPHDR_RESP_MAXNB_DLINES  4
 #define HTTPURL_ARGS_INDICATOR   '?'
 
 #define HTTPREQ_TCP_MAXSNDBUF     ((size_t) TCP_SND_BUF)
@@ -88,7 +85,6 @@ struct http_srv {
 	struct mempool *sess_pool;
 	struct mempool *req_pool;
 	struct mempool *link_pool;
-	struct http_parser_settings parser_settings;
 
 	uint16_t nb_sess;
 	uint16_t max_nb_sess;
@@ -105,21 +101,6 @@ struct http_srv {
 };
 
 extern struct http_srv *hs;
-
-struct _hdr_dbuffer {
-	char b[HTTPHDR_BUFFER_MAXLEN];
-	size_t len;
-};
-
-struct _hdr_sbuffer {
-	const char *b;
-	size_t len;
-};
-
-struct _hdr_line {
-	struct _hdr_dbuffer field;
-	struct _hdr_dbuffer value;
-};
 
 enum http_sess_state {
 	HSS_UNDEF = 0,
@@ -139,7 +120,6 @@ struct http_sess {
 	size_t sent;
 
 	struct http_parser parser;
-	struct http_parser_settings *parser_settings;
 
 	int keepalive;
 	int keepalive_timer; /* -1 timeout disabled, 0 timeout expired */
@@ -223,30 +203,19 @@ struct http_req {
 		int keepalive;
 		char url[HTTPHDR_URL_MAXLEN];
 		size_t url_len;
-		char *argp;
 		int url_overflow;
-		struct _hdr_line line[HTTPHDR_REQ_MAXNB_LINES];
-		uint32_t nb_lines;
-		int last_was_value;
-		int lines_overflow; /* more lines in request header than memory available */
-	} request_hdr;
+		char *url_argp; /* ptr to argument in url */
+		struct http_recv_hdr hdr;
+	} request;
 
 	struct {
-		unsigned int code;
-		struct _hdr_sbuffer sline[HTTPHDR_RESP_MAXNB_SLINES];
-		struct _hdr_dbuffer dline[HTTPHDR_RESP_MAXNB_DLINES];
-		uint32_t nb_slines;
-		size_t slines_tlen;
-		uint32_t nb_dlines;
-		size_t dlines_tlen;
-		size_t eoh_off; /* end of header offset */
-		size_t total_len; /* total length (inclusive EOH line) */
-		size_t acked_len; /* acked bytes from HDR */
-	} response_hdr;
-
-	struct {
-		size_t acked_len;
-	} response_ftr;
+		uint16_t code;
+		struct http_send_hdr hdr;
+		size_t hdr_eoh_off; /* end of header offset */
+		size_t hdr_total_len; /* total length (inclusive EOH line) */
+		size_t hdr_acked_len; /* acked bytes from header */
+		size_t ftr_acked_len; /* acked bytes from footer */
+	} response;
 
 	uint64_t rlen; /* (requested) number of bytes of message body */
 	uint64_t alen; /* (acknowledged) number of bytes (of rlen) */
@@ -272,38 +241,6 @@ struct http_req {
 #endif
 };
 
-#define ADD_RESHDR_SLINE(hreq, i, shdr_code)	  \
-	do { \
-		(hreq)->response_hdr.sline[(i)].b = _http_shdr[(shdr_code)]; \
-		(hreq)->response_hdr.sline[(i)].len = _http_shdr_len[(shdr_code)]; \
-		++(i); \
-	} while(0)
-
-#define ADD_RESHDR_DLINE(hreq, i, fmt, ...)	  \
-	do { \
-		(hreq)->response_hdr.dline[(i)].len = \
-			snprintf((hreq)->response_hdr.dline[(i)].b, \
-			         HTTPHDR_BUFFER_MAXLEN, \
-			         (fmt), \
-			         ##__VA_ARGS__); \
-		++(i); \
-	} while(0)
-
-/* returns the field line number on success, -1 if it was not found */
-static inline int http_reqhdr_findfield(struct http_req *hreq, const char *field)
-{
-	register unsigned l;
-
-	for (l = 0; l < hreq->request_hdr.nb_lines; ++l) {
-		if (strncasecmp(field, hreq->request_hdr.line[l].field.b,
-		                hreq->request_hdr.line[l].field.len) == 0) {
-			return (int) l;
-		}
-	}
-
-	return -1; /* not found */
-}
-
 #define httpsess_register_ioretry(hsess) \
 	do { \
 		if (!dlist_is_linked((hsess), \
@@ -328,7 +265,7 @@ static inline int http_reqhdr_findfield(struct http_req *hreq, const char *field
 
 #define httpsess_flush(hsess) tcp_output((hsess)->tpcb)
 
-err_t httpsess_write(struct http_sess *hsess, const void* buf, uint16_t *len, uint8_t apiflags);
+err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint8_t apiflags);
 err_t httpsess_respond(struct http_sess *hsess);
 
 #endif /* _HTTP_DEFS_H_ */

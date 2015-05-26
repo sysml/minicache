@@ -9,6 +9,7 @@
 #define _HTTP_FIO_H_
 
 #include "http_defs.h"
+#include "http_hdr.h"
 
 #define httpreq_fio_nb_buffers(chunksize)  (max((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize)), 2))
 
@@ -42,12 +43,11 @@ static inline int httpreq_fio_aioreq(struct http_req *hreq, chk_t addr, unsigned
 static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 {
 	register size_t roff, foff;
-	register tcpwnd_size_t avail;
-	register uint16_t left;
+	register size_t left;
 	register chk_t  cur_chk;
 	register size_t chk_off;
 	register unsigned int idx;
-	uint16_t slen;
+	size_t slen;
 	err_t err;
 	int ret;
 
@@ -111,30 +111,21 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 		goto err_abort;
 	}
 
-	/* send out data from chk buffer that is loaded already */
-	avail = tcp_sndbuf(hreq->hsess->tpcb);
-	if (unlikely(avail == 0)) {
-		/* we need to wait for free space on tcp sndbuf
-		 * httpsess_response is recalled when client has
-		 * acknowledged its received data */
-		printd("[idx=%u] tcp send buffer is full, retry it next round\n", idx);
-		goto out;
-	}
 	chk_off = shfs_volchkoff_foff(hreq->fd, foff);
-	left = (uint16_t) min3(UINT16_MAX, shfs_vol.chunksize - chk_off, hreq->rlen - roff);
-	slen = (uint16_t) min3(UINT16_MAX, avail, left);
+	left = min(shfs_vol.chunksize - chk_off, hreq->rlen - roff);
+	slen = left;
 	err  = httpsess_write(hreq->hsess,
 	                      ((uint8_t *) (hreq->f.cce[idx]->buffer)) + chk_off,
 	                      &slen, TCP_WRITE_FLAG_MORE);
-	*sent += (size_t) slen;
-	if (unlikely(err != ERR_OK)) {
+	*sent += slen;
+	if (unlikely(err != ERR_OK || !slen)) {
 		printd("[idx=%u] sending failed, aborting this round\n", idx);
 		httpsess_flush(hreq->hsess); /* send buffer might be full:
 		                                we need to wait for ack */
 		goto out;
 	}
-	printd("[idx=%u] sent %u bytes (%"PRIu64"-%"PRIu64", chunksize: %lu, left on this chunk: %lu, available on sndbuf: %"PRIu16", sndqueuelen: %"PRIu16", infly: %"PRIu64")\n",
-	        idx, slen, chk_off, chk_off + slen, shfs_vol.chunksize, left - (size_t) slen, avail - slen,
+	printd("[idx=%u] sent %u bytes (%"PRIu64"-%"PRIu64", left on this chunk: %"PRIu64", available on sndbuf: %"PRIu32", sndqueuelen: %"PRIu16", infly: %"PRIu64")\n",
+	        idx, slen, chk_off, chk_off + slen, left - slen, tcp_sndbuf(hreq->hsess->tpcb),
 	        tcp_sndqueuelen(hreq->hsess->tpcb), (uint64_t) hreq->hsess->sent_infly);
 
 	/* are we done with this chunkbuffer and there is still data that needs to be sent?
@@ -173,8 +164,8 @@ static inline void httpreq_fio_init(struct http_req *hreq)
 
 static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 {
-	register size_t nb_slines = hreq->response_hdr.nb_slines;
-	register size_t nb_dlines = hreq->response_hdr.nb_dlines;
+	size_t nb_slines = http_sendhdr_get_nbslines(&hreq->response.hdr);
+	size_t nb_dlines = http_sendhdr_get_nbdlines(&hreq->response.hdr);
 	char strsbuf[64];
 	int ret;
 
@@ -183,28 +174,28 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 	shfs_fio_size(hreq->fd, &hreq->f.fsize);
 
 	/* File range requested? */
-	hreq->response_hdr.code = 200;	/* 200 OK */
+	hreq->response.code = 200;	/* 200 OK */
 	hreq->f.rfirst = 0;
 	hreq->f.rlast  = hreq->f.fsize - 1;
-	ret = http_reqhdr_findfield(hreq, "range");
+	ret = http_recvhdr_findfield(&hreq->request.hdr, "range");
 	if (ret >= 0) {
 		/* Because range requests require different answer codes
 		 * (e.g., 206 OK or 416 EINVAL), we need to check the
 		 * range request here already.
 		 * http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.16 */
-		hreq->response_hdr.code = 416;
-		if (strncasecmp("bytes=", hreq->request_hdr.line[ret].value.b, 6) == 0) {
+		hreq->response.code = 416;
+		if (strncasecmp("bytes=", hreq->request.hdr.line[ret].value.b, 6) == 0) {
 			uint64_t rfirst;
 			uint64_t rlast;
 
-			ret = sscanf(hreq->request_hdr.line[ret].value.b + 6,
+			ret = sscanf(hreq->request.hdr.line[ret].value.b + 6,
 			             "%"PRIu64"-%"PRIu64,
 			             &rfirst, &rlast);
 			if (ret == 1) {
 				/* only rfirst specified */
 				if (rfirst < hreq->f.rlast) {
 					hreq->f.rfirst = rfirst;
-					hreq->response_hdr.code = 206;
+					hreq->response.code = 206;
 				}
 			} else if (ret == 2) {
 				/* both, rfirst and rlast, specified */
@@ -213,12 +204,12 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 				    (rlast <= hreq->f.rlast)) {
 					hreq->f.rfirst = rfirst;
 					hreq->f.rlast = rlast;
-					hreq->response_hdr.code = 206;
+					hreq->response.code = 206;
 				}
 			}
 		}
 
-		if (hreq->response_hdr.code == 416) {
+		if (hreq->response.code == 416) {
 			/* (parsing/out of range) error: response with 416 error header */
 			printd("Could not parse range request\n");
 			goto err416_hdr;
@@ -229,27 +220,33 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 	}
 
 	/* HTTP OK [first line] (code can be 216 or 200) */
-	if (hreq->response_hdr.code == 206)
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_206(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+	if (hreq->response.code == 206)
+		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
+				      HTTP_SHDR_206(hreq->request.http_major, hreq->request.http_minor));
 	else
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_200(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
+		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
+				      HTTP_SHDR_200(hreq->request.http_major, hreq->request.http_minor));
 
 	/* MIME (by element or default) */
 	shfs_fio_mime(hreq->fd, strsbuf, sizeof(strsbuf));
 	if (strsbuf[0] == '\0')
-		ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_DEFAULT_TYPE);
+		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
+				      HTTP_SHDR_DEFAULT_TYPE);
 	else
-		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
+		http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
+				       "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
 
 	/* Content length */
-	hreq->rlen   = (hreq->f.rlast + 1) - hreq->f.rfirst;
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
+	hreq->rlen = (hreq->f.rlast + 1) - hreq->f.rfirst;
+	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
+			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
 
 	/* Content range */
-	if (hreq->response_hdr.code == 206)
-		ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
-		                 _http_dhdr[HTTP_DHDR_RANGE],
-		                 hreq->f.rfirst, hreq->f.rlast, hreq->f.fsize);
+	if (hreq->response.code == 206)
+		http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
+				       "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
+				       _http_dhdr[HTTP_DHDR_RANGE],
+				       hreq->f.rfirst, hreq->f.rlast, hreq->f.fsize);
 
 	/* Initialize volchk range values for I/O */
 	if (hreq->rlen != 0) {
@@ -258,19 +255,20 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 		hreq->f.volchkoff_first = shfs_volchkoff_foff(hreq->fd, hreq->f.rfirst);               /* first byte in first chunk */
 		hreq->f.volchkoff_last  = shfs_volchkoff_foff(hreq->fd, hreq->f.rlast + hreq->f.rfirst); /* last byte in last chunk */
 	}
-	goto out;
+ out:
+	http_sendhdr_set_nbslines(&hreq->response.hdr, nb_slines);
+	http_sendhdr_set_nbdlines(&hreq->response.hdr, nb_dlines);
+	return 0;
 
  err416_hdr:
 	/* 416 Range request error */
-	hreq->response_hdr.code = 416;
-	ADD_RESHDR_SLINE(hreq, nb_slines, HTTP_SHDR_416(hreq->request_hdr.http_major, hreq->request_hdr.http_minor));
-	ADD_RESHDR_DLINE(hreq, nb_dlines, "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+	hreq->response.code = 416;
+	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
+			      HTTP_SHDR_416(hreq->request.http_major, hreq->request.http_minor));
+	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
+			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
 	hreq->type = HRT_NOMSG;
-
- out:
-	hreq->response_hdr.nb_slines = nb_slines;
-	hreq->response_hdr.nb_dlines = nb_dlines;
-	return 0;
+	goto out;
 }
 
 static inline void httpreq_fio_close(struct http_req *hreq)
