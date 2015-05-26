@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <pth.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <semaphore.h>
@@ -58,6 +57,9 @@ void app_shutdown(unsigned reason);
 /* scheduling */
 #define msleep(ms) usleep((((ms)) * 1000l))
 
+#ifdef CONFIG_PTH_THREADS
+#include <pth.h>
+
 #define thread pth
 #define schedule() \
 	pth_yield(NULL)
@@ -65,6 +67,15 @@ void app_shutdown(unsigned reason);
 	pth_spawn(PTH_ATTR_DEFAULT, (void * (*)(void *)) (func), (argp))
 #define exit_thread() \
 	pth_exit(NULL)
+#else
+#define thread (void *)
+#define schedule() \
+	do {} while (0)
+#define create_thread(name, func, argp) \
+	do {} while (0)
+#define exit_thread() \
+	do {} while (0)
+#endif
 
 /* semaphore */
 #define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphres? */

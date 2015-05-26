@@ -83,6 +83,7 @@ endif
 BUILDSO=y
 CONFIG_OSVNET=y
 CONFIG_OSVBLK=y
+CONFIG_PTH_THREADS=n
 CINCLUDES+=-I$(OSV_ROOT)/arch/x64 -I$(OSV_ROOT) -I$(OSV_ROOT)/include
 CINCLUDES+=-isystem $(OSV_ROOT)/include/glibc-compat
 glibcbase     = $(OSV_ROOT)/external/x64/glibc.bin
@@ -117,6 +118,8 @@ common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL \
 CFLAGS+=$(common)
 CXXFLAGS+=-std=gnu++11 $(common)
 LDFLAGS+=$(autodepend)
+else
+CONFIG_PTH_THREADS=y
 endif
 
 ###########################################################################
@@ -158,8 +161,13 @@ CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 # -Wunreachable-code
 # -ansi
 # -std=c89
-LDFLAGS+=-pthread -lrt -lpth #-lutil
+LDFLAGS+=-pthread -lrt #-lutil
 ARFLAGS=rs
+
+ifeq ($(CONFIG_PTH_THREADS),y)
+LDFLAGS+=-lpth
+CFLAGS+=-DCONFIG_PTH_THREADS
+endif
 
 ifeq ($(BUILDSO),y)
 CFLAGS+=-fPIC -DLWIP_DNS_API_DECLARE_H_ERRNO=0
