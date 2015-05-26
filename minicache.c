@@ -19,6 +19,9 @@
 #include <lwip/ip_frag.h>
 #include <lwip/init.h>
 #include <lwip/stats.h>
+#ifdef CONFIG_LWIP_IPDEV
+#include <lwip/ip.h>
+#endif
 
 #include "likely.h"
 #include "mempool.h"
@@ -633,7 +636,7 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_LWIP_NOTHREADS
 #ifdef CONFIG_LWIP_IPDEV
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      target_netif_init, ip_input);
+                      target_netif_init, ip4_input);
 #else
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                       target_netif_init, ethernet_input);
