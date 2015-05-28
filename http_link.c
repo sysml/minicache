@@ -349,6 +349,7 @@ static int httplink_recv_hdrcomplete(http_parser *parser)
 #ifdef HTTP_DEBUG
 	unsigned l;
 #endif
+	enum lftype lft;
 	int ret;
 
 	/* first we null-terminate all received header fields */
@@ -377,8 +378,21 @@ static int httplink_recv_hdrcomplete(http_parser *parser)
 
 	/* search for mime type in response */
 	ret = http_recvhdr_findfield(&o->response.hdr, _http_dhdr[HTTP_DHDR_MIME]);
-	if (ret >= 0)
+	if (ret >= 0) {
 		o->response.mime = o->response.hdr.line[ret].value.b;
+		lft = mime_to_lftype(o->response.mime);
+		if (!lft) {
+			printd("origin %p: MIME type unknown to join parser, use default format\n", o);
+			lft = HTTPLINK_DEFAULT_FORMAT;
+		}
+	} else  {
+		printd("origin %p: No MIME type detected, use default format for join parser\n", o);
+		lft = HTTPLINK_DEFAULT_FORMAT;
+	}
+
+	/* init format parser */
+	printd("origin %p: Initialize join parser with format id %d\n", o, lft);
+	init_lformat(&o->lfs, lft, 0);
 
 	/* switch to connected phase */
 	o->sstate = HRLOS_CONNECTED;
@@ -404,8 +418,31 @@ static int httplink_recv_datacomplete(http_parser *parser)
 static int httplink_recv_data(http_parser *parser, const char *c, size_t len)
 {
 	struct http_req_link_origin *o = container_of(parser, struct http_req_link_origin, parser);
+	register unsigned int i = o->cce_idx;
+	register size_t avail, offset;
+	size_t clen;
 
 	printd("origin %p: received %"PRIu64" bytes\n", o, len);
 
+	while (len) {
+		offset = o->pos % shfs_vol.chunksize;
+		avail = shfs_vol.chunksize - offset;
+		clen = min(len, avail);
+
+		printd("  store&parse %"PRIu64" bytes to cce %u (avail %"PRIu64")\n", clen, i, avail);
+		memcpy((void *)((uintptr_t) o->cce[i]->buffer + offset), c, clen);
+		lformat_parse(&o->lfs, (void *)((uintptr_t) o->cce[i]->buffer + offset), clen); /* updates join */
+
+		o->pos += clen;
+		len -= clen;
+		if (clen == avail) {
+			/* point to next buffer is current is full */
+			i = (i + 1) % o->cce_max_idx;
+			if (i > o->cce_max_idx)
+				o->lower_limit += shfs_vol.chunksize;
+		}
+	}
+
+	o->cce_idx = i;
 	return 0;
 }

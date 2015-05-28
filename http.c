@@ -1196,6 +1196,13 @@ err_t httpsess_respond(struct http_sess *hsess)
 			break;
 
 		case HRT_LINKMSG:
+			err = httpreq_write_link(hreq, &hsess->sent);
+			if (unlikely(err == ERR_CONN)) /* end of stream -> close request */
+				goto case_HRS_RESPONDING_EOM;
+			if (unlikely(err != ERR_OK && err != ERR_MEM))
+				goto err_close; /* drop connection because of an unrecoverable error */
+			break;
+
 		default:
 			goto err_close;
 		}

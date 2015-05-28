@@ -10,6 +10,9 @@
 
 #include "http_defs.h"
 #include "shfs_fio.h"
+#include "link_format.h"
+
+#define HTTPLINK_DEFAULT_FORMAT LFT_RAW512
 
 #define httpreq_link_nb_buffers(chunksize)  ((max((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize)), 2)) << 1)
 
@@ -39,9 +42,6 @@ struct http_req_link_origin {
 	uint16_t rport;
 	uint16_t timeout;
 
-	dlist_el(links);
-	dlist_head(clients);
-	uint32_t nb_clients;
 
 	SHFS_FD fd;
 
@@ -49,10 +49,17 @@ struct http_req_link_origin {
 	size_t sent_infly;
 	enum http_req_link_origin_sstate sstate;
 	enum http_req_link_origin_cstate cstate;
+
+	/* join management */
+	size_t pos; /* current position in the stream */
+	size_t lower_limit;
+	struct lfstate lfs;
+
+	unsigned int cce_idx;
+	unsigned int cce_max_idx;
 	struct shfs_cache_entry *cce[HTTPREQ_LINK_MAXNB_BUFFERS];
 
 	struct http_parser parser;
-
 	struct {
 		char req[HTTP_HDR_DLINE_MAXLEN];
 		struct http_send_hdr hdr;
@@ -64,6 +71,10 @@ struct http_req_link_origin {
 		struct http_recv_hdr hdr;
 		const char *mime;
 	} response;
+
+	dlist_el(links);
+	dlist_head(clients);
+	uint32_t nb_clients;
 
 	struct mempool_obj *pobj;
 };
@@ -96,6 +107,7 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	//struct http_srv *hs = hreq->hsess->hs;
 	struct mempool_obj *pobj;
 	struct http_req_link_origin *o;
+	unsigned int i;
 
 	o = (struct http_req_link_origin *) shfs_fio_get_cookie(hreq->fd);
 	if (o) {
@@ -121,15 +133,17 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	o->tpcb = tcp_new();
 	if (!o->tpcb)
 		goto err_close_fd;
-	o->sstate = HRLOS_RESOLVE;
-	o->cstate = HRLOC_ERROR;
 
-	tcp_arg(o->tpcb, o);
-	tcp_recv(o->tpcb, httplink_recv); /* recv callback */
-	tcp_sent(o->tpcb, httplink_sent); /* sent ack callback */
-	tcp_err (o->tpcb, httplink_error); /* err callback */
-	tcp_poll(o->tpcb, httplink_poll, HTTP_POLL_INTERVAL); /* poll callback */
-	tcp_setprio(o->tpcb, HTTP_LINK_TCP_PRIO);
+	/* init buffers */
+	o->cce_max_idx = httpreq_link_nb_buffers(shfs_vol.chunksize);
+	for (i = 0; i < o->cce_max_idx; ++i) {
+		if (shfs_cache_eblank(&(o->cce[i])) < 0)
+			goto err_free_cce;
+		printd("origin %p: blank cache buffer %u @%p allocated\n", o, i, o->cce[i]);
+	}
+	o->cce_idx = 0;
+	o->pos = 0;
+	o->lower_limit = 0;
 
 	/* append origin to list of origins */
 	dlist_init_el(o, links);
@@ -148,18 +162,35 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	http_recvhdr_reset(&o->response.hdr);
 	o->response.mime = NULL;
 
+	/* init state */
 	http_sendhdr_reset(&o->request.hdr);
 	o->sent = 0;
 	o->sent_infly = 0;
 	o->request.hdr_total_len = 0;
 	o->request.hdr_acked_len = 0;
+	o->sstate = HRLOS_RESOLVE;
+	o->cstate = HRLOC_ERROR;
 
-	/* add cookie to file descriptor (never fails) */
+	/* set tcp callbacks */
+	tcp_arg(o->tpcb, o);
+	tcp_recv(o->tpcb, httplink_recv); /* recv callback */
+	tcp_sent(o->tpcb, httplink_sent); /* sent ack callback */
+	tcp_err (o->tpcb, httplink_error); /* err callback */
+	tcp_poll(o->tpcb, httplink_poll, HTTP_POLL_INTERVAL); /* poll callback */
+	tcp_setprio(o->tpcb, HTTP_LINK_TCP_PRIO);
+
+	/* add cookie to file descriptor
+	 * (never fails because we checked for NULL already ahead) */
 	shfs_fio_set_cookie(o->fd, o);
 
 	printd("new origin %p with request %p created\n", o, hreq);
 	return 0;
 
+ err_free_cce:
+	for (; i > 0; --i) {
+		printd("origin %p: release blank cache buffer %u @%p...\n", o, i - 1, o->cce[i - 1]);
+		shfs_cache_release(o->cce[i - 1]);
+	}
  err_close_fd:
 	shfs_fio_close(o->fd);
  err_free_o:
@@ -251,6 +282,7 @@ static inline void httpreq_link_close(struct http_req *hreq)
 {
 	//struct http_srv *hs = hreq->hsess->hs;
 	struct http_req_link_origin *o = hreq->l.origin;
+	unsigned int i;
 
 	--o->nb_clients;
 	dlist_unlink(&hreq->l, o->clients, clients);
@@ -261,10 +293,20 @@ static inline void httpreq_link_close(struct http_req *hreq)
 		dlist_unlink(o, hs->links, links);
 		if (o->tpcb) /* close connection to origin if not done yet */
 			httplink_close(o, HSC_CLOSE);
+		for (i = 0; i < o->cce_max_idx; ++i) {
+			printd("origin %p: release blank cache buffer %u @%p...\n", o, i, o->cce[i]);
+			shfs_cache_release(o->cce[i]);
+		}
 		shfs_fio_close(o->fd);
 		mempool_put(o->pobj);
 		printd("origin %p destroyed\n", o);
 	}
+}
+
+static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
+{
+	//return ERR_OK; /* keep connection */
+	return ERR_CONN; /* this error code is used to signal that we run out of data */
 }
 
 #endif /* _HTTP_LINK_H_ */
