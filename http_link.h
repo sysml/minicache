@@ -54,7 +54,7 @@ struct http_req_link_origin {
 	struct http_parser parser;
 
 	struct {
-		char req[128];
+		char req[HTTP_HDR_DLINE_MAXLEN];
 		struct http_send_hdr hdr;
 		size_t hdr_total_len;
 		size_t hdr_acked_len;
