@@ -234,17 +234,17 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 				      HTTP_SHDR_DEFAULT_TYPE);
 	else
 		http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-				       "%s%s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
+				       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_MIME], strsbuf);
 
 	/* Content length */
 	hreq->rlen = (hreq->f.rlast + 1) - hreq->f.rfirst;
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], hreq->rlen);
 
 	/* Content range */
 	if (hreq->response.code == 206)
 		http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-				       "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
+				       "%s: %"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
 				       _http_dhdr[HTTP_DHDR_RANGE],
 				       hreq->f.rfirst, hreq->f.rlast, hreq->f.fsize);
 
@@ -266,7 +266,7 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
 			      HTTP_SHDR_416(hreq->request.http_major, hreq->request.http_minor));
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
 	hreq->type = HRT_NOMSG;
 	goto out;
 }

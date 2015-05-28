@@ -812,7 +812,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 		    shfs_fio_link_rhost(hreq->fd));
 	shfs_fio_link_rpath(hreq->fd, strlbuf, sizeof(strlbuf));
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%shttp://%s:%"PRIu16"/%s\r\n", _http_dhdr[HTTP_DHDR_LOCATION],
+			       "%s: http://%s:%"PRIu16"/%s\r\n", _http_dhdr[HTTP_DHDR_LOCATION],
 			       strsbuf, shfs_fio_link_rport(hreq->fd), strlbuf);
 	hreq->type = HRT_NOMSG;
 	goto err_out;
@@ -829,7 +829,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 
 	/* Content length */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
 			       _http_testfile_len);
 	hreq->rlen = _http_testfile_len;
 	hreq->type = HRT_SMSG;
@@ -861,7 +861,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,HTTP_SHDR_NOCACHE);
 	/* Content length */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
 			       _http_err404p_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err404p;
@@ -876,7 +876,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_HTML);
 	/* Content length */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
 			       _http_err500p_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err500p;
@@ -891,7 +891,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_HTML);
 	/* Content length */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
 			       _http_err501p_len);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err501p;
@@ -939,11 +939,11 @@ static inline void httpreq_build_hdr(struct http_req *hreq)
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_HTML);
 	/* Content length */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
 			       _http_err503p_len);
 	/* Retry-after (TODO: replace the hard-coded 2 second) */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s%u\r\n", _http_dhdr[HTTP_DHDR_RETRY],
+			       "%s: %u\r\n", _http_dhdr[HTTP_DHDR_RETRY],
 			       2);
 	hreq->type = HRT_SMSG;
 	hreq->smsg = _http_err503p;

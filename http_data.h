@@ -135,13 +135,13 @@ static const size_t _http_shdr_len[] = {
 #define HTTP_SHDR_503(major, minor) \
 	(((major) < 1) ? HTTP09_SHDR_503 : (((minor) < 1) ? HTTP10_SHDR_503 : HTTP11_SHDR_503))
 
-static const char __http_dhdr00[] = "Content-type: ";
-static const char __http_dhdr01[] = "Content-length: ";
+static const char __http_dhdr00[] = "Content-type";
+static const char __http_dhdr01[] = "Content-length";
 static const char __http_dhdr02[] = "Content-range: bytes ";
-static const char __http_dhdr03[] = "Retry-after: ";
-static const char __http_dhdr04[] = "Location: ";
-static const char __http_dhdr05[] = "Host: ";
-static const char __http_dhdr06[] = "Icy-metadata: ";
+static const char __http_dhdr03[] = "Retry-after";
+static const char __http_dhdr04[] = "Location";
+static const char __http_dhdr05[] = "Host";
+static const char __http_dhdr06[] = "Icy-metadata";
 
 static const char * const _http_dhdr[] = {
 	__http_dhdr00, __http_dhdr01, __http_dhdr02, __http_dhdr03,

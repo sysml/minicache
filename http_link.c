@@ -76,15 +76,15 @@ static inline void httplink_build_reqhdr(struct http_req_link_origin *o)
 	http_sendhdr_add_shdr(&o->request.hdr, &nb_slines, HTTP_SHDR_USERAGENT);
 	if (shfs_fio_link_rport(o->fd) == 80) {
 		http_sendhdr_add_dline(&o->request.hdr, &nb_dlines,
-				       "%s%s\r\n", _http_dhdr[HTTP_DHDR_HOST],
+				       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_HOST],
 				       strsbuf, strlbuf);
 	} else {
 		http_sendhdr_add_dline(&o->request.hdr, &nb_dlines,
-				       "%s%s:%"PRIu16"\r\n", _http_dhdr[HTTP_DHDR_HOST],
+				       "%s: %s:%"PRIu16"\r\n", _http_dhdr[HTTP_DHDR_HOST],
 				       strsbuf, shfs_fio_link_rport(o->fd), strlbuf);
 	}
 	http_sendhdr_add_dline(&o->request.hdr, &nb_dlines,
-			       "%s0\r\n", _http_dhdr[HTTP_DHDR_ICYMETADATA]);
+			       "%s: 0\r\n", _http_dhdr[HTTP_DHDR_ICYMETADATA]);
 
 	http_sendhdr_set_nbslines(&o->request.hdr, nb_slines);
 	http_sendhdr_set_nbdlines(&o->request.hdr, nb_dlines);
@@ -349,6 +349,9 @@ static int httplink_recv_hdrcomplete(http_parser *parser)
 #ifdef HTTP_DEBUG
 	unsigned l;
 #endif
+	int ret;
+
+	/* first we null-terminate all received header fields */
 	http_recvhdr_terminate(&o->response.hdr);
 
 #ifdef HTTP_DEBUG
@@ -364,12 +367,18 @@ static int httplink_recv_hdrcomplete(http_parser *parser)
 	}
 #endif
 
+	/* did server respond with status code 200? */
 	if (parser->status_code != 200) {
 		printd("Server of origin %p did not return 200: Closing connection...\n", o);
 		httplink_close(o, HSC_CLOSE);
 		httplink_notify_clients(o);
 		return 0;
 	}
+
+	/* search for mime type in response */
+	ret = http_recvhdr_findfield(&o->response.hdr, _http_dhdr[HTTP_DHDR_MIME]);
+	if (ret >= 0)
+		o->response.mime = o->response.hdr.line[ret].value.b;
 
 	/* switch to connected phase */
 	o->sstate = HRLOS_CONNECTED;

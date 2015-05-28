@@ -146,6 +146,7 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	o->parser.data = (void *) &o->response.hdr;
 	http_parser_init(&o->parser, HTTP_RESPONSE);
 	http_recvhdr_reset(&o->response.hdr);
+	o->response.mime = NULL;
 
 	http_sendhdr_reset(&o->request.hdr);
 	o->sent = 0;
@@ -174,6 +175,8 @@ void httpreq_link_dnscb(const char *name, ip_addr_t *ipaddr, void *argp);
 static inline int httpreq_link_build_hdr(struct http_req *hreq)
 {
 	//struct http_srv *hs = hreq->hsess->hs;
+	size_t nb_slines;
+	size_t nb_dlines;
 	struct http_req_link_origin *o = hreq->l.origin;
 	err_t err;
 	int ret;
@@ -181,40 +184,53 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 	/* connection procedure */
 	switch(o->sstate) {
 	case HRLOS_RESOLVE:
-	  /* resolv remote host name */
-	  printd("Resolving origin host address...\n");
-	  o->rport = shfs_fio_link_rport(o->fd);
+		/* resolv remote host name */
+		printd("Resolving origin host address...\n");
+		o->rport = shfs_fio_link_rport(o->fd);
 #if LWIP_DNS
-	  ret = shfshost2ipaddr(shfs_fio_link_rhost(o->fd), &o->rip, httpreq_link_dnscb, hreq);
-	  if (ret >= 1) {
-	    o->sstate = HRLOS_WAIT_RESOLVE;
-	    return -EAGAIN;
-	  }
+		ret = shfshost2ipaddr(shfs_fio_link_rhost(o->fd), &o->rip, httpreq_link_dnscb, hreq);
+		if (ret >= 1) {
+			o->sstate = HRLOS_WAIT_RESOLVE;
+			return -EAGAIN;
+		}
 #else
-	  ret = shfshost2ipaddr(shfs_fio_link_rhost(o->fd), &o->rip);
+		ret = shfshost2ipaddr(shfs_fio_link_rhost(o->fd), &o->rip);
 #endif
-	  if (ret < 0) {
-	    printd("Resolution of origin host address failed: %d\n", ret);
-	    goto err_out;
-	  }
-	  printd("Resolution could be done directly\n");
-	  o->sstate = HRLOS_CONNECT;
-	  goto case_HRLOS_CONNECT;
+		if (ret < 0) {
+			printd("Resolution of origin host address failed: %d\n", ret);
+			goto err_out;
+		}
+		printd("Resolution could be done directly\n");
+		o->sstate = HRLOS_CONNECT;
+		goto case_HRLOS_CONNECT;
 
 	case_HRLOS_CONNECT:
 	case HRLOS_CONNECT:
-	  /* connect to remote */
-	  printd("Connecting to origin host...\n");
-	  o->timeout = HTTP_LINK_CONNECT_TIMEOUT;
-	  err = tcp_connect(o->tpcb, &o->rip, o->rport, httplink_connected);
-	  if (err != ERR_OK)
-	    goto err_out;
-	  o->sstate = HRLOS_WAIT;
-	  return -EAGAIN;
+		/* connect to remote */
+		printd("Connecting to origin host...\n");
+		o->timeout = HTTP_LINK_CONNECT_TIMEOUT;
+		err = tcp_connect(o->tpcb, &o->rip, o->rport, httplink_connected);
+		if (err != ERR_OK)
+			goto err_out;
+		o->sstate = HRLOS_WAIT;
+		return -EAGAIN;
 
 	case HRLOS_CONNECTED:
-	  /* create header for client */
-	  goto err_out;
+		/* create header for client */
+		nb_slines = http_sendhdr_get_nbslines(&hreq->response.hdr);
+		nb_dlines = http_sendhdr_get_nbdlines(&hreq->response.hdr);
+
+		hreq->response.code = 200;	/* 200 OK */
+		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
+				      HTTP_SHDR_200(hreq->request.http_major, hreq->request.http_minor));
+		if (o->response.mime)
+			http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
+					       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_MIME], o->response.mime);
+		hreq->is_stream = 1;
+
+		http_sendhdr_set_nbslines(&hreq->response.hdr, nb_slines);
+		http_sendhdr_set_nbdlines(&hreq->response.hdr, nb_dlines);
+		return 0;
 
 	case HRLOS_ERROR:
 	  goto err_out;
