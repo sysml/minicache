@@ -141,10 +141,11 @@ static const char __http_dhdr02[] = "Content-range: bytes ";
 static const char __http_dhdr03[] = "Retry-after: ";
 static const char __http_dhdr04[] = "Location: ";
 static const char __http_dhdr05[] = "Host: ";
+static const char __http_dhdr06[] = "Icy-metadata: ";
 
 static const char * const _http_dhdr[] = {
 	__http_dhdr00, __http_dhdr01, __http_dhdr02, __http_dhdr03,
-	__http_dhdr04, __http_dhdr05
+	__http_dhdr04, __http_dhdr05, __http_dhdr06
 };
 
 #define HTTP_DHDR_MIME            0 /* content-type */
@@ -153,6 +154,7 @@ static const char * const _http_dhdr[] = {
 #define HTTP_DHDR_RETRY           3 /* retry-after */
 #define HTTP_DHDR_LOCATION        4 /* location */
 #define HTTP_DHDR_HOST            5 /* host */
+#define HTTP_DHDR_ICYMETADATA     6 /* Icy-metadata */
 
 static const char _http_err404p[] = \
 	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"

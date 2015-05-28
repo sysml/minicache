@@ -151,6 +151,26 @@ SHFS_FD shfs_fio_open(const char *path)
 }
 
 /*
+ * Opens a clone of an already opened file descriptor
+ * This clone has to be closed by shfs_fio_close(), too.
+ */
+SHFS_FD shfs_fio_clonef(SHFS_FD f)
+{
+	if (!f) {
+		errno = EINVAL;
+		return NULL;
+	}
+	if (!shfs_mounted) {
+		errno = ENODEV;
+		return NULL;
+	}
+
+	++f->refcount;
+	++shfs_nb_open;
+	return f;
+}
+
+/*
  * Note: This function should never be called from interrupt context
  */
 void shfs_fio_close(SHFS_FD f)

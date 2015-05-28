@@ -20,6 +20,7 @@ typedef struct shfs_bentry *SHFS_FD;
  */
 SHFS_FD shfs_fio_open(const char *path);
 void shfs_fio_close(SHFS_FD f);
+SHFS_FD shfs_fio_clonef(SHFS_FD f); /* create a file descriptor clone */
 
 void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_hash(SHFS_FD f, hash512_t out);

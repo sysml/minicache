@@ -35,8 +35,9 @@
 #define HTTP_TCPKEEPALIVE_TIMEOUT 90 /* = x sec */
 #define HTTP_TCPKEEPALIVE_IDLE    30 /* = x sec */
 
-#define HTTP_LINK_CONNECT_TIMEOUT  3 /* = x sec */
-#define HTTP_LINK_REPLY_TIMEOUT   10 /* = x sec */
+#define HTTP_LINK_CONNECT_TIMEOUT   3 /* = x sec */
+#define HTTP_LINK_RESPONSE_TIMEOUT 10 /* = x sec */
+#define HTTP_LINK_RECEIVE_TIMEOUT  30 /* = x sec */
 
 #define HTTPHDR_URL_MAXLEN        99 /* MAX: '/' + '?' + 512 bits hash + '\0' */
 #define HTTPURL_ARGS_INDICATOR   '?'
