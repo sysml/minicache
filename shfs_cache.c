@@ -114,10 +114,8 @@ int shfs_alloc_cache(void)
     }
 #endif
     dlist_init_head(cc->alist);
-    for (i = 0; i < htlen; ++i) {
+    for (i = 0; i < htlen; ++i)
 	    dlist_init_head(cc->htable[i].clist);
-	    cc->htable[i].len = 0;
-    }
     cc->htlen = htlen;
     cc->htmask = htlen - 1;
     cc->nb_entries = 0;
@@ -210,7 +208,8 @@ static inline struct shfs_cache_entry *shfs_cache_find(chk_t addr)
     return NULL; /* not found */
 }
 
-/* removes a cache entry from the cache */
+/* removes a cache entry from the cache
+ * Note: never call this function on custom buffers that do not appear in any lists */
 static inline void shfs_cache_unlink(struct shfs_cache_entry *cce)
 {
     register uint32_t i;
@@ -218,13 +217,8 @@ static inline void shfs_cache_unlink(struct shfs_cache_entry *cce)
     ASSERT(cce->refcount == 0);
 
     /* unlink element from hash table collision list */
-    /* Note: entries with addr == 0 are custom buffers that do not
-     * appear in any collision lists */
-    if (cce->addr != 0) {
-        i = shfs_cache_htindex(cce->addr);
-
-        dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
-    }
+    i = shfs_cache_htindex(cce->addr);
+    dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
 
     /* unlink element from available list */
     dlist_unlink(cce, shfs_vol.chunkcache->alist, alist);
@@ -466,7 +460,6 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
 {
     struct shfs_cache_entry *cce;
-    register uint32_t i;
     int ret;
 
     ASSERT(cce_out != NULL);
@@ -489,9 +482,8 @@ int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
 	goto err_out;
 
     found:
-	/* unlink from hash table */
-	i = shfs_cache_htindex(cce->addr);
-	dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+	/* unlink from hash collision table and available list */
+	shfs_cache_unlink(cce);
     }
 
     /* set refcount */
@@ -532,7 +524,8 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	} else {
             printd("Destroy invalid cache of chunk %llu\n", cce->addr);
-	    shfs_cache_unlink(cce);
+	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
+	        shfs_cache_unlink(cce);
 	    shfs_cache_put_cce(cce);
 	}
     }
@@ -573,7 +566,8 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 	--shfs_vol.chunkcache->nb_ref_entries;
 	if (shfs_aio_is_done(cce->t) && cce->invalid) {
 	    printd("Destroy invalid cache of chunk %llu\n", cce->addr);
-	    shfs_cache_unlink(cce);
+	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
+	        shfs_cache_unlink(cce);
 	    shfs_cache_put_cce(cce);
 	} else {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
@@ -601,10 +595,9 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 #ifdef SHFS_CACHE_DEBUG
 	printk("\nBuffer states:\n");
 	for (i = 0; i < shfs_vol.chunkcache->htlen; ++i) {
-	  printk(" ht[%2"PRIu32"]: %"PRIu32" buffers:\n", i, shfs_vol.chunkcache->htable[i].len);
+	  printk(" ht[%3"PRIu32"]:\n", i);
 		dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
-			printk("  %12"PRIchk"chk: %s, refcount:%3"PRIu32"}\n",
-			       i,
+			printk(" %12"PRIchk" chk: %s, refcount: %3"PRIu32"\n",
 			       cce->addr,
 			       cce->invalid ? "INVALID" : "valid",
 			       cce->refcount);

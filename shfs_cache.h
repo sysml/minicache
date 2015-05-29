@@ -58,7 +58,6 @@ struct shfs_cache_entry {
 
 struct shfs_cache_htel {
 	struct dlist_head clist; /* collision list */
-	uint32_t len;
 };
 
 struct shfs_cache {
