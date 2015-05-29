@@ -259,7 +259,9 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 			http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
 					       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_MIME], o->response.mime);
 		hreq->is_stream = 1;
-		hreq->l.pos = hreq->l.acked_pos = lformat_getrjoin(&o->lfs); /* most recent join point in stream */
+		/* most recent join point in stream */
+		hreq->l.pos     = hreq->l.acked_pos = lformat_getrjoin(&o->lfs);
+		hreq->l.cce_idx = (hreq->l.pos / shfs_vol.chunksize) % o->cce_max_idx;
 
 		http_sendhdr_set_nbslines(&hreq->response.hdr, nb_slines);
 		http_sendhdr_set_nbdlines(&hreq->response.hdr, nb_dlines);
@@ -288,7 +290,6 @@ static inline void httpreq_link_close(struct http_req *hreq)
 
 	--o->nb_clients;
 	dlist_unlink(hreq, o->clients, l.clients);
-	//dlist_unlink(&hreq->l, o->clients, clients);
 	printd("request %p removed from origin %p\n", hreq, o);
 	if (o->nb_clients == 0) {
 		shfs_fio_clear_cookie(o->fd);
@@ -338,6 +339,8 @@ static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 		bffr_off = pos % shfs_vol.chunksize;
 		avail = shfs_vol.chunksize - bffr_off;
 		slen = min(avail, left);
+		printd("Going to send %"PRIu64" bytes from buffer %u (%p) at offset %"PRIu64" (pos=%"PRIu64")\n",
+		       slen, idx, o->cce[idx]->buffer, bffr_off, pos);
 		err = httpsess_write(hsess,
 				     (void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off),
 				     &slen,
@@ -345,8 +348,7 @@ static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 		if (err != ERR_OK || !slen) {
 			break; /* send buffer seems to be full */
 		}
-		printd("Sent %"PRIu64" bytes from buffer %u (%p) at offset %"PRIu64" (pos=%"PRIu64")\n",
-		       slen, idx, o->cce[idx]->buffer, bffr_off, pos);
+
 		//printh((void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off),
 		//       slen);
 		left       -= slen;
