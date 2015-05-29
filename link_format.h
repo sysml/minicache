@@ -9,7 +9,8 @@
 
 enum lftype {
 	LFT_UNKNOWN = 0,
-	LFT_RAW512
+	LFT_RAW512, /* 512B */
+	LFT_MP3, /* 80KB */
 };
 
 struct lfstate {

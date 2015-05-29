@@ -6,13 +6,19 @@ enum lftype mime_to_lftype(const char *mime) {
 	/* TODO: returned type is fixed type for now (independent of mime) */
 	ret = LFT_RAW512;
 
+	if (strcasecmp("audio/mpeg",     mime) == 0 ||
+	    strcasecmp("audio/mpeg3",    mime) == 0 ||
+	    strcasecmp("audio/x-mpeg-3", mime) == 0) {
+		ret = LFT_MP3;
+	}
+
 	return ret;
 }
 
 int init_lformat(struct lfstate *lfs, enum lftype type, size_t offset)
 {
 	/* TODO: supported type is fixed for now */
-	if (type != LFT_RAW512)
+	if (type == LFT_UNKNOWN)
 		return -EINVAL;
   
 	lfs->type = type;
@@ -45,6 +51,14 @@ int lformat_parse(struct lfstate *lfs, const char *b, size_t len)
 		while (next < lfs->pos) {
 			_lformat_add_join(lfs, next);
 			next += 512;
+		}
+		break;
+
+	case LFT_MP3:
+		next = lformat_getrjoin(lfs) + 81920;
+		while (next < lfs->pos) {
+			_lformat_add_join(lfs, next);
+			next += 81920;
 		}
 		break;
 
