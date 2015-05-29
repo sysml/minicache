@@ -259,7 +259,7 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 			http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
 					       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_MIME], o->response.mime);
 		hreq->is_stream = 1;
-		hreq->l.pos = lformat_getrjoin(&o->lfs); /* most recent join point in stream */
+		hreq->l.pos = hreq->l.acked_pos = lformat_getrjoin(&o->lfs); /* most recent join point in stream */
 
 		http_sendhdr_set_nbslines(&hreq->response.hdr, nb_slines);
 		http_sendhdr_set_nbdlines(&hreq->response.hdr, nb_dlines);
@@ -287,7 +287,8 @@ static inline void httpreq_link_close(struct http_req *hreq)
 	unsigned int i;
 
 	--o->nb_clients;
-	dlist_unlink(&hreq->l, o->clients, clients);
+	dlist_unlink(hreq, o->clients, l.clients);
+	//dlist_unlink(&hreq->l, o->clients, clients);
 	printd("request %p removed from origin %p\n", hreq, o);
 	if (o->nb_clients == 0) {
 		shfs_fio_clear_cookie(o->fd);
@@ -305,6 +306,9 @@ static inline void httpreq_link_close(struct http_req *hreq)
 	}
 }
 
+#define httpreq_ack_link(hreq, acked) \
+  do { (hreq)->l.acked_pos += acked; } while(0)
+
 static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 {
 	struct http_req_link_origin *o = hreq->l.origin;
@@ -321,7 +325,7 @@ static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 	slen_total = 0;
 
 	/* Are we still within the stream window? */
-	if (unlikely(pos < o->lower_limit)) {
+	if (unlikely(hreq->l.acked_pos < o->lower_limit)) {
 		printd("Request %p lost sync with origin %p (pos=%"PRIu64" < lower_limit%"PRIu64"). Connection will be dropped...\n",
 		       hreq, o, pos, o->lower_limit);
 		return ERR_ABRT;

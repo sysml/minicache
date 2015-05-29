@@ -186,6 +186,7 @@ struct http_req_link_state {
 	struct http_req_link_origin *origin;
 	size_t pos;
 	unsigned int cce_idx;
+	size_t acked_pos;
 
 	dlist_el(clients);
 };

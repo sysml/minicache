@@ -580,7 +580,6 @@ err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint
  out:
 	hsess->sent_infly += s;
 	*len = s;
-	printd("ERR=%d\n", err);
 	return err;
 }
 
@@ -1259,8 +1258,8 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 
 	if (hreq->is_stream) {
 		hreq->alen += acked;
-		//if (acked && hreq->type == HRT_LINKMSG)
-		//	httpreq_ack_link(hreq, acked);
+		if (acked && hreq->type == HRT_LINKMSG)
+			httpreq_ack_link(hreq, acked);
 		*len = 0;
 		*isdone = 0;
 		return;
