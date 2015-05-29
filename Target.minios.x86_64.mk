@@ -17,6 +17,15 @@ CONFIG_CONSFRONT_SYNC		?= y
 CONFIG_SELECT_POLL		?= y
 
 CFLAGS				+= -Wunused \
+				   -Wparentheses \
+				   -Wsequence-point \
+				   -Wswitch-default \
+				   -Wpointer-arith \
+				   -Wbad-function-cast \
+				   -Wwrite-strings \
+				   -Wold-style-definition \
+				   -Wredundant-decls \
+				   -Wno-address \
 				   -Wtype-limits \
 				   -Itarget/minios/include
 
