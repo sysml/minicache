@@ -11,6 +11,7 @@
 #include "http_defs.h"
 #include "shfs_fio.h"
 #include "link_format.h"
+#include "hexdump.h"
 
 #define HTTPLINK_DEFAULT_FORMAT LFT_RAW512
 
@@ -258,6 +259,7 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 			http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
 					       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_MIME], o->response.mime);
 		hreq->is_stream = 1;
+		hreq->l.pos = lformat_getrjoin(&o->lfs); /* most recent join point in stream */
 
 		http_sendhdr_set_nbslines(&hreq->response.hdr, nb_slines);
 		http_sendhdr_set_nbdlines(&hreq->response.hdr, nb_dlines);
@@ -305,8 +307,64 @@ static inline void httpreq_link_close(struct http_req *hreq)
 
 static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 {
-	//return ERR_OK; /* keep connection */
-	return ERR_CONN; /* this error code is used to signal that we run out of data */
+	struct http_req_link_origin *o = hreq->l.origin;
+	struct http_sess *hsess = hreq->hsess;
+	register size_t left, pos, slen_total, avail;
+	register uintptr_t bffr_off;
+	unsigned int idx;
+	size_t slen;
+	err_t err;
+
+	err        = ERR_OK;
+	pos        = hreq->l.pos;
+	idx        = hreq->l.cce_idx;
+	slen_total = 0;
+
+	/* Are we still within the stream window? */
+	if (unlikely(pos < o->lower_limit)) {
+		printd("Request %p lost sync with origin %p (pos=%"PRIu64" < lower_limit%"PRIu64"). Connection will be dropped...\n",
+		       hreq, o, pos, o->lower_limit);
+		return ERR_ABRT;
+	}
+
+	/* send out data to catch up to origins position */
+	left = o->pos - pos;
+	while (left) {
+		//idx = (pos / shfs_vol.chunksize) % o->cce_max_idx;
+		bffr_off = pos % shfs_vol.chunksize;
+		avail = shfs_vol.chunksize - bffr_off;
+		slen = min(avail, left);
+		err = httpsess_write(hsess,
+				     (void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off),
+				     &slen,
+				     TCP_WRITE_FLAG_MORE);
+		if (err != ERR_OK || !slen) {
+			break; /* send buffer seems to be full */
+		}
+		printd("Sent %"PRIu64" bytes from buffer %u (%p) at offset %"PRIu64" (pos=%"PRIu64")\n",
+		       slen, idx, o->cce[idx]->buffer, bffr_off, pos);
+		//printh((void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off),
+		//       slen);
+		left       -= slen;
+		pos        += slen;
+		slen_total += slen;
+
+		if (slen == avail) {
+			/* point to next buffer */
+			idx = (idx + 1) % o->cce_max_idx;
+		}
+	}
+
+	if (pos == o->pos) /* we could completely catch up: send out what we have */
+		httpsess_flush(hsess);
+
+	hreq->l.cce_idx = idx;
+	hreq->l.pos     = pos;
+	*sent          += slen_total;
+
+	if (unlikely(o->sstate != HRLOS_CONNECTED && err != ERR_OK && err != ERR_MEM))
+		return ERR_CONN; /* this error code is used to signal that we run out of data */
+	return err;
 }
 
 #endif /* _HTTP_LINK_H_ */

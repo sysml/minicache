@@ -580,6 +580,7 @@ err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint
  out:
 	hsess->sent_infly += s;
 	*len = s;
+	printd("ERR=%d\n", err);
 	return err;
 }
 
@@ -1224,7 +1225,7 @@ err_t httpsess_respond(struct http_sess *hsess)
 
 	default:
 		/* unknown state?! */
-		printd("FATAL: HTTP request in invalid state\n");
+		printd("FATAL: HTTP request in invalid state: %d\n", hreq->state);
 		BUG_ON(1);
 		goto err_close;
 	}

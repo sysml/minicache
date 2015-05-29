@@ -184,7 +184,8 @@ struct http_req_link_origin; /* defined in http_link.h */
 
 struct http_req_link_state {
 	struct http_req_link_origin *origin;
-	uint64_t pos;
+	size_t pos;
+	unsigned int cce_idx;
 
 	dlist_el(clients);
 };

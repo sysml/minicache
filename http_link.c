@@ -287,12 +287,6 @@ err_t httplink_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 		for (q = p; q != NULL; q = q->next) {
 			plen = http_parser_execute(&o->parser, &_httplink_parser_settings,
 			                           q->payload, q->len);
-			if (unlikely(o->parser.upgrade)) {
-				/* protocol upgrade requested */
-				printd("Unsupported HTTP protocol upgrade requested: Dropping connection...\n");
-				ret = httplink_close(o, HSC_CLOSE);
-				goto out;
-			}
 			if (unlikely(plen != q->len)) {
 				/* less data was parsed: this happens only when
 				 * there was a parsing error */
@@ -301,6 +295,11 @@ err_t httplink_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 				goto out;
 			}
 		}
+
+		/* inform clients that new data has arrived */
+		/* TODO: notify only if push flag was set in incoming packet */
+		if (o->sstate==HRLOS_CONNECTED)
+			httplink_notify_clients(o);
 		break;
 
 	default:
@@ -309,6 +308,7 @@ err_t httplink_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 		ret = httplink_close(o, HSC_CLOSE);
 		goto out;
 	}
+
 	tcp_recved(tpcb, p->tot_len);
 
  out:
@@ -398,8 +398,9 @@ static int httplink_recv_hdrcomplete(http_parser *parser)
 	o->sstate = HRLOS_CONNECTED;
 	o->cstate = HRLOC_CONNECTED;
 
-	/* announce to all clinet so that they will retrieve their headers */
-	httplink_notify_clients(o);
+	/* we will announce to clients later since
+	 * we might retrieved some data already */
+	//httplink_notify_clients(o);
 	return 0;
 }
 
@@ -418,31 +419,38 @@ static int httplink_recv_datacomplete(http_parser *parser)
 static int httplink_recv_data(http_parser *parser, const char *c, size_t len)
 {
 	struct http_req_link_origin *o = container_of(parser, struct http_req_link_origin, parser);
-	register unsigned int i = o->cce_idx;
-	register size_t avail, offset;
-	size_t clen;
+	register size_t avail, pos;
+	register uintptr_t bffr_off;
+	register unsigned int idx;
+	size_t rlen;
 
-	printd("origin %p: received %"PRIu64" bytes\n", o, len);
+	pos = o->pos;
+	idx = o->cce_idx;
 
 	while (len) {
-		offset = o->pos % shfs_vol.chunksize;
-		avail = shfs_vol.chunksize - offset;
-		clen = min(len, avail);
+		//idx = (pos / shfs_vol.chunksize) % o->cce_max_idx;
+		bffr_off = pos % shfs_vol.chunksize;
+		avail = shfs_vol.chunksize - bffr_off;
+		rlen = min(len, avail);
 
-		printd("  store&parse %"PRIu64" bytes to cce %u (avail %"PRIu64")\n", clen, i, avail);
-		memcpy((void *)((uintptr_t) o->cce[i]->buffer + offset), c, clen);
-		lformat_parse(&o->lfs, (void *)((uintptr_t) o->cce[i]->buffer + offset), clen); /* updates join */
+		printd("Save %"PRIu64" bytes to buffer %u (%p) at offset %"PRIu64" (pos=%"PRIu64")\n",
+		       rlen, idx, o->cce[idx]->buffer, bffr_off, pos);
+		//printh(c, rlen);
+		MEMCPY((void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off), c, rlen);
+		lformat_parse(&o->lfs, (void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off), rlen); /* updates join */
 
-		o->pos += clen;
-		len -= clen;
-		if (clen == avail) {
+		pos += rlen;
+		len -= rlen;
+		c   += rlen;
+		if (rlen == avail) {
 			/* point to next buffer is current is full */
-			i = (i + 1) % o->cce_max_idx;
-			if (i > o->cce_max_idx)
+			idx = (idx + 1) % o->cce_max_idx;
+			if (idx > o->cce_max_idx)
 				o->lower_limit += shfs_vol.chunksize;
 		}
 	}
 
-	o->cce_idx = i;
+	o->pos = pos;
+	o->cce_idx = idx;
 	return 0;
 }
