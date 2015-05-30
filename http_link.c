@@ -296,9 +296,8 @@ err_t httplink_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 			}
 		}
 
-		/* inform clients that new data has arrived */
-		/* TODO: notify only if push flag was set in incoming packet */
-		if (o->sstate==HRLOS_CONNECTED)
+		/* inform clients that new data has arrived (only when PSH flag is set) */
+		if ((p->flags & PBUF_FLAG_PUSH) && (o->sstate==HRLOS_CONNECTED))
 			httplink_notify_clients(o);
 		break;
 
