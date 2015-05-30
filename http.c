@@ -1141,7 +1141,7 @@ err_t httpsess_respond(struct http_sess *hsess)
 		//err = httpreq_write_hdr(hreq, &hsess->sent);
 		err = http_sendhdr_write(&hreq->response.hdr, &hsess->sent,
 					 (tcpwrite_fn_t) httpsess_write, (void *) hsess);
-		if (unlikely(err))
+		if (unlikely(err != ERR_OK && err != ERR_MEM))
 			goto err_close;
 
 		if (hsess->sent == hreq->response.hdr_total_len) {
@@ -1159,7 +1159,7 @@ err_t httpsess_respond(struct http_sess *hsess)
 		switch(hreq->type) {
 		case HRT_SMSG:
 			err = httpsess_write_sbuf(hsess, &hsess->sent, hreq->smsg, hreq->rlen);
-			if (unlikely(err))
+			if (unlikely(err != ERR_OK && err != ERR_MEM))
 				goto err_close;
 
 			if (hsess->sent == hreq->rlen)
@@ -1169,7 +1169,7 @@ err_t httpsess_respond(struct http_sess *hsess)
 #ifdef HTTP_TESTFILE
 		case HRT_SMSG_INF:
 			err = httpsess_write_sbuf_inf(hsess, &hsess->sent, hreq->smsg, hreq->rlen);
-			if (unlikely(err))
+			if (unlikely(err != ERR_OK && err != ERR_MEM))
 				goto err_close;
 			/* we will never be done ;-) */
 			break;
@@ -1214,6 +1214,8 @@ err_t httpsess_respond(struct http_sess *hsess)
 	case HRS_RESPONDING_EOM:
 		err = httpsess_write_sbuf(hsess, &hsess->sent,
 		                          _http_sep, _http_sep_len);
+		if (unlikely(err != ERR_OK && err != ERR_MEM))
+			goto err_close; /* drop connection because of an unrecoverable error */
 		if (hsess->sent == _http_sep_len) {
 			/* we are done */
 			err = httpsess_eor(hsess);
