@@ -1,4 +1,5 @@
 #include "link_format.h"
+#include "string.h"
 
 enum lftype mime_to_lftype(const char *mime) {
 	enum lftype ret;

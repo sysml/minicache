@@ -141,7 +141,7 @@ static err_t iperfsrv_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
     tcp_arg(new_tpcb, sess);
     tcp_recv(new_tpcb, iperfsrv_recv);
     tcp_err(new_tpcb, iperfsrv_error);
-    tcp_sent(new_tpcb, NULL);
+    tcp_sent(new_tpcb, iperfsrv_sent);
     tcp_poll(new_tpcb, NULL, 0);
     tcp_setprio(new_tpcb, TCP_PRIO_MAX);
 
@@ -176,7 +176,6 @@ static err_t iperfsrv_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
 {
     struct iperfsrv_sess *sess = argp;
     err_t ret_err;
-    u16_t plen;
 
     if (!p) {
         /* remote host closed connection */
@@ -197,7 +196,6 @@ static err_t iperfsrv_recv(void *argp, struct tcp_pcb *tpcb, struct pbuf *p, err
         /* receive the package and discard it silently for testing
            reception bandwidth */
         sess->p = p;
-        plen = p->len;
         pbuf_free(p);
         tcp_recved(tpcb, p->tot_len);
         ret_err = ERR_OK;

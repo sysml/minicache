@@ -51,7 +51,7 @@ static inline uint32_t log2(uint32_t v)
   return (i - 1);
 }
 
-static inline uint32_t shfs_htcollison_order()
+static inline uint32_t shfs_htcollison_order(void)
 {
     uint32_t htlen;
 

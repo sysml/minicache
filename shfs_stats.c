@@ -175,7 +175,7 @@ static int _stats_dev_flush(void)
 }
 
 
-static int _stats_dev_write(void *data, size_t len)
+static int _stats_dev_write(const void *data, size_t len)
 {
 	/* Note lock has to be held by caller! */
 	register size_t bleft;

@@ -233,7 +233,6 @@ static char *_shcmd_wrapper(void *cookie, char *argb)
 
 	/* argument parsing */
 	argc = 1;
-	argv[0] = ""; /* no command name since we get called by a trigger */
 	prev_was_whitespace = 1;
 	for (i = 0; argc < SHWRAPPER_MAX_NB_ARGS; ++i) {
 		switch (argb[i]) {
@@ -247,7 +246,7 @@ static char *_shcmd_wrapper(void *cookie, char *argb)
 		case '\v':
 			argb[i] = '\0';
 			prev_was_whitespace = 1;
-            break;
+			break;
 		case '\'': /* quotes */
 		case '"':
 			/* QUOTES NOT SUPPORTED YET (like µSh) */
@@ -259,6 +258,8 @@ static char *_shcmd_wrapper(void *cookie, char *argb)
 			break;
 		}
 	}
+	argv[0] = &argb[i]; /* use last terminating zero as command name
+			     * --> no command name since we get called by a trigger */
 
  exec:
 	/* execute command */
