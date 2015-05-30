@@ -41,8 +41,6 @@ struct http_req_link_origin {
 	struct tcp_pcb *tpcb;
 	ip_addr_t rip;
 	uint16_t rport;
-	uint16_t timeout;
-
 
 	SHFS_FD fd;
 
@@ -72,6 +70,9 @@ struct http_req_link_origin {
 		struct http_recv_hdr hdr;
 		const char *mime;
 	} response;
+
+	size_t to_pos;
+	uint16_t timeout;
 
 	dlist_el(links);
 	dlist_head(clients);

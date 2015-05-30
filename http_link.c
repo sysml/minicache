@@ -58,7 +58,9 @@ void httpreq_link_dnscb(const char *name, ip_addr_t *ipaddr, void *argp)
 
 static inline void httplink_build_reqhdr(struct http_req_link_origin *o)
 {
+#ifdef HTTP_DEBUG
 	register unsigned l;
+#endif
 	unsigned nb_slines = 0;
 	unsigned nb_dlines = 0;
 	char strsbuf[64];
@@ -328,13 +330,35 @@ err_t httplink_poll(void *argp, struct tcp_pcb *tpcb)
 	struct http_req_link_origin *o = (struct http_req_link_origin *) argp;
 
 	printd("Polling origin connection %p\n", o);
-	if (o->sstate == HRLOS_WAIT_RESPONSE) {
+	switch (o->sstate) {
+	case HRLOS_CONNECT:
+	case HRLOS_WAIT_RESPONSE:
 		--o->timeout;
 		if (o->timeout == 0) {
 			printd("Timeout expired\n", o);
 			o->sstate = HRLOS_ERROR;
 			httplink_notify_clients(o);
 		}
+		break;
+
+	case HRLOS_CONNECTED: /* time out when receiving data */
+		if (o->to_pos != o->pos) {
+			/* reset timeout */
+			o->timeout = HTTP_LINK_RECEIVE_TIMEOUT;
+			o->to_pos  = o->pos;
+			break;
+		}
+
+		--o->timeout;
+		if (o->timeout == 0) {
+			printd("Receive timeout expired\n", o);
+			o->sstate = HRLOS_ERROR;
+			httplink_notify_clients(o);
+		}
+		break;
+
+	default:
+		break;
 	}
 	return ERR_OK;
 }
@@ -396,9 +420,11 @@ static int httplink_recv_hdrcomplete(http_parser *parser)
 	/* switch to connected phase */
 	o->sstate = HRLOS_CONNECTED;
 	o->cstate = HRLOC_CONNECTED;
+	o->to_pos = o->pos;
+	o->timeout = HTTP_LINK_RECEIVE_TIMEOUT;
 
 	/* we will announce to clients later since
-	 * we might retrieved some data already */
+	 * we might retrieve some data already */
 	//httplink_notify_clients(o);
 	return 0;
 }
