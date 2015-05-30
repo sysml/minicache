@@ -992,7 +992,7 @@ static inline void httpreq_finalize_hdr(struct http_req *hreq)
 #endif
 #ifdef HTTP_DEBUG_PRINTACCESS
 	printk("[%03u] %s\n",
-	       hreq->response_hdr.code,
+	       hreq->response.code,
 	       hreq->request.url);
 #endif
 }
