@@ -53,6 +53,8 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 
 	idx = hreq->f.cce_idx;
 	roff = *sent; /* offset in request */
+	if (unlikely(roff == hreq->rlen))
+		return ERR_OK; /* request is done already but we got called */
 	foff = roff + hreq->f.rfirst;  /* offset in file */
 	cur_chk = shfs_volchk_foff(hreq->fd, foff);
 
