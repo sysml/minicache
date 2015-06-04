@@ -28,6 +28,18 @@
 #define CACHELINE_SIZE 64
 #endif
 
+#if defined TRACE_BOOTTIME && CONFIG_AUTOMOUNT
+#define TT_DECLARE(var) uint64_t (var) = 0
+#define TT_START(var) do { (var) = target_now_ns(); } while(0)
+#define TT_END(var) do { (var) = (target_now_ns() - (var)); } while(0)
+
+TT_DECLARE(shfs_tt_vbdopen);
+#else /* TRACE_BOOTTIME */
+#define TT_DECLARE(var) while(0) {}
+#define TT_START(var) while(0) {}
+#define TT_END(var) while(0) {}
+#endif
+
 int shfs_mounted = 0;
 unsigned int shfs_nb_open = 0;
 sem_t shfs_mount_lock;
@@ -59,8 +71,14 @@ static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
 #endif
 	sector_t rlen;
 	int ret;
+	TT_DECLARE(_tt_vbdopen);
 
+	TT_START(_tt_vbdopen);
 	bd = open_blkdev(bd_id, O_RDWR);
+	TT_END(_tt_vbdopen);
+#if defined TRACE_BOOTTIME && CONFIG_AUTOMOUNT
+	shfs_tt_vbdopen += _tt_vbdopen;
+#endif
 	if (!bd)
 		goto err_out;
 #ifdef SHFS_DEBUG

@@ -80,6 +80,10 @@
 	 (desc),				\
 	 (var) / 1000000000l,			\
 	 ((var) / 1000l) % 1000000l);
+
+#ifdef CONFIG_AUTOMOUNT
+extern uint64_t shfs_tt_vbdopen;
+#endif
 #else /* TRACE_BOOTTIME */
 #define TT_DECLARE(var) while(0) {}
 #define TT_START(var) while(0) {}
@@ -801,10 +805,13 @@ int main(int argc, char *argv[])
     TT_PRINT("lwip initialization", tt_lwipinit);
     TT_PRINT("vif addition", tt_netifadd);
     if (args.bd_detect)
-	    TT_PRINT("virtual block device detection", tt_bddetect);
+	    TT_PRINT("vbd detection", tt_bddetect);
 #ifdef CONFIG_AUTOMOUNT
-    if (args.nb_bds)
+    if (args.nb_bds) {
+	    tt_automount -= shfs_tt_vbdopen;
+	    TT_PRINT("vbd open", shfs_tt_vbdopen);
 	    TT_PRINT("file system mount time", tt_automount);
+    }
 #endif
 #ifdef SHFS_STATS
     if (args.stats_bd)
