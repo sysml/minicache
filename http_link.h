@@ -129,7 +129,7 @@ static inline int httpreq_link_prepare_hdr(struct http_req *hreq)
 	o = (struct http_req_link_origin *) pobj->data;
 	o->pobj = pobj;
 
-	o->fd = shfs_fio_clonef(hreq->fd);
+	o->fd = shfs_fio_openf(hreq->fd);
 	if (!o->fd)
 		goto err_free_o;
 	o->tpcb = tcp_new();

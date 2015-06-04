@@ -12,15 +12,25 @@
 typedef struct shfs_bentry *SHFS_FD;
 
 /**
- * Opens a file/object via hash or name depending on
+ * Opens a file/object via hash string or name depending on
  * the first character of path:
  *
  * Hash: "?024a5bec"
  * Name: "index.html"
  */
 SHFS_FD shfs_fio_open(const char *path);
+/**
+ * Opens a file/object via a hash digest
+ */
+SHFS_FD shfs_fio_openh(hash512_t h);
+/**
+ * Creates a file descriptor clone
+ */
+SHFS_FD shfs_fio_openf(SHFS_FD f);
+/**
+ * Closes a file descriptor
+ */
 void shfs_fio_close(SHFS_FD f);
-SHFS_FD shfs_fio_clonef(SHFS_FD f); /* create a file descriptor clone */
 
 void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
 void shfs_fio_hash(SHFS_FD f, hash512_t out);

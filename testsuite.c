@@ -285,7 +285,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
-/* sequential I/O performance */
+/* open+close performance */
 static int shcmd_ocperf(FILE *cio, int argc, char *argv[])
 {
 	SHFS_FD f;
@@ -348,6 +348,83 @@ static int shcmd_ocperf(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+/* open+close performance */
+static int shcmd_ocperf2(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	hash512_t h;
+	const char *str_h;
+	uint64_t i;
+	uint64_t times = 10000000;
+	int ret = 0;
+	struct timeval tm_start;
+	struct timeval tm_end;
+	uint64_t usecs, ops;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [hash] [[times]]\n", argv[0]);
+		ret = -1;
+		goto out;
+	}
+	if (argc >= 3) {
+		if (sscanf(argv[2], "%"SCNu64"", &times) != 1) {
+			fprintf(cio, "Could not parse times\n");
+			ret = -1;
+			goto out;
+		}
+	}
+
+	str_h = argv[1];
+	if ((str_h[0] == SHFS_HASH_INDICATOR_PREFIX) && (str_h[1] != '\0')) {
+		if (hash_parse(str_h + 1, h, shfs_vol.hlen) < 0) {
+			fprintf(cio, "Could not parse hash digest from '%s'\n", str_h);
+			ret = -1;
+			goto out;
+		}
+	} else {
+		if (hash_parse(str_h, h, shfs_vol.hlen) < 0) {
+			fprintf(cio, "Could not parse hash digest from '%s'\n", str_h);
+			ret = -1;
+			goto out;
+		}
+	}
+	f = shfs_fio_openh(h);
+	if (!f) {
+		fprintf(cio, "Could not open %s: %s\n", str_h, strerror(errno));
+		ret = -1;
+		goto out;
+	}
+	shfs_fio_close(f);
+
+	gettimeofday(&tm_start, NULL);
+	barrier();
+	for (i = 0; i < times; ++i) {
+		f = shfs_fio_openh(h);
+		if (unlikely(!f)) {
+			ret = -errno;
+			break;
+		}
+		shfs_fio_close(f);
+	}
+	barrier();
+	gettimeofday(&tm_end, NULL);
+
+	if (f) {
+		if (tm_end.tv_usec < tm_start.tv_usec) {
+			tm_end.tv_usec += 1000000l;
+			--tm_end.tv_sec;
+		}
+		usecs = (tm_end.tv_usec - tm_start.tv_usec);
+		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		fprintf(cio, "%s: Opened and closed %"PRIu64" times in %"PRIu64".%06"PRIu64" seconds ",
+		        argv[1], times, usecs / 1000000, usecs % 1000000);
+		ops = (times * 1000000 + usecs / 2) / usecs;
+		fprintf(cio, "(%"PRIu64" open+close/s)\n", ops);
+	}
+ out:
+	return ret;
+}
+
 #ifdef HAVE_CTLDIR
 int register_testsuite(struct ctldir *cd)
 #else
@@ -360,6 +437,7 @@ int register_testsuite(void)
 		ctldir_register_shcmd(cd, "blast", shcmd_blast);
 		ctldir_register_shcmd(cd, "ioperf", shcmd_ioperf);
 		ctldir_register_shcmd(cd, "ocperf", shcmd_ocperf);
+		ctldir_register_shcmd(cd, "ocperf2", shcmd_ocperf2);
 	}
 #endif
 
@@ -369,6 +447,7 @@ int register_testsuite(void)
 	shell_register_cmd("netdf", shcmd_netdf);
 	shell_register_cmd("ioperf", shcmd_ioperf);
 	shell_register_cmd("ocperf", shcmd_ocperf);
+	shell_register_cmd("ocperf2", shcmd_ocperf2);
 #endif
 
 	return 0;

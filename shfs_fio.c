@@ -14,20 +14,13 @@
 #endif
 
 static inline __attribute__((always_inline))
-struct shfs_bentry *_shfs_lookup_bentry_by_hash(const char *hash)
+struct shfs_bentry *_shfs_lookup_bentry_by_hash(hash512_t h)
 {
-	hash512_t h;
 	struct shfs_bentry *bentry;
 #ifdef SHFS_STATS
 	struct shfs_el_stats *estats;
 #endif
 
-	if (hash_parse(hash, h, shfs_vol.hlen) < 0) {
-#ifdef SHFS_STATS
-		++shfs_vol.mstats.i;
-#endif
-		return NULL;
-	}
 	bentry = shfs_btable_lookup(shfs_vol.bt, h);
 #ifdef SHFS_STATS
 	if (unlikely(!bentry)) {
@@ -77,6 +70,37 @@ struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
 }
 #endif
 
+/*
+ * Register open on bentry and return it on success
+ */
+static inline SHFS_FD _shfs_fio_open_bentry(struct shfs_bentry *bentry)
+{
+#ifdef SHFS_STATS
+	struct shfs_el_stats *estats;
+#endif
+
+	if (bentry->update) {
+		/* entry update in progress */
+#ifdef SHFS_STATS
+		++shfs_vol.mstats.e;
+#endif
+		errno = EBUSY;
+		return NULL;
+	}
+
+	++shfs_nb_open;
+	if (bentry->refcount == 0) {
+		trydown(&bentry->updatelock); /* lock file for updates */
+		shfs_fio_clear_cookie(bentry);
+	}
+	++bentry->refcount;
+#ifdef SHFS_STATS
+	estats = shfs_stats_from_bentry(bentry);
+	estats->laccess = gettimestamp_s();
+	++estats->h;
+#endif
+	return (SHFS_FD) bentry;
+}
 
 /*
  * As long as we do not any operation that might call
@@ -88,12 +112,10 @@ struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
  */
 SHFS_FD shfs_fio_open(const char *path)
 {
+	hash512_t h;
 	struct shfs_bentry *bentry;
-#ifdef SHFS_STATS
-	struct shfs_el_stats *estats;
-#endif
 
-	if (!shfs_mounted) {
+	if (unlikely(!shfs_mounted)) {
 		errno = ENODEV;
 		return NULL;
 	}
@@ -101,7 +123,13 @@ SHFS_FD shfs_fio_open(const char *path)
 	/* lookup bentry (either by name or hash) */
 	if ((path[0] == SHFS_HASH_INDICATOR_PREFIX) &&
 	    (path[1] != '\0')) {
-		bentry = _shfs_lookup_bentry_by_hash(path + 1);
+		if (hash_parse(path + 1, h, shfs_vol.hlen) < 0) {
+#ifdef SHFS_STATS
+			++shfs_vol.mstats.i;
+#endif
+			return NULL;
+		}
+		bentry = _shfs_lookup_bentry_by_hash(h);
 	} else {
 		if ((path[0] == '\0') ||
 		    (path[0] == SHFS_HASH_INDICATOR_PREFIX && path[1] == '\0')) {
@@ -127,34 +155,27 @@ SHFS_FD shfs_fio_open(const char *path)
 		return NULL;
 	}
 
-	if (bentry->update) {
-		/* entry update in progress */
-		errno = EBUSY;
+	return _shfs_fio_open_bentry(bentry);
+}
+
+SHFS_FD shfs_fio_openh(hash512_t h)
+{
+	struct shfs_bentry *bentry;
+
+	bentry = _shfs_lookup_bentry_by_hash(h);
+	if (!bentry) {
+		errno = ENOENT;
 		return NULL;
-#ifdef SHFS_STATS
-		++shfs_vol.mstats.e;
-#endif
 	}
 
-	++shfs_nb_open;
-	if (bentry->refcount == 0) {
-		trydown(&bentry->updatelock); /* lock file for updates */
-		shfs_fio_clear_cookie(bentry);
-	}
-	++bentry->refcount;
-#ifdef SHFS_STATS
-	estats = shfs_stats_from_bentry(bentry);
-	estats->laccess = gettimestamp_s();
-	++estats->h;
-#endif
-	return (SHFS_FD) bentry;
+	return _shfs_fio_open_bentry(bentry);
 }
 
 /*
  * Opens a clone of an already opened file descriptor
  * This clone has to be closed by shfs_fio_close(), too.
  */
-SHFS_FD shfs_fio_clonef(SHFS_FD f)
+SHFS_FD shfs_fio_openf(SHFS_FD f)
 {
 	if (!f) {
 		errno = EINVAL;
