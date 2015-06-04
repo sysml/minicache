@@ -49,10 +49,16 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			strncpy(str_mime, hentry->f_attr.mime, sizeof(hentry->f_attr.mime));
 
 		/* hash */
-		if (shfs_vol.hlen <= 32)
-			fprintf(cio, "%-64s ", str_hash);
+		if (shfs_vol.hlen <= 8)
+			fprintf(cio, "?%-16s ", str_hash);
+		else if (shfs_vol.hlen <= 16)
+			fprintf(cio, "?%-32s ", str_hash);
+		else if (shfs_vol.hlen <= 32)
+			fprintf(cio, "?%-64s ", str_hash);
+		else if (shfs_vol.hlen <= 48)
+			fprintf(cio, "?%-96s ", str_hash);
 		else
-			fprintf(cio, "%-128s ", str_hash);
+			fprintf(cio, "?%-128s ", str_hash);
 
 		/* loc, size */
 		if (SHFS_HENTRY_ISLINK(hentry))

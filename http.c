@@ -1385,9 +1385,9 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 
 	/* thread switching might happen from here on */
 	fprintf(cio, " Listen port:                           %8"PRIu16"\n", HTTP_LISTEN_PORT);
-	fprintf(cio, " Number of sessions:                   %4"PRIu16"/%4"PRIu16"\n", nb_sess,  max_nb_sess);
-	fprintf(cio, " Number of requests:                   %4"PRIu32"/%4"PRIu32"\n", nb_reqs,  max_nb_reqs);
-	fprintf(cio, " Number of active uplinks:             %4"PRIu16"/%4"PRIu16"\n", nb_links, max_nb_links);
+	fprintf(cio, " Number of sessions:                   %4"PRIu16"/%4"PRIu16" (%4"PRIu64" B per session)\n", nb_sess,  max_nb_sess, sizeof(struct http_sess));
+	fprintf(cio, " Number of requests:                   %4"PRIu32"/%4"PRIu32" (%4"PRIu64" B per request)\n", nb_reqs,  max_nb_reqs, sizeof(struct http_req));
+	fprintf(cio, " Number of active uplinks:             %4"PRIu16"/%4"PRIu16" (%4"PRIu64" B per uplink)\n", nb_links, max_nb_links, sizeof(struct http_req_link_origin));
 	if (fio_nb_buffers) {
 		fprintf(cio, " File-I/O chunkbuffer chain length:     %8"PRIu64, (uint64_t) fio_nb_buffers);
 		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) fio_bffrlen / 1024);
