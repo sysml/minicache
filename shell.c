@@ -1195,7 +1195,6 @@ static int shcmd_repeat(FILE *cio, int argc, char *argv[])
 	goto usage;
     if (sscanf(argv[3], "%u", &arg_clear) != 1)
 	goto usage;
-    arg_clear = arg_clear < 0 ? 0 : arg_clear;
 
     cmdi = shell_get_cmd_index(argv[4]);
     if (cmdi < 0) {
