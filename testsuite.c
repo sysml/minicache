@@ -184,16 +184,23 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	unsigned int times = 1;
 	uint64_t usecs, bps;
 	void *buf;
-	size_t buflen;
+	size_t buflen = 0;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [file] [[times]]\n", argv[0]);
+		fprintf(cio, "Usage: %s [file] [[times]] [[buffer length]]\n", argv[0]);
 		ret = -1;
 		goto out;
 	}
 	if (argc >= 3) {
 		if ((sscanf(argv[2], "%u", &times)) != 1) {
 			fprintf(cio, "Could not parse times\n");
+			ret = -1;
+			goto out;
+		}
+	}
+	if (argc >= 4) {
+		if ((sscanf(argv[3], "%"SCNu64"", &buflen)) != 1 || buflen == 0) {
+			fprintf(stderr, "Could not parse buffer length\n");
 			ret = -1;
 			goto out;
 		}
@@ -205,15 +212,24 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		ret = -1;
 		goto out;
 	}
+	if (shfs_fio_islink(f)) {
+		fprintf(cio, "File %s is a link\n", argv[1]);
+		ret = -1;
+		goto out;
+	}
 	shfs_fio_size(f, &fsize);
 
-	buflen = shfs_vol.chunksize;
-	buf = target_malloc(8, shfs_vol.chunksize);
+	if (buflen == 0)
+		buflen = shfs_vol.chunksize;
+	buflen = min(fsize, buflen);
+	buf = target_malloc(8, buflen);
 	if (!buf) {
 		fprintf(cio, "Out of memory\n");
 		ret = -1;
 		goto out_close_f;
 	}
+	fprintf(cio, "%s: file size: %"PRIu64" B, read buffer length: %"PRIu64" B, read %d times\n",
+	       argv[1], fsize, buflen, times);
 
 	gettimeofday(&tm_start, NULL);
 	barrier();
@@ -245,20 +261,20 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		}
 		usecs = (tm_end.tv_usec - tm_start.tv_usec);
 		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
-		fprintf(cio, "%s: Read %lu bytes in %lu.%06u seconds ",
+		fprintf(cio, "%s: Read %lu bytes in %"PRIu64".%06"PRIu64" seconds ",
 		        argv[1], fsize * times, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * times * 1000000 + usecs / 2) / usecs;
 		if (bps > 1000000000) {
 			bps /= 10000000;
-			fprintf(cio, "(%lu.%02lu GB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s)\n", bps / 100, bps % 100);
 		} else if (bps > 1000000) {
 			bps /= 10000;
-			fprintf(cio, "(%lu.%02lu MB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s)\n", bps / 100, bps % 100);
 		} else if (bps > 1000) {
 			bps /= 10;
-			fprintf(cio, "(%lu.%02lu KB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s)\n", bps / 100, bps % 100);
 		} else {
-			fprintf(cio, "(%lu B/s)\n", bps);
+			fprintf(cio, "(%"PRIu64" B/s)\n", bps);
 		}
 	}
 
@@ -287,7 +303,7 @@ static int shcmd_fsperf(FILE *cio, int argc, char *argv[])
 		goto out;
 	}
 	if (argc >= 3) {
-		if (!sscanf(argv[2], "%"SCNu64"", &times) != 1) {
+		if (sscanf(argv[2], "%"SCNu64"", &times) != 1) {
 			fprintf(cio, "Could not parse times\n");
 			ret = -1;
 			goto out;
@@ -342,7 +358,8 @@ int register_testsuite(void)
 	/* ctldir entries (ignore errors) */
 	if (cd) {
 		ctldir_register_shcmd(cd, "blast", shcmd_blast);
-		ctldir_register_shcmd(cd, "netdf", shcmd_netdf);
+		ctldir_register_shcmd(cd, "ioperf", shcmd_ioperf);
+		ctldir_register_shcmd(cd, "fsperf", shcmd_fsperf);
 	}
 #endif
 
