@@ -286,7 +286,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 }
 
 /* sequential I/O performance */
-static int shcmd_fsperf(FILE *cio, int argc, char *argv[])
+static int shcmd_ocperf(FILE *cio, int argc, char *argv[])
 {
 	SHFS_FD f;
 	const char *fname;
@@ -359,7 +359,7 @@ int register_testsuite(void)
 	if (cd) {
 		ctldir_register_shcmd(cd, "blast", shcmd_blast);
 		ctldir_register_shcmd(cd, "ioperf", shcmd_ioperf);
-		ctldir_register_shcmd(cd, "fsperf", shcmd_fsperf);
+		ctldir_register_shcmd(cd, "ocperf", shcmd_ocperf);
 	}
 #endif
 
@@ -368,7 +368,7 @@ int register_testsuite(void)
 	shell_register_cmd("blast", shcmd_blast);
 	shell_register_cmd("netdf", shcmd_netdf);
 	shell_register_cmd("ioperf", shcmd_ioperf);
-	shell_register_cmd("fsperf", shcmd_fsperf);
+	shell_register_cmd("ocperf", shcmd_ocperf);
 #endif
 
 	return 0;
