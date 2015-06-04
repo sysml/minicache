@@ -530,6 +530,10 @@ int register_shfs_tools(void)
 		ctldir_register_shcmd(cd, "remount", shcmd_shfs_remount);
 		ctldir_register_shcmd(cd, "flush", shcmd_shfs_flush_cache);
 		ctldir_register_shcmd(cd, "prefetch", shcmd_shfs_prefetch_cache);
+		ctldir_register_shcmd(cd, "shfs-info", shcmd_shfs_info);
+		ctldir_register_shcmd(cd, "cache-info", shcmd_shfs_cache_info);
+		ctldir_register_shcmd(cd, "ls", shcmd_shfs_ls);
+		ctldir_register_shcmd(cd, "df", shcmd_shfs_dumpfile);
 	}
 #endif
 
