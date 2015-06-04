@@ -1184,26 +1184,33 @@ static int shcmd_repeat(FILE *cio, int argc, char *argv[])
     /* run a shell command multiple times */
     int ret = 0;
     int32_t cmdi;
-    unsigned int arg_times, arg_delay;
+    unsigned int arg_times, arg_delay, arg_clear;
     int do_delay = 0;
 
-    if (argc <= 3)
+    if (argc <= 4)
 	goto usage;
     if (sscanf(argv[1], "%u", &arg_times) != 1)
         goto usage;
     if (sscanf(argv[2], "%u", &arg_delay) != 1)
 	goto usage;
-    cmdi = shell_get_cmd_index(argv[3]);
+    if (sscanf(argv[3], "%u", &arg_clear) != 1)
+	goto usage;
+    arg_clear = arg_clear < 0 ? 0 : arg_clear;
+
+    cmdi = shell_get_cmd_index(argv[4]);
     if (cmdi < 0) {
-        fprintf(cio, "%s: command not found\n", argv[3]);
+        fprintf(cio, "%s: command not found\n", argv[4]);
         return 0;
     }
 
+    if (arg_times != 0 && arg_clear)
+        shcmd_clear(cio, 0, NULL);
     while (arg_times != 0 && ret >= 0 && ret != SH_CLOSE) {
 	if (do_delay)
 	    msleep(arg_delay);
-	shcmd_clear(cio, 0, NULL);
-	ret = sh->cmd_func[cmdi](cio, argc - 3, &argv[3]);
+	if (arg_clear && (arg_times % arg_clear == 0))
+	    shcmd_clear(cio, 0, NULL);
+	ret = sh->cmd_func[cmdi](cio, argc - 4, &argv[4]);
 	fflush(cio);
 	do_delay = 1;
 	--arg_times;
@@ -1211,7 +1218,7 @@ static int shcmd_repeat(FILE *cio, int argc, char *argv[])
     return ret;
 
  usage:
-    fprintf(cio, "Usage: %s [times] [delay-ms] [command] [[args]]...\n", argv[0]);
+    fprintf(cio, "Usage: %s [times] [delay-ms] [clear] [command] [[args]]...\n", argv[0]);
     return -1;
 }
 
