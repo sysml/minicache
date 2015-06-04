@@ -588,34 +588,6 @@ int main(int argc, char *argv[])
 #endif
 
     /* -----------------------------------
-     * detect available block devices
-     * ----------------------------------- */
-#ifdef CAN_DETECT_BLKDEVS
-    if (args.bd_detect) {
-	    printk("Detecting block devices...\n");
-	    TT_START(tt_bddetect);
-	    args.nb_bds = detect_blkdevs(args.bd_id, sizeof(args.bd_id));
-	    TT_END(tt_bddetect);
-    }
-#endif
-
-    /* -----------------------------------
-     * filesystem initialization & automount
-     * ----------------------------------- */
-    printk("Loading SHFS...\n");
-    init_shfs();
-#ifdef CONFIG_AUTOMOUNT
-    if (args.nb_bds) {
-	    printk("Automount cache filesystem...\n");
-	    TT_START(tt_automount);
-	    ret = mount_shfs(args.bd_id, args.nb_bds);
-	    TT_END(tt_automount);
-	    if (ret < 0)
-		    printk("Warning: Could not find or mount a cache filesystem\n");
-    }
-#endif
-
-    /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
     printk("Starting networking...\n");
@@ -704,6 +676,34 @@ int main(int argc, char *argv[])
 	    }
 	}
     }
+
+    /* -----------------------------------
+     * detect available block devices
+     * ----------------------------------- */
+#ifdef CAN_DETECT_BLKDEVS
+    if (args.bd_detect) {
+	    printk("Detecting block devices...\n");
+	    TT_START(tt_bddetect);
+	    args.nb_bds = detect_blkdevs(args.bd_id, sizeof(args.bd_id));
+	    TT_END(tt_bddetect);
+    }
+#endif
+
+    /* -----------------------------------
+     * filesystem initialization & automount
+     * ----------------------------------- */
+    printk("Loading SHFS...\n");
+    init_shfs();
+#ifdef CONFIG_AUTOMOUNT
+    if (args.nb_bds) {
+	    printk("Automount cache filesystem...\n");
+	    TT_START(tt_automount);
+	    ret = mount_shfs(args.bd_id, args.nb_bds);
+	    TT_END(tt_automount);
+	    if (ret < 0)
+		    printk("Warning: Could not find or mount a cache filesystem\n");
+    }
+#endif
 
     /* -----------------------------------
      * service initialization
