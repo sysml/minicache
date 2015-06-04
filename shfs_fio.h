@@ -97,7 +97,7 @@ static inline int shfs_fio_cache_aread(SHFS_FD f, chk_t offset, shfs_aiocb_t *cb
 {
     register chk_t addr;
 
-    if (!(shfs_is_fchk_in_bound(f, offset)))
+    if (unlikely(!(shfs_is_fchk_in_bound(f, offset))))
 	return -EINVAL;
     addr = shfs_volchk_fchk(f, offset);
     return shfs_cache_aread(addr, cb, cb_cookie, cb_argp, cce_out, t_out);

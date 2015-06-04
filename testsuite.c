@@ -34,7 +34,7 @@ static inline int parse_ipv4(ip4_addr_t *out, const char *buf)
 
 static int shcmd_blast(FILE *cio, int argc, char *argv[])
 {
-	// *((uint16_t *)0) = 0xDEAD;
+	// *((uint16_t *)0) = 0xD1E;
 	target_crash(); /* never returns */
 	fprintf(cio, "Failed to crash this instance\n");
 	return -1;
@@ -172,6 +172,7 @@ static int shcmd_netdf(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+/* sequential read performance */
 static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 {
 	SHFS_FD f;
@@ -179,14 +180,23 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	int ret = 0;
 	struct timeval tm_start;
 	struct timeval tm_end;
+	unsigned int t;
+	unsigned int times = 1;
 	uint64_t usecs, bps;
 	void *buf;
 	size_t buflen;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [file]\n", argv[0]);
+		fprintf(cio, "Usage: %s [file] [[times]]\n", argv[0]);
 		ret = -1;
 		goto out;
+	}
+	if (argc >= 3) {
+		if ((sscanf(argv[2], "%u", &times)) != 1) {
+			fprintf(cio, "Could not parse times\n");
+			ret = -1;
+			goto out;
+		}
 	}
 
 	f = shfs_fio_open(argv[1]);
@@ -205,25 +215,30 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		goto out_close_f;
 	}
 
-	left = fsize;
-	cur = 0;
 	gettimeofday(&tm_start, NULL);
-	while (left) {
-		dlen = min(left, buflen);
+	barrier();
+	for (t = 0; t < times; ++t) {
+		left = fsize;
+		cur = 0;
 
-		ret = shfs_fio_cache_read(f, cur, buf, dlen);
-		if (unlikely(ret < 0)) {
-			fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
-			ret = -1;
-			break;
+		while (left) {
+			dlen = min(left, buflen);
+
+			ret = shfs_fio_cache_read(f, cur, buf, dlen);
+			if (unlikely(ret < 0)) {
+				fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+				ret = -1;
+				goto out_close_f;
+			}
+
+			left -= dlen;
+			cur += dlen;
 		}
-
-		left -= dlen;
-		cur += dlen;
 	}
+	barrier();
 	gettimeofday(&tm_end, NULL);
 
-	if (ret >= 0) {
+	if (ret >= 0 && times > 0) {
 		if (tm_end.tv_usec < tm_start.tv_usec) {
 			tm_end.tv_usec += 1000000l;
 			--tm_end.tv_sec;
@@ -231,8 +246,8 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		usecs = (tm_end.tv_usec - tm_start.tv_usec);
 		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
 		fprintf(cio, "%s: Read %lu bytes in %lu.%06u seconds ",
-		        argv[1], cur, usecs / 1000000, usecs % 1000000);
-		bps = (cur * 1000000 + usecs / 2) / usecs;
+		        argv[1], fsize * times, usecs / 1000000, usecs % 1000000);
+		bps = (fsize * times * 1000000 + usecs / 2) / usecs;
 		if (bps > 1000000000) {
 			bps /= 10000000;
 			fprintf(cio, "(%lu.%02lu GB/s)\n", bps / 100, bps % 100);
@@ -250,6 +265,69 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	target_free(buf);
  out_close_f:
 	shfs_fio_close(f);
+ out:
+	return ret;
+}
+
+/* sequential I/O performance */
+static int shcmd_fsperf(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	const char *fname;
+	uint64_t i;
+	uint64_t times = 10000000;
+	int ret = 0;
+	struct timeval tm_start;
+	struct timeval tm_end;
+	uint64_t usecs, ops;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [file] [[times]]\n", argv[0]);
+		ret = -1;
+		goto out;
+	}
+	if (argc >= 3) {
+		if (!sscanf(argv[2], "%"SCNu64"", &times) != 1) {
+			fprintf(cio, "Could not parse times\n");
+			ret = -1;
+			goto out;
+		}
+	}
+
+	fname = argv[1];
+	f = shfs_fio_open(fname);
+	if (!f) {
+		fprintf(cio, "Could not open %s: %s\n", fname, strerror(errno));
+		ret = -1;
+		goto out;
+	}
+	shfs_fio_close(f);
+
+	gettimeofday(&tm_start, NULL);
+	barrier();
+	for (i = 0; i < times; ++i) {
+		f = shfs_fio_open(fname);
+		if (unlikely(!f)) {
+			ret = -errno;
+			break;
+		}
+		shfs_fio_close(f);
+	}
+	barrier();
+	gettimeofday(&tm_end, NULL);
+
+	if (f) {
+		if (tm_end.tv_usec < tm_start.tv_usec) {
+			tm_end.tv_usec += 1000000l;
+			--tm_end.tv_sec;
+		}
+		usecs = (tm_end.tv_usec - tm_start.tv_usec);
+		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		fprintf(cio, "%s: Opened and closed %"PRIu64" times in %"PRIu64".%06"PRIu64" seconds ",
+		        argv[1], times, usecs / 1000000, usecs % 1000000);
+		ops = (times * 1000000 + usecs / 2) / usecs;
+		fprintf(cio, "(%"PRIu64" open+close/s)\n", ops);
+	}
  out:
 	return ret;
 }
@@ -273,6 +351,7 @@ int register_testsuite(void)
 	shell_register_cmd("blast", shcmd_blast);
 	shell_register_cmd("netdf", shcmd_netdf);
 	shell_register_cmd("ioperf", shcmd_ioperf);
+	shell_register_cmd("fsperf", shcmd_fsperf);
 #endif
 
 	return 0;
