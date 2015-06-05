@@ -212,13 +212,17 @@ static inline struct shfs_cache_entry *shfs_cache_find(chk_t addr)
  * Note: never call this function on custom buffers that do not appear in any lists */
 static inline void shfs_cache_unlink(struct shfs_cache_entry *cce)
 {
+#ifndef SHFS_CACHE_DISABLE
     register uint32_t i;
+#endif /* SHFS_CACHE_DISABLE */
 
     ASSERT(cce->refcount == 0);
 
+#ifndef SHFS_CACHE_DISABLE
     /* unlink element from hash table collision list */
     i = shfs_cache_htindex(cce->addr);
     dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+#endif /* SHFS_CACHE_DISABLE */
 
     /* unlink element from available list */
     dlist_unlink(cce, shfs_vol.chunkcache->alist, alist);
@@ -280,7 +284,12 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
     cce->invalid = (ret < 0) ? 1 : 0;
 
     /* I/O failed and no references? (in case of read-ahead) */
-    if (unlikely(cce->refcount == 0 && cce->invalid)) {
+    if (unlikely(cce->refcount == 0
+#ifndef SHFS_CACHE_DISABLE
+		 && cce->invalid)) {
+#else /* SHFS_CACHE_DISABLE */
+		 )) {
+#endif /* SHFS_CACHE_DISABLE */
         printd("Destroy failed cache I/O at chunk %llu: %d\n", cce->addr, ret);
 	shfs_cache_unlink(cce);
 	shfs_cache_put_cce(cce);
@@ -316,6 +325,7 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 	/* got a new buffer: append it to alist */
 	dlist_append(cce, shfs_vol.chunkcache->alist, alist);
     } else {
+#ifndef SHFS_CACHE_DISABLE
 	/* try to pick a buffer (that has completed I/O) from the available list */
 	dlist_foreach(cce, shfs_vol.chunkcache->alist, alist) {
 		if (cce->t == NULL)
@@ -331,6 +341,10 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 	dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
 	/* move entry to the tail of alist */
 	dlist_relink_tail(cce, shfs_vol.chunkcache->alist, alist);
+#else /* SHFS_CACHE_DISABLE */
+	errno = EAGAIN;
+	return NULL;
+#endif /* SHFS_CACHE_DISABLE */
     }
 
     cce->addr = addr;
@@ -343,9 +357,11 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 	    return NULL;
     }
 
+#ifndef SHFS_CACHE_DISABLE
     /* link element to hash table */
     i = shfs_cache_htindex(addr);
     dlist_append(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+#endif /* SHFS_CACHE_DISABLE */
 
     return cce;
 }
@@ -389,8 +405,10 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     }
 
     /* check if we cached already this request */
+#ifndef SHFS_CACHE_DISABLE
     cce = shfs_cache_find(addr);
     if (!cce) {
+#endif /* SHFS_CACHE_DISABLE */
         /* no -> initiate a new I/O request */
         printd("Try to adding chunk %llu to cache\n", addr);
 	cce = shfs_cache_add(addr);
@@ -398,7 +416,9 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 	    ret = -errno;
 	    goto err_out;
 	}
+#ifndef SHFS_CACHE_DISABLE
     }
+#endif /* SHFS_CACHE_DISABLE */
 
     /* increase refcount */
     if (cce->refcount == 0) {
@@ -407,6 +427,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     }
     ++cce->refcount;
 
+#ifndef SHFS_CACHE_DISABLE
 #if (SHFS_CACHE_READAHEAD > 0)
     /* try to read ahead next addresses */
     shfs_cache_readahead(addr);
@@ -419,6 +440,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
         *cce_out = cce;
         return 0;
     }
+#endif /* SHFS_CACHE_DISABLE */
 
     /* chain a new AIO token for caller (emulates async I/O) */
     printd("Chunk %llu found in cache but it is not ready yet: Appending AIO token\n", addr);
@@ -446,11 +468,15 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     return 1;
 
  err_dec_refcount:
+#ifndef SHFS_CACHE_DISABLE
     --cce->refcount;
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
 	dlist_append(cce, shfs_vol.chunkcache->alist, alist);
     }
+#else /* SHFS_CACHE_DISABLE */
+    shfs_cache_put_cce(cce);
+#endif /* SHFS_CACHE_DISABLE */
  err_out:
     *t_out = NULL;
     *cce_out = NULL;
@@ -520,14 +546,18 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
     --cce->refcount;
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
+#ifndef SHFS_CACHE_DISABLE
 	if (likely(!cce->invalid)) {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	} else {
+#endif /* SHFS_CACHE_DISABLE */
             printd("Destroy invalid cache of chunk %llu\n", cce->addr);
 	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
 	        shfs_cache_unlink(cce);
 	    shfs_cache_put_cce(cce);
+#ifndef SHFS_CACHE_DISABLE
 	}
+#endif /* SHFS_CACHE_DISABLE */
     }
 }
 
@@ -564,7 +594,12 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
     --cce->refcount;
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
-	if (shfs_aio_is_done(cce->t) && cce->invalid) {
+	if (shfs_aio_is_done(cce->t)
+#ifndef SHFS_CACHE_DISABLE
+	    && cce->invalid) {
+#else /* SHFS_CACHE_DISABLE */
+	    ) {
+#endif /* SHFS_CACHE_DISABLE */
 	    printd("Destroy invalid cache of chunk %llu\n", cce->addr);
 	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
 	        shfs_cache_unlink(cce);
