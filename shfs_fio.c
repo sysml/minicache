@@ -251,8 +251,8 @@ void  shfs_fio_link_rpath(SHFS_FD f, char *out, size_t outlen)
 }
 
 /*
- * Slow sync I/O file read function
- * Warning: This function is using busy-waiting
+ * Slow sync I/O file read functions
+ * Warning: These functions are using busy-waiting
  */
 int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 {
@@ -307,10 +307,59 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 	return ret;
 }
 
-/*
- * Slow sync I/O file read function but using cache
- * Warning: This function is using busy-waiting
- */
+int shfs_fio_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
+{
+	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
+	struct shfs_hentry *hentry = bentry->hentry;
+	void     *chk_buf;
+	chk_t    chk_off;
+	uint64_t byt_off;
+	uint64_t buf_off;
+	uint64_t left;
+	uint64_t rlen;
+	int ret = 0;
+
+	/* check if entry is link to remote file */
+	if (SHFS_HENTRY_ISLINK(hentry))
+		return -EINVAL;
+
+	/* check boundaries */
+	if ((offset > hentry->f_attr.len) ||
+	    ((offset + len) > hentry->f_attr.len))
+		return -EINVAL;
+
+	/* pick chunk I/O buffer from pool */
+	chk_buf = target_malloc(shfs_vol.ioalign, shfs_vol.chunksize);
+	if (!chk_buf)
+		return -ENOMEM;
+
+	/* perform the I/O chunk-wise */
+	chk_off = shfs_volchk_foff(f, offset);
+	byt_off = shfs_volchkoff_foff(f, offset);
+	left = len;
+	buf_off = 0;
+
+	while (left) {
+		ret = shfs_read_chunk_nosched(chk_off, 1, chk_buf);
+		if (ret < 0)
+			goto out;
+
+		rlen = min(shfs_vol.chunksize - byt_off, left);
+		memcpy((uint8_t *) buf + buf_off,
+		       (uint8_t *) chk_buf + byt_off,
+		       rlen);
+		left -= rlen;
+
+		++chk_off;   /* go to next chunk */
+		byt_off = 0; /* byte offset is set on the first chunk only */
+		buf_off += rlen;
+	}
+
+ out:
+	target_free(chk_buf);
+	return ret;
+}
+
 int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 {
 	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
@@ -340,6 +389,57 @@ int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 
 	while (left) {
 		cce = shfs_cache_read(chk_off);
+		if (!cce) {
+			ret = -errno;
+			goto out;
+		}
+
+		rlen = min(shfs_vol.chunksize - byt_off, left);
+		memcpy((uint8_t *) buf + buf_off,
+		       (uint8_t *) cce->buffer + byt_off,
+		       rlen);
+		left -= rlen;
+
+		shfs_cache_release(cce);
+
+		++chk_off;   /* go to next chunk */
+		byt_off = 0; /* byte offset is set on the first chunk only */
+		buf_off += rlen;
+	}
+
+ out:
+	return ret;
+}
+
+int shfs_fio_cache_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
+{
+	struct shfs_bentry *bentry = (struct shfs_bentry *) f;
+	struct shfs_hentry *hentry = bentry->hentry;
+	struct shfs_cache_entry *cce;
+	chk_t    chk_off;
+	uint64_t byt_off;
+	uint64_t buf_off;
+	uint64_t left;
+	uint64_t rlen;
+	int ret = 0;
+
+	/* check if entry is link to remote file */
+	if (SHFS_HENTRY_ISLINK(hentry))
+		return -EINVAL;
+
+	/* check boundaries */
+	if ((offset > hentry->f_attr.len) ||
+	    ((offset + len) > hentry->f_attr.len))
+		return -EINVAL;
+
+	/* perform the I/O chunk-wise */
+	chk_off = shfs_volchk_foff(f, offset);
+	byt_off = shfs_volchkoff_foff(f, offset);
+	left = len;
+	buf_off = 0;
+
+	while (left) {
+		cce = shfs_cache_read_nosched(chk_off);
 		if (!cce) {
 			ret = -errno;
 			goto out;

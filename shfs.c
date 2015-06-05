@@ -92,9 +92,9 @@ static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
 		goto err_close_bd;
 	}
 
-	/* read first chunk (considered as 4K) */
+	/* read first chunk (chunksize considered as 4K) */
 	rlen = 4096 / blkdev_ssize(bd);
-	ret = blkdev_sync_read(bd, 0, rlen, chk0);
+	ret = blkdev_sync_read(bd, 0, rlen, chk0); /* FIXME: Use version that does not call schedule() */
 	if (ret < 0) {
 		printd("Could not read from block device %s: %d\n", str_id, ret);
 		errno = -ret;
@@ -320,7 +320,7 @@ static int load_vol_hconf(void)
 	}
 
 	printd("Loading SHFS configuration chunk...\n");
-	ret = shfs_read_chunk(1, 1, chk1);
+	ret = shfs_read_chunk_nosched(1, 1, chk1);
 	if (ret < 0)
 		goto out_free_chk1;
 
@@ -668,7 +668,7 @@ static int reload_vol_htable(void) {
 	printd("Re-reading hash table...\n");
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
 		/* read chunk from disk */
-		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf);
+		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf); /* calls schedule() */
 		if (ret < 0) {
 			ret = -EIO;
 			goto out;

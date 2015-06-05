@@ -136,8 +136,10 @@ static inline struct shfs_cache_entry *shfs_cache_read(chk_t addr)
 
 	do {
 		ret = shfs_cache_aread(addr, NULL, NULL, NULL, &cce, &t);
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
 			schedule();
+			shfs_poll_blkdevs();
+		}
 	} while (ret == -EAGAIN);
 	if (ret < 0) {
 		errno = -ret;
@@ -146,6 +148,41 @@ static inline struct shfs_cache_entry *shfs_cache_read(chk_t addr)
 	if (ret == 1) {
 		/* wait for completion */
 		shfs_aio_wait(t);
+		ret = shfs_aio_finalize(t);
+		if (ret < 0) {
+			/* I/O failed */
+			shfs_cache_release(cce);
+			errno = -ret;
+			return NULL;
+		}
+	} else if (unlikely(cce->invalid)) {
+		/* cache buffer is broken */
+		shfs_cache_release(cce);
+		errno = EIO;
+		return NULL;
+	}
+	return cce;
+}
+
+/* synchronous read version that does not call schedule() */
+static inline struct shfs_cache_entry *shfs_cache_read_nosched(chk_t addr)
+{
+	struct shfs_cache_entry *cce;
+	SHFS_AIO_TOKEN *t;
+	int ret;
+
+	do {
+		ret = shfs_cache_aread(addr, NULL, NULL, NULL, &cce, &t);
+		if (ret == -EAGAIN)
+			shfs_poll_blkdevs();
+	} while (ret == -EAGAIN);
+	if (ret < 0) {
+		errno = -ret;
+		return NULL;
+	}
+	if (ret == 1) {
+		/* wait for completion */
+		shfs_aio_wait_nosched(t);
 		ret = shfs_aio_finalize(t);
 		if (ret < 0) {
 			/* I/O failed */

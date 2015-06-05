@@ -97,8 +97,10 @@ static inline int shfs_fio_set_cookie(SHFS_FD f, void *cookie) {
  */
 /* direct read */
 int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
+int shfs_fio_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
 /* read is using cache */
 int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
+int shfs_fio_cache_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
 
 /*
  * Async file read

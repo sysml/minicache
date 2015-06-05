@@ -83,7 +83,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	if (shfs_fio_islink(f)) {
 		fprintf(cio, "File %s is a link\n", argv[1]);
 		ret = -1;
-		goto out;
+		goto out_close_f;
 	}
 	shfs_fio_size(f, &fsize);
 
@@ -108,7 +108,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		while (left) {
 			dlen = min(left, buflen);
 
-			ret = shfs_fio_cache_read(f, cur, buf, dlen);
+			ret = shfs_fio_cache_read_nosched(f, cur, buf, dlen);
 			if (unlikely(ret < 0)) {
 				fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
 				ret = -1;
@@ -147,6 +147,95 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	}
 
 	target_free(buf);
+ out_close_f:
+	shfs_fio_close(f);
+ out:
+	return ret;
+}
+
+/* sequential read performance without doing a memcpy to a target buffer */
+static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
+{
+	SHFS_FD f;
+	chk_t fsize, c, start, end;
+	struct shfs_cache_entry *cce;
+	int ret = 0;
+	struct timeval tm_start;
+	struct timeval tm_end;
+	unsigned int t;
+	unsigned int times = 1;
+	uint64_t usecs, bps;
+
+	if (argc <= 1) {
+		fprintf(cio, "Usage: %s [file] [[times]]\n", argv[0]);
+		ret = -1;
+		goto out;
+	}
+	if (argc >= 3) {
+		if ((sscanf(argv[2], "%u", &times)) != 1) {
+			fprintf(cio, "Could not parse times\n");
+			ret = -1;
+			goto out;
+		}
+	}
+
+	f = shfs_fio_open(argv[1]);
+	if (!f) {
+		fprintf(cio, "Could not open %s: %s\n", argv[1], strerror(errno));
+		ret = -1;
+		goto out;
+	}
+	if (shfs_fio_islink(f)) {
+		fprintf(cio, "File %s is a link\n", argv[1]);
+		ret = -1;
+		goto out_close_f;
+	}
+	start = shfs_volchk_foff(f, 0);
+	fsize = shfs_fio_size_chks(f);
+	end = start + fsize;
+
+	fprintf(cio, "%s: file size: %"PRIu64" chunks, read length: %"PRIu32" B, read %d times\n",
+	       argv[1], fsize, shfs_vol.chunksize, times);
+
+	gettimeofday(&tm_start, NULL);
+	barrier();
+	for (t = 0; t < times; ++t) {
+		for (c = start; c < end; ++c) {
+			cce = shfs_cache_read_nosched(c); /* does not call schedule() */
+			if (unlikely(!cce)) {
+				fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+				goto out_close_f;
+			}
+			shfs_cache_release(cce);
+		}
+	}
+	barrier();
+	gettimeofday(&tm_end, NULL);
+
+	if (ret >= 0 && times > 0) {
+		if (tm_end.tv_usec < tm_start.tv_usec) {
+			tm_end.tv_usec += 1000000l;
+			--tm_end.tv_sec;
+		}
+		usecs = (tm_end.tv_usec - tm_start.tv_usec);
+		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		fprintf(cio, "%s: Read %lu bytes in %"PRIu64".%06"PRIu64" seconds ",
+		        argv[1], fsize * shfs_vol.chunksize * times, usecs / 1000000, usecs % 1000000);
+		bps = (fsize * shfs_vol.chunksize * times * 1000000 + usecs / 2) / usecs;
+		if (bps > 1000000000) {
+			bps /= 10000000;
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s)\n", bps / 100, bps % 100);
+		} else if (bps > 1000000) {
+			bps /= 10000;
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s)\n", bps / 100, bps % 100);
+		} else if (bps > 1000) {
+			bps /= 10;
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s)\n", bps / 100, bps % 100);
+		} else {
+			fprintf(cio, "(%"PRIu64" B/s)\n", bps);
+		}
+	}
+
  out_close_f:
 	shfs_fio_close(f);
  out:
@@ -304,6 +393,7 @@ int register_testsuite(void)
 	if (cd) {
 		ctldir_register_shcmd(cd, "blast", shcmd_blast);
 		ctldir_register_shcmd(cd, "ioperf", shcmd_ioperf);
+		ctldir_register_shcmd(cd, "ioperf2", shcmd_ioperf2);
 		ctldir_register_shcmd(cd, "ocperf", shcmd_ocperf);
 		ctldir_register_shcmd(cd, "ocperf2", shcmd_ocperf2);
 	}
@@ -313,6 +403,7 @@ int register_testsuite(void)
 	/* shell commands (ignore errors) */
 	shell_register_cmd("blast", shcmd_blast);
 	shell_register_cmd("ioperf", shcmd_ioperf);
+	shell_register_cmd("ioperf2", shcmd_ioperf2);
 	shell_register_cmd("ocperf", shcmd_ocperf);
 	shell_register_cmd("ocperf2", shcmd_ocperf2);
 #endif

@@ -182,8 +182,13 @@ static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
 #define shfs_aio_wait(t) \
 	while (!shfs_aio_is_done((t))) { \
 		shfs_poll_blkdevs(); \
-		if (!shfs_aio_is_done((t)))  \
-			schedule(); \
+		if (!shfs_aio_is_done((t)))	\
+			schedule();	     \
+	}
+
+#define shfs_aio_wait_nosched(t) \
+	while (!shfs_aio_is_done((t))) { \
+		shfs_poll_blkdevs(); \
 	}
 
 /*
@@ -220,5 +225,19 @@ static inline int shfs_io_chunk(chk_t start, chk_t len, int write, void *buffer)
 	shfs_io_chunk((start), (len), 0, (buffer))
 #define shfs_write_chunk(start, len, buffer) \
 	shfs_io_chunk((start), (len), 1, (buffer))
+
+static inline int shfs_io_chunk_nosched(chk_t start, chk_t len, int write, void *buffer) {
+	SHFS_AIO_TOKEN *t;
+
+	t = shfs_aio_chunk(start, len, write, buffer, NULL, NULL, NULL);
+	if (!t)
+		return -errno;
+	shfs_aio_wait_nosched(t);
+	return shfs_aio_finalize(t);
+}
+#define shfs_read_chunk_nosched(start, len, buffer) \
+	shfs_io_chunk_nosched((start), (len), 0, (buffer))
+#define shfs_write_chunk_nosched(start, len, buffer) \
+	shfs_io_chunk_nosched((start), (len), 1, (buffer))
 
 #endif /* _SHFS_H_ */
