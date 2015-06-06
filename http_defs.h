@@ -4,6 +4,8 @@
 #include <target/sys.h>
 #include <lwip/tcp.h>
 #include <lwip/dns.h>
+#include <errno.h>
+#include "likely.h"
 
 #include "http_parser.h"
 #include "http_data.h"

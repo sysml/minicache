@@ -93,9 +93,16 @@ void app_shutdown(unsigned reason);
 #define NSEC_TO_MSEC(ns) ((ns) / 1000000l)
 
 /* env init/exit */
+#ifdef CONFIG_PTH_THREADS
 #define target_init() \
 	pth_init()
 #define target_exit() \
 	pth_exit(NULL)
+#else
+#define target_init() \
+	do {} while (0)
+#define target_exit() \
+	do {} while (0)
+#endif
 
 #endif /* _SYS_H_ */
