@@ -151,12 +151,17 @@ static inline void _blkdev_finalize_req(struct _blkdev_req *req)
   robj = req->p_obj;
 
   printd("Finalizing request %p\n", req);
-  ret = (aio_return(&req->aiocb) == req->aiocb.aio_nbytes) ? 0 : -1;
+  ret = (req->bio->bio_flags & BIO_ERROR) ? req->bio->bio_error : 0;
+  destroy_bio(req->bio);
+  req->bio = NULL;
+
   if (req->cb)
     req->cb(ret, req->cb_argp); /* user callback */
 
   mempool_put(robj);
 }
+
+extern int bio_isdone(struct bio *bio);
 
 void blkdev_poll_req(struct blkdev *bd)
 {
@@ -168,8 +173,9 @@ void blkdev_poll_req(struct blkdev *bd)
     req_next = req->_next;
     
     printd("Checking request %p for completion\n", req);
-    if (aio_error(&req->aiocb) != EINPROGRESS) {
-      /* aio has completed
+    //ret = bio_wait(bio);
+    if (bio_isdone(req->bio)) {
+      /* io has completed
        * dequeue it from list and finalize it */
       if (req->_next)
 	req->_next->_prev = req->_prev;
@@ -179,12 +185,13 @@ void blkdev_poll_req(struct blkdev *bd)
 	req->_prev->_next = req->_next;
       else
 	bd->reqq_head = req->_next;
-      
+
       _blkdev_finalize_req(req);
     }
 
     req = req_next;
   }
+  //printd("Done with checking for completion\n");
 }
 
 void _blkdev_sync_io_cb(int ret, void *argp)

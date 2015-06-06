@@ -12,6 +12,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <osv/device.h>
+#include <osv/bio.h>
 
 #define MAX_REQUESTS 1024
 #define DEFAULT_SSIZE 512 /* lower bound for opened files */
@@ -43,7 +44,7 @@ struct blkdev {
 struct _blkdev_req {
   struct mempool_obj *p_obj; /* reference to dependent memory pool object */
   struct blkdev *bd;
-  struct aiocb aiocb;
+  struct bio *bio;
   sector_t sector;
   sector_t nb_sectors;
   int write;
@@ -97,14 +98,17 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req = robj->data;
   req->p_obj = robj;
 
-  memset(&req->aiocb, 0, sizeof(req->aiocb));
-  req->aiocb.aio_fildes = bd->fd;
-  req->aiocb.aio_buf = buffer;
-  req->aiocb.aio_offset = (off_t) (start * blkdev_ssize(bd));
-  req->aiocb.aio_nbytes = len * blkdev_ssize(bd);
-  req->aiocb.aio_reqprio = 0;
-  req->aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
-  req->aiocb.aio_lio_opcode = 0; //write ? LIO_WRITE : LIO_READ;
+  req->bio = alloc_bio();
+  if (!req->bio) {
+	mempool_put(robj);
+	return ENOMEM;
+  }
+
+  req->bio->bio_cmd = write ? BIO_WRITE : BIO_READ;
+  req->bio->bio_dev = bd->fd;
+  req->bio->bio_data = buffer;
+  req->bio->bio_offset = start * bd->ssize;
+  req->bio->bio_bcount = len * bd->ssize;
   req->bd = bd;
   req->sector = start;
   req->nb_sectors = len;
@@ -122,10 +126,7 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   bd->reqq_tail = req;
 
   /* send AIO request */
-  if (write)
-    ret = aio_write(&req->aiocb);
-  else
-    ret = aio_read(&req->aiocb);
+  bd->fd->driver->devops->strategy(req->bio);
   return ret;
 }
 #define blkdev_async_write_nocheck(bd, start, len, buffer, cb, cb_argp) \

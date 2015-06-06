@@ -253,7 +253,7 @@ endif
 APPDIRS=target/$(TARGET)/blkdev
 ifeq ($(CONFIG_OSVBLK),y)
 APPFILES+=target/$(TARGET)/blkdev/osv-blk.c
-#APPFILESXX+=target/$(TARGET)/blkdev/osv-blk-io.cc
+APPFILESXX+=target/$(TARGET)/blkdev/osv-blk-bio.cc
 CFLAGS+=-DCONFIG_OSVBLK
 else
 APPFILES+=target/$(TARGET)/blkdev/paio-blk.c
