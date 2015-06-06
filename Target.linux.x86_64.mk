@@ -161,7 +161,7 @@ CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 # -Wunreachable-code
 # -ansi
 # -std=c89
-LDFLAGS+=-pthread -lrt #-lutil
+LDFLAGS+=-pthread #-lutil
 ARFLAGS=rs
 
 ifeq ($(CONFIG_PTH_THREADS),y)
@@ -250,10 +250,20 @@ CFLAGS+=-DCONFIG_TAPIF
 endif
 endif
 
+APPDIRS=target/$(TARGET)/blkdev
+ifeq ($(CONFIG_OSVBLK),y)
+APPFILES+=target/$(TARGET)/blkdev/osv-blk.c
+#APPFILESXX+=target/$(TARGET)/blkdev/osv-blk-io.cc
+CFLAGS+=-DCONFIG_OSVBLK
+else
+APPFILES+=target/$(TARGET)/blkdev/paio-blk.c
+LDFLAGS+=-lrt
+endif
+
 # APPFILES: Applications.
-APPDIRS=.:target/$(TARGET)
-APPFILES  =$(MCOBJS)
-APPFILESXX=$(MCOBJSXX)
+APPDIRS+=:.:target/$(TARGET)
+APPFILES+=$(MCOBJS)
+APPFILESXX+=$(MCOBJSXX)
 APPFILESW  =$(addprefix $(BUILDDIR)/,$(notdir $(APPFILES)))
 APPFILESWXX=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESXX)))
 APPOBJS =$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESW:.c=.o)))

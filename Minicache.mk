@@ -24,8 +24,7 @@ MCOBJS						= ring.o \
 						  http_link.o \
 						  http.o \
 						  link_format.o \
-						  minicache.o \
-						  target/$(TARGET)/blkdev.o
+						  minicache.o
 ifeq ($(CONFIG_MINICACHE_IPERF_SERVER),y)
 MCOBJS						+= iperf.o
 endif
