@@ -135,19 +135,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		        argv[1], fsize * times, reqs, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * times * 1000000 + usecs / 2) / usecs;
 		reqs = (reqs * 1000000 + usecs / 2) / usecs;
-		if (bps > 1000000000) {
-			bps /= 10000000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s", bps / 100, bps % 100);
-		} else if (bps > 1000000) {
-			bps /= 10000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s", bps / 100, bps % 100);
-		} else if (bps > 1000) {
-			bps /= 10;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s", bps / 100, bps % 100);
-		} else {
-			fprintf(cio, "(%"PRIu64" B/s\n", bps);
-		}
-		fprintf(cio, ", %"PRIu64" req/s)\n", reqs);
+		fprintf(cio, "(%"PRIu64" B/s, %"PRIu64" req/s)\n", bps, reqs);
 	}
 
 	target_free(buf);
@@ -229,19 +217,7 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 		        argv[1], fsize * shfs_vol.chunksize * times, reqs, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * shfs_vol.chunksize * times * 1000000 + usecs / 2) / usecs;
 		reqs = (reqs * 1000000 + usecs / 2) / usecs;
-		if (bps > 1000000000) {
-			bps /= 10000000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s", bps / 100, bps % 100);
-		} else if (bps > 1000000) {
-			bps /= 10000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s", bps / 100, bps % 100);
-		} else if (bps > 1000) {
-			bps /= 10;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s", bps / 100, bps % 100);
-		} else {
-			fprintf(cio, "(%"PRIu64" B/s", bps);
-		}
-		fprintf(cio, ", %"PRIu64" req/s)\n", reqs);
+		fprintf(cio, "(%"PRIu64" B/s, %"PRIu64" req/s)\n", bps, reqs);
 	}
 
  out_close_f:
