@@ -120,6 +120,10 @@ CXXFLAGS+=-std=gnu++11 $(common)
 LDFLAGS+=$(autodepend)
 else
 CONFIG_PTH_THREADS=y
+
+CONFIG_SHFS_CACHE_READAHEAD		?= 8
+CONFIG_SHFS_CACHE_POOL_NB_BUFFERS	?= 8192
+CONFIG_SHFS_CACHE_GROW			= n
 endif
 
 ###########################################################################

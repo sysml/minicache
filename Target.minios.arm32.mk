@@ -77,6 +77,10 @@ CONFIG_DEBUG_LWIP_MALLOC	?= n
 ######################################
 ## Stub Domain
 ######################################
+CONFIG_SHFS_CACHE_READAHEAD		?= 8
+CONFIG_SHFS_CACHE_POOL_NB_BUFFERS	?= 64
+CONFIG_SHFS_CACHE_GROW			?= y
+
 include Minicache.mk
 
 stubdom		 = y
