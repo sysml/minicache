@@ -150,8 +150,8 @@ static inline void _blkdev_finalize_req(struct _blkdev_req *req)
 
   robj = req->p_obj;
 
-  printd("Finalizing request %p\n", req);
-  ret = (req->bio->bio_flags & BIO_ERROR) ? req->bio->bio_error : 0;
+  printd("Finalizing request %p (bio %p)\n", req, req->bio);
+  ret = (req->bio->bio_flags & BIO_ERROR) ? -EIO : 0;
   destroy_bio(req->bio);
   req->bio = NULL;
 
@@ -172,7 +172,7 @@ void blkdev_poll_req(struct blkdev *bd)
   while (req) {
     req_next = req->_next;
     
-    printd("Checking request %p for completion\n", req);
+    printd("Checking request %p (bio %p) for completion\n", req, req->bio);
     //ret = bio_wait(bio);
     if (bio_isdone(req->bio)) {
       /* io has completed

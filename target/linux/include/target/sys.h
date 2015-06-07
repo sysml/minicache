@@ -78,10 +78,10 @@ void app_shutdown(unsigned reason);
 #endif
 
 /* semaphore */
-#define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphres? */
-#define up(s) (sem_post((s)) == 0 ? 1 : 0)
-#define down(s) (sem_wait((s)) == 0 ? 1 : 0)
-#define trydown(s) (sem_trywait((s)) == 0 ? 1 : 0)
+#define init_SEMAPHORE(s, v) sem_init((s), 0, (v)) /* negative semaphores? */
+#define up(s) (sem_post((s)) ? 0 : 1)
+#define down(s) (sem_wait((s)) ? 0 : 1)
+#define trydown(s) (sem_trywait((s)) ? 0 : 1)
 
 #define target_now_ns() ({ \
 	uint64_t r;						\
