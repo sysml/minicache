@@ -353,7 +353,7 @@ static int load_vol_hconf(void)
  * Note: load_vol_hconf() and local_vol_cconf() has to called before
  */
 struct _load_vol_htable_aiot {
-	sem_t done;
+	int done;
 	chk_t left;
 	int ret;
 };
@@ -373,7 +373,7 @@ static void _load_vol_htable_cb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 		aiot->ret = ioret;
 	--aiot->left;
 	if (unlikely(aiot->left == 0))
-		up(&aiot->done);
+		aiot->done = 1;
 }
 
 static int load_vol_htable(void)
@@ -397,7 +397,7 @@ static int load_vol_htable(void)
 	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
 
 	/* read hash table from device */
-	init_SEMAPHORE(&aiot.done, 0);
+	aiot.done = 0;
 	aiot.left = shfs_vol.htable_len;
 	aiot.ret = 0;
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
@@ -440,7 +440,7 @@ static int load_vol_htable(void)
 
 	/* wait for I/O completion */
 	printd("Waiting for I/O completion...\n");
-	while (!trydown(&aiot.done))
+	while (!aiot.done)
 		shfs_poll_blkdevs();
 	if (aiot.ret < 0) {
 		printd("There was an I/O error: Aborting...\n");
