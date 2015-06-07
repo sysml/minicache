@@ -345,7 +345,11 @@ static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 		err = httpsess_write(hsess,
 				     (void *)(((uintptr_t) o->cce[idx]->buffer) + bffr_off),
 				     &slen,
+#ifdef HTTP_LINK_MEMCPY
+				     TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
+#else
 				     TCP_WRITE_FLAG_MORE);
+#endif
 		if (err != ERR_OK || !slen) {
 			break; /* send buffer seems to be full */
 		}
@@ -362,7 +366,7 @@ static inline err_t httpreq_write_link(struct http_req *hreq, size_t *sent)
 		}
 	}
 
-	if (pos == o->pos) /* we could completely catch up: send out what we have */
+	if (pos == o->pos) /* we catched up: send out what we have */
 		httpsess_flush(hsess);
 
 	hreq->l.cce_idx = idx;
