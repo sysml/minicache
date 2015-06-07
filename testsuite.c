@@ -50,7 +50,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	struct timeval tm_end;
 	unsigned int t;
 	unsigned int times = 1;
-	uint64_t usecs, bps;
+	uint64_t usecs, bps, reqs;
 	void *buf;
 	size_t buflen = 0;
 
@@ -99,6 +99,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "%s: file size: %"PRIu64" B, read buffer length: %"PRIu64" B, read %d times\n",
 	       argv[1], fsize, buflen, times);
 
+	reqs = 0;
 	gettimeofday(&tm_start, NULL);
 	barrier();
 	for (t = 0; t < times; ++t) {
@@ -115,6 +116,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 				goto out_close_f;
 			}
 
+			++reqs;
 			left -= dlen;
 			cur += dlen;
 		}
@@ -129,21 +131,23 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 		}
 		usecs = (tm_end.tv_usec - tm_start.tv_usec);
 		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
-		fprintf(cio, "%s: Read %lu bytes in %"PRIu64".%06"PRIu64" seconds ",
-		        argv[1], fsize * times, usecs / 1000000, usecs % 1000000);
+		fprintf(cio, "%s: Read %lu bytes with %"PRIu64" requests in %"PRIu64".%06"PRIu64" seconds ",
+		        argv[1], fsize * times, reqs, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * times * 1000000 + usecs / 2) / usecs;
+		reqs = (reqs * 1000000 + usecs / 2) / usecs;
 		if (bps > 1000000000) {
 			bps /= 10000000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s", bps / 100, bps % 100);
 		} else if (bps > 1000000) {
 			bps /= 10000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s", bps / 100, bps % 100);
 		} else if (bps > 1000) {
 			bps /= 10;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s", bps / 100, bps % 100);
 		} else {
-			fprintf(cio, "(%"PRIu64" B/s)\n", bps);
+			fprintf(cio, "(%"PRIu64" B/s\n", bps);
 		}
+		fprintf(cio, ", %"PRIu64" req/s)\n", reqs);
 	}
 
 	target_free(buf);
@@ -164,7 +168,7 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 	struct timeval tm_end;
 	unsigned int t;
 	unsigned int times = 1;
-	uint64_t usecs, bps;
+	uint64_t usecs, bps, reqs;
 
 	if (argc <= 1) {
 		fprintf(cio, "Usage: %s [file] [[times]]\n", argv[0]);
@@ -197,6 +201,7 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "%s: file size: %"PRIu64" chunks, read length: %"PRIu32" B, read %d times\n",
 	       argv[1], fsize, shfs_vol.chunksize, times);
 
+	reqs = 0;
 	gettimeofday(&tm_start, NULL);
 	barrier();
 	for (t = 0; t < times; ++t) {
@@ -207,6 +212,7 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 				goto out_close_f;
 			}
 			shfs_cache_release(cce);
+			++reqs;
 		}
 	}
 	barrier();
@@ -219,21 +225,23 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 		}
 		usecs = (tm_end.tv_usec - tm_start.tv_usec);
 		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
-		fprintf(cio, "%s: Read %lu bytes in %"PRIu64".%06"PRIu64" seconds ",
-		        argv[1], fsize * shfs_vol.chunksize * times, usecs / 1000000, usecs % 1000000);
+		fprintf(cio, "%s: Read %lu bytes with %"PRIu64" requests in %"PRIu64".%06"PRIu64" seconds ",
+		        argv[1], fsize * shfs_vol.chunksize * times, reqs, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * shfs_vol.chunksize * times * 1000000 + usecs / 2) / usecs;
+		reqs = (reqs * 1000000 + usecs / 2) / usecs;
 		if (bps > 1000000000) {
 			bps /= 10000000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" GB/s", bps / 100, bps % 100);
 		} else if (bps > 1000000) {
 			bps /= 10000;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" MB/s", bps / 100, bps % 100);
 		} else if (bps > 1000) {
 			bps /= 10;
-			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s)\n", bps / 100, bps % 100);
+			fprintf(cio, "(%"PRIu64".%02"PRIu64" KB/s", bps / 100, bps % 100);
 		} else {
-			fprintf(cio, "(%"PRIu64" B/s)\n", bps);
+			fprintf(cio, "(%"PRIu64" B/s", bps);
 		}
+		fprintf(cio, ", %"PRIu64" req/s)\n", reqs);
 	}
 
  out_close_f:
