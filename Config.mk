@@ -60,7 +60,7 @@ CONFIG_CTLDIR_NOCHMOD		?= y
 ######################################
 ## Misc
 ######################################
-CONFIG_TESTSUITE		?= y
+CONFIG_TESTSUITE		?= n
 
 ######################################
 ## Debugging options
