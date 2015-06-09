@@ -69,12 +69,8 @@ debug				?= n
 CONFIG_DEBUG_LWIP		?= n
 CONFIG_DEBUG_LWIP_MALLOC	?= n
 
-# Enables TCP window scaling
-#CFLAGS				+= -DLWIP_WND_SCALE=1
-
 # Enables LWIP stats in the shell
-CFLAGS	       			+= -DLWIP_STATS_DISPLAY=1
-
+#CFLAGS	       			+= -DLWIP_STATS_DISPLAY=1
 # LWIP debug
 #CFLAGS				+= -DLWIP_IF_DEBUG
 #CFLAGS				+= -DLWIP_TCP_DEBUG
