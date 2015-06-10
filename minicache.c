@@ -299,7 +299,7 @@ static int parse_args(int argc, char *argv[])
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
     args.no_ctldir = 0;
-    args.nb_http_sess = 500;
+    args.nb_http_sess = CONFIG_LWIP_NUM_TCPCON;
 #if ((100 + 4) > MEMP_NUM_TCP_PCB)
     #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
 #endif
@@ -416,9 +416,9 @@ static int parse_args(int argc, char *argv[])
 #endif
          case 'c': /* number of http connections */
 	      ret = parse_args_setval_int(&ival, optarg);
-	      if (ret < 0 || ival < 1 || ival > MEMP_NUM_TCP_PCB - 4) {
+	      if (ret < 0 || ival < 1 || ival > CONFIG_LWIP_NUM_TCPCON) {
 		      printk("at most %u http connections supported\n",
-		             MEMP_NUM_TCP_PCB - 4);
+		             CONFIG_LWIP_NUM_TCPCON);
 	           return -1;
 	      }
 	      args.nb_http_sess = ival;

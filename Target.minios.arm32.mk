@@ -58,11 +58,13 @@ CONFIG_LWIP_HEAP_ONLY		 = y
 CONFIG_LWIP_POOLS_ONLY		 = n
 CONFIG_START_NETWORK		 = n
 
-CONFIG_LWIP_CHECKSUM_NOCHECK     = n
+CONFIG_LWIP_CHECKSUM_NOCHECK     = y
 CONFIG_LWIP_CHECKSUM_NOGEN       = n
 
-# support 1K TCP connections
-CFLAGS				+= -DCONFIG_LWIP_NUM_TCPCON=1024
+ifeq ($(CONFIG_LWIP_NUM_TCPCON),)
+CONFIG_LWIP_NUM_TCPCON=512
+endif
+CFLAGS				+= -DCONFIG_LWIP_NUM_TCPCON=$(CONFIG_LWIP_NUM_TCPCON)
 
 ######################################
 ## Debugging
@@ -77,7 +79,7 @@ CONFIG_DEBUG_LWIP_MALLOC	?= n
 ######################################
 ## Stub Domain
 ######################################
-CONFIG_SHFS_CACHE_READAHEAD		?= 8
+CONFIG_SHFS_CACHE_READAHEAD		?= 4
 CONFIG_SHFS_CACHE_POOL_NB_BUFFERS	?= 64
 CONFIG_SHFS_CACHE_GROW			?= y
 
