@@ -292,9 +292,9 @@ int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 			goto out;
 
 		rlen = min(shfs_vol.chunksize - byt_off, left);
-		memcpy((uint8_t *) buf + buf_off,
-		       (uint8_t *) chk_buf + byt_off,
-		       rlen);
+		shfs_memcpy((uint8_t *) buf + buf_off,
+			    (uint8_t *) chk_buf + byt_off,
+			    rlen);
 		left -= rlen;
 
 		++chk_off;   /* go to next chunk */
@@ -345,9 +345,9 @@ int shfs_fio_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 			goto out;
 
 		rlen = min(shfs_vol.chunksize - byt_off, left);
-		memcpy((uint8_t *) buf + buf_off,
-		       (uint8_t *) chk_buf + byt_off,
-		       rlen);
+		shfs_memcpy((uint8_t *) buf + buf_off,
+			    (uint8_t *) chk_buf + byt_off,
+			    rlen);
 		left -= rlen;
 
 		++chk_off;   /* go to next chunk */
@@ -395,9 +395,9 @@ int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len)
 		}
 
 		rlen = min(shfs_vol.chunksize - byt_off, left);
-		memcpy((uint8_t *) buf + buf_off,
-		       (uint8_t *) cce->buffer + byt_off,
-		       rlen);
+		shfs_memcpy((uint8_t *) buf + buf_off,
+			    (uint8_t *) cce->buffer + byt_off,
+			    rlen);
 		left -= rlen;
 
 		shfs_cache_release(cce);
@@ -446,9 +446,9 @@ int shfs_fio_cache_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t 
 		}
 
 		rlen = min(shfs_vol.chunksize - byt_off, left);
-		memcpy((uint8_t *) buf + buf_off,
-		       (uint8_t *) cce->buffer + byt_off,
-		       rlen);
+		shfs_memcpy((uint8_t *) buf + buf_off,
+			    (uint8_t *) cce->buffer + byt_off,
+			    rlen);
 		left -= rlen;
 
 		shfs_cache_release(cce);

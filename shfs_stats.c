@@ -189,7 +189,7 @@ static int _stats_dev_write(const void *data, size_t len)
 		bleft = blkdev_ssize(_stats_dev->bd) - bpos; /* left bytes on buffer */
 		clen = min(bleft, len);
 
-		memcpy((uint8_t *) _stats_dev->buf + bpos, (uint8_t *) data + dpos, clen);
+		shfs_memcpy((uint8_t *) _stats_dev->buf + bpos, (uint8_t *) data + dpos, clen);
 		_stats_dev->seek += clen;
 
 		if (bpos + clen == blkdev_ssize(_stats_dev->bd)) {

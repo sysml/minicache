@@ -19,6 +19,16 @@
 #include "shfs_stats_data.h"
 #endif
 
+#if defined __MINIOS__ && !defined CONFIG_ARM && !defined DEBUG_BUILD
+#include <rte_memcpy.h>
+#define shfs_memcpy(dst, src, len) \
+  rte_memcpy((dst), (src), (len))
+#warning "rte_memcpy is used for SHFS"
+#else
+#define shfs_memcpy(dst, src, len) \
+  memcpy((dst), (src), (len))
+#endif
+
 #define MAX_NB_TRY_BLKDEVS 64
 #define NB_AIOTOKEN 750 /* should be at least MAX_REQUESTS */
 
