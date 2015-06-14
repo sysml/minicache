@@ -31,6 +31,7 @@
 #endif
 #ifdef HAVE_SHELL
 #include "shell.h"
+#include "shell_extras.h"
 #endif
 #include "shfs.h"
 #include "shfs_tools.h"
@@ -715,6 +716,11 @@ int main(int argc, char *argv[])
 #ifdef HAVE_SHELL
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
+#ifdef HAVE_CTLDIR
+    register_shell_extras(cd); /* Note: cd might be NULL */
+#else
+    register_shell_extras();
+#endif
 #endif
     printk("Starting HTTP server (max number of connections: %u)...\n",
            args.nb_http_sess);

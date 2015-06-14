@@ -46,7 +46,7 @@ else
 MCCFLAGS	+= -DSHELL_PROMPT="\"mc\#\""
 endif
 
-MCOBJS		+= shell.o
+MCOBJS		+= shell.o shell_extras.o
 MCCFLAGS	+= -DHAVE_SHELL
 endif
 MCCFLAGS-$(CONFIG_SHELL_DEBUG)		+= -DSHELL_DEBUG
