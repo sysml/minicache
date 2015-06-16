@@ -380,7 +380,7 @@ static inline char *ctldir_trigger(struct xs_handle *xs, unsigned int domid, con
 	char *reply;
 	char **wret;
 	unsigned int wnum;
-	int ignores = 1;
+	unsigned int ignores = 1;
 
 	snprintf(ipath, sizeof(ipath), "%s/%u/data/%s/%s-in", XSBASE, domid, scope, trigger);
 	snprintf(opath, sizeof(opath), "%s/%u/data/%s/%s-out", XSBASE, domid, scope, trigger);
@@ -407,11 +407,13 @@ static inline char *ctldir_trigger(struct xs_handle *xs, unsigned int domid, con
 		wnum = 1;
 		wret = xs_read_watch(xs, &wnum);
 		if (wnum && wret) {
+			dprintf(D_L1, "%u events arrived on %s\n", wnum, opath);
 			free(wret);
-			if (!ignores)
-				break; /* reply arrived */
-			--ignores;
-			continue;
+			if (ignores > wnum) {
+				ignores -= wnum;
+				continue;
+			}
+			break; /* reply arrived */
 		}
 
 		if (errno != EAGAIN && errno != EINTR && errno != 0) {
