@@ -24,6 +24,10 @@ It will be used to store all required sources and builds for MiniCache.
 I recommend to add this export line to your shell profile (e.g., via .bashrc if
 you are using bash).
 
+Note: For ARM builds, please add also the following environment variable:
+
+    CROSS_COMPILE=arm-linux-gnueabihf-
+
 
 ### Download and Build Xen (here: 4.4)
 Please follow Xen's build instructions - it should be something like the
@@ -32,14 +36,19 @@ following:
     git clone git://xenbits.xen.org/xen.git
     cd xen
     git checkout stable-4.4
-    ./configure
-    make world
+    make dist-xen
     cd ..
 
 Note: If Xen is not installed on your system yet, please install it as well.
 You might need to restart your computer.
 Note: For ARM builds you might need different Xen sources (e.g., https://github.com/talex5/xen.git)
-or you might have to use a different branch.
+or you might have to use a different branch. We recommend to use Xen from talex5 repository:
+
+    git clone https://github.com/talex5/xen.git
+    cd xen
+    git checkout stable-4.4
+    make dist-xen XEN_TARGET_ARCH=arm32 CROSS_COMPILE=$CROSS_COMPILE CONFIG_EARLY_PRINTK=sun7i
+    cd ..
 
 After that, please ensure that you set the following environment variables set
 (I also recommend to add this to your shell profile):
@@ -76,10 +85,10 @@ After that, please ensure that you set the following environment variables
 
     git clone git@repos:oss/mini-os.git
     cd mini-os
-    git checkout skuenzer/lwip-latest
+    git checkout skuenzer/edge-x86
     cd ..
 
-Note: Please checkout the branch skuenzer/lwip-latest-arm32 when you build for ARM.
+Note: Please checkout the branch skuenzer/edge-arm32 when you build for ARM.
 
 After that, please ensure that you set the following environment variables set
 (I also recommend to add this to your shell profile):
@@ -98,7 +107,7 @@ I recommend to build cosmos with 'xl'.
 Additionally, I recommend to link the cosmos binary to a directory that is
 included in the command search of your shell:
 
-    ls -sv $WORKSPACE/cosmos/build/bin/cosmo /usr/local/bin/
+    ls -sv $WORKSPACE/cosmos/build/bin/cosmos /usr/local/bin/
 
 
 ### Download and Build MiniCache
@@ -147,16 +156,14 @@ following example as a basis:
     kernel        = './build/minicache_x86_64'
     builder       = 'linux'
     vcpus         = '1'
-    memory        = '16'
+    memory        = '32'
 
     name          = 'minicache'
 
-    vif           = [ 'mac=00:16:3e:ba:be:12,bridge=expbr0' ]
+    vif           = [ 'mac=00:16:3e:ba:be:12,bridge=virbr0' ]
 
     # Here, one FS image and 3 RAM-based drives
     disk          = [ 'file:/root/workspace/minicache/demofs.img,xvda,w',
-                      'phy:/dev/ram13,xvdb,w',
-                      'phy:/dev/ram14,xvdc,w',
                       'phy:/dev/ram15,xvdd,w' ]
 
 Thanks to Cosmos (when build with xl), you can set the executable bit to
