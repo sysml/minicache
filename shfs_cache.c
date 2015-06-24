@@ -652,6 +652,24 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	        nb_ref_entries);
 	fprintf(cio, " Hash table size:                    %12"PRIu32"\n",
 	        htlen);
+#if SHFS_CACHE_READAHEAD
+	fprintf(cio, " Buffer read-ahead:                  %12"PRIu32"\n",
+	        SHFS_CACHE_READAHEAD);
+#endif
+#if SHFS_CACHE_POOL_NB_BUFFERS
+	fprintf(cio, " Number pre-allocated buffers:       %12"PRIu32"\n",
+	        SHFS_CACHE_POOL_NB_BUFFERS);
+#endif
+#ifdef SHFS_CACHE_GROW
+	fprintf(cio, " Dynamic buffer allocation:               enabled");
+#ifdef SHFS_CACHE_GROW_THRESHOLD
+	fprintf(cio, " (limited by %"PRIu64" B left free memory)\n", SHFS_CACHE_GROW_THRESHOLD);
+#else
+	fprintf(cio, "\n");
+#endif
+#else
+	fprintf(cio, " Dynamic buffer allocation:              disabled");
+#endif
 
 #ifdef SHFS_CACHE_DEBUG
 	fprintf(cio, " Buffer states dumped to system output\n");
