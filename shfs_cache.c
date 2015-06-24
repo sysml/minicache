@@ -645,10 +645,10 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	nb_ref_entries = shfs_vol.chunkcache->nb_ref_entries;
 	htlen          = shfs_vol.chunkcache->htlen;
 
-	fprintf(cio, " Number of cache buffers:            %12"PRIu64" (total: %"PRIu64" KiB)\n",
+	fprintf(cio, " Number of buffers in cache:         %12"PRIu64" (total: %"PRIu64" KiB)\n",
 	        nb_entries,
 	        (nb_entries * chunksize) /1024);
-	fprintf(cio, " Number of referenced cache buffers: %12"PRIu32"\n",
+	fprintf(cio, " Number of used buffers in cache:    %12"PRIu32"\n",
 	        nb_ref_entries);
 	fprintf(cio, " Hash table size:                    %12"PRIu32"\n",
 	        htlen);
