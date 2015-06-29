@@ -13,7 +13,7 @@
 
 //typedef int (*shfunc_ptr_t)(FILE *cio, int argc, char *argv[]);
 
-typedef char *(*cdfunc_ptr_t)(void *cookie, char *arg);
+typedef char *(*ctldfunc_ptr_t)(void *cookie, char *arg);
 
 struct ctldir {
 	char basename[CTLDIR_MAX_NAMELEN];
@@ -27,16 +27,16 @@ struct ctldir {
 	char *trigger_name[CTLDIR_MAX_TRIGGERS];
 	char *trigger_ipath[CTLDIR_MAX_TRIGGERS];
 	char *trigger_opath[CTLDIR_MAX_TRIGGERS];
-	cdfunc_ptr_t trigger_func[CTLDIR_MAX_TRIGGERS];
+	ctldfunc_ptr_t trigger_func[CTLDIR_MAX_TRIGGERS];
 	void *trigger_cookie[CTLDIR_MAX_TRIGGERS];
 	unsigned int trigger_ignore[CTLDIR_MAX_TRIGGERS];
 };
 
 struct ctldir *create_ctldir(const char *name);
 
-int ctldir_register_trigger(struct ctldir *cd, const char *name, cdfunc_ptr_t func, void *cookie);
-int ctldir_register_shcmd(struct ctldir *cd, const char *name, shfunc_ptr_t func);
+int ctldir_register_trigger(struct ctldir *ctld, const char *name, ctldfunc_ptr_t func, void *cookie);
+int ctldir_register_shcmd(struct ctldir *ctld, const char *name, shfunc_ptr_t func);
 
-int ctldir_start_watcher(struct ctldir *cd);
+int ctldir_start_watcher(struct ctldir *ctld);
 
 #endif /* _CTLDIR_H_ */
