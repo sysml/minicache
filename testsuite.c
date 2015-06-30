@@ -5,6 +5,7 @@
 #include <target/sys.h>
 #include <stdio.h>
 #include <lwip/udp.h>
+#include <sys/time.h>
 
 #include "shfs.h"
 #include "shfs_btable.h"
@@ -15,6 +16,37 @@
 #ifdef HAVE_CTLDIR
 #include <target/ctldir.h>
 #endif
+
+/* copied from <sys/time.h> */
+#ifndef timerclear
+#define timerclear(tvp)         ((tvp)->tv_sec = (tvp)->tv_usec = 0)
+#endif
+
+#ifndef timeradd
+#define timeradd(a, b, result)                                                \
+  do {                                                                        \
+    (result)->tv_sec = (a)->tv_sec + (b)->tv_sec;                             \
+    (result)->tv_usec = (a)->tv_usec + (b)->tv_usec;                          \
+    if ((result)->tv_usec >= 1000000)                                         \
+      {                                                                       \
+        ++(result)->tv_sec;                                                   \
+        (result)->tv_usec -= 1000000;                                         \
+      }                                                                       \
+  } while (0)
+#endif
+
+#ifndef timersub
+#define timersub(a, b, result)                                                \
+  do {                                                                        \
+    (result)->tv_sec = (a)->tv_sec - (b)->tv_sec;                             \
+    (result)->tv_usec = (a)->tv_usec - (b)->tv_usec;                          \
+    if ((result)->tv_usec < 0) {                                              \
+      --(result)->tv_sec;                                                     \
+      (result)->tv_usec += 1000000;                                           \
+    }                                                                         \
+  } while (0)
+#endif
+/* --- */
 
 static inline int parse_ipv4(ip4_addr_t *out, const char *buf)
 {
@@ -46,8 +78,11 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	SHFS_FD f;
 	uint64_t fsize, left, cur, dlen;
 	int ret = 0;
+	int flush = 0;
 	struct timeval tm_start;
 	struct timeval tm_end;
+	struct timeval tm_diff;
+	struct timeval tm_duration;
 	unsigned int t;
 	unsigned int times = 1;
 	uint64_t usecs, bps, reqs;
@@ -55,7 +90,7 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	size_t buflen = 0;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [file] [[times]] [[buffer length]]\n", argv[0]);
+		fprintf(cio, "Usage: %s [file] [[times]] [[buffer length]] [[flush]]\n", argv[0]);
 		ret = -1;
 		goto out;
 	}
@@ -68,10 +103,14 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	}
 	if (argc >= 4) {
 		if ((sscanf(argv[3], "%"SCNu64"", &buflen)) != 1 || buflen == 0) {
-			fprintf(stderr, "Could not parse buffer length\n");
+			fprintf(cio, "Could not parse buffer length\n");
 			ret = -1;
 			goto out;
 		}
+	}
+	if (argc >= 5) {
+		if (strcmp(argv[4], "flush") == 0)
+			flush = 1;
 	}
 
 	f = shfs_fio_open(argv[1]);
@@ -100,37 +139,66 @@ static int shcmd_ioperf(FILE *cio, int argc, char *argv[])
 	       argv[1], fsize, buflen, times);
 
 	reqs = 0;
-	gettimeofday(&tm_start, NULL);
-	barrier();
-	for (t = 0; t < times; ++t) {
-		left = fsize;
-		cur = 0;
+	if (!flush) {
+		gettimeofday(&tm_start, NULL);
+		barrier();
+		for (t = 0; t < times; ++t) {
+			left = fsize;
+			cur = 0;
 
-		while (left) {
-			dlen = min(left, buflen);
+			while (left) {
+				dlen = min(left, buflen);
 
-			ret = shfs_fio_cache_read_nosched(f, cur, buf, dlen);
-			if (unlikely(ret < 0)) {
-				fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
-				ret = -1;
-				goto out_close_f;
+				ret = shfs_fio_cache_read_nosched(f, cur, buf, dlen);
+				if (unlikely(ret < 0)) {
+					fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+					ret = -1;
+					goto out_close_f;
+				}
+
+				++reqs;
+				left -= dlen;
+				cur += dlen;
 			}
+		}
+		barrier();
+		gettimeofday(&tm_end, NULL);
+		timersub(&tm_end, &tm_start, &tm_duration);
+	} else {
+		fprintf(cio, "%s: Flushing SHFS cache before each iteration\n", argv[1]);
+		timerclear(&tm_duration);
+		for (t = 0; t < times; ++t) {
+			shfs_flush_cache();
+			barrier();
+			gettimeofday(&tm_start, NULL);
+			barrier();
+			left = fsize;
+			cur = 0;
 
-			++reqs;
-			left -= dlen;
-			cur += dlen;
+			while (left) {
+				dlen = min(left, buflen);
+
+				ret = shfs_fio_cache_read_nosched(f, cur, buf, dlen);
+				if (unlikely(ret < 0)) {
+					fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+					ret = -1;
+					goto out_close_f;
+				}
+
+				++reqs;
+				left -= dlen;
+				cur += dlen;
+			}
+			barrier();
+			gettimeofday(&tm_end, NULL);
+			timersub(&tm_end, &tm_start, &tm_diff);
+			timeradd(&tm_diff, &tm_duration, &tm_duration);
 		}
 	}
-	barrier();
-	gettimeofday(&tm_end, NULL);
 
 	if (ret >= 0 && times > 0) {
-		if (tm_end.tv_usec < tm_start.tv_usec) {
-			tm_end.tv_usec += 1000000l;
-			--tm_end.tv_sec;
-		}
-		usecs = (tm_end.tv_usec - tm_start.tv_usec);
-		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		usecs = (tm_duration.tv_usec);
+		usecs += (tm_duration.tv_sec) * 1000000;
 		fprintf(cio, "%s: Read %lu bytes with %"PRIu64" requests in %"PRIu64".%06"PRIu64" seconds ",
 		        argv[1], fsize * times, reqs, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * times * 1000000 + usecs / 2) / usecs;
@@ -152,14 +220,17 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 	chk_t fsize, c, start, end;
 	struct shfs_cache_entry *cce;
 	int ret = 0;
+	int flush = 0;
 	struct timeval tm_start;
 	struct timeval tm_end;
+	struct timeval tm_diff;
+	struct timeval tm_duration;
 	unsigned int t;
 	unsigned int times = 1;
 	uint64_t usecs, bps, reqs;
 
 	if (argc <= 1) {
-		fprintf(cio, "Usage: %s [file] [[times]]\n", argv[0]);
+		fprintf(cio, "Usage: %s [file] [[times]] [[flush]]\n", argv[0]);
 		ret = -1;
 		goto out;
 	}
@@ -169,6 +240,10 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 			ret = -1;
 			goto out;
 		}
+	}
+	if (argc >= 4) {
+		if (strcmp(argv[3], "flush") == 0)
+			flush = 1;
 	}
 
 	f = shfs_fio_open(argv[1]);
@@ -190,29 +265,51 @@ static int shcmd_ioperf2(FILE *cio, int argc, char *argv[])
 	       argv[1], fsize, shfs_vol.chunksize, times);
 
 	reqs = 0;
-	gettimeofday(&tm_start, NULL);
-	barrier();
-	for (t = 0; t < times; ++t) {
-		for (c = start; c < end; ++c) {
-			cce = shfs_cache_read_nosched(c); /* does not call schedule() */
-			if (unlikely(!cce)) {
-				fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
-				goto out_close_f;
+	if (!flush) {
+		gettimeofday(&tm_start, NULL);
+		barrier();
+		for (t = 0; t < times; ++t) {
+			for (c = start; c < end; ++c) {
+				cce = shfs_cache_read_nosched(c); /* does not call schedule() */
+				if (unlikely(!cce)) {
+					fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+					goto out_close_f;
+				}
+				shfs_cache_release(cce);
+				++reqs;
 			}
-			shfs_cache_release(cce);
-			++reqs;
+		}
+		barrier();
+		gettimeofday(&tm_end, NULL);
+		timersub(&tm_end, &tm_start, &tm_duration);
+	} else {
+		fprintf(cio, "%s: Flushing SHFS cache before each iteration\n", argv[1]);
+		timerclear(&tm_duration);
+		for (t = 0; t < times; ++t) {
+			shfs_flush_cache();
+			barrier();
+			gettimeofday(&tm_start, NULL);
+			barrier();
+			for (c = start; c < end; ++c) {
+				cce = shfs_cache_read_nosched(c); /* does not call schedule() */
+				if (unlikely(!cce)) {
+					fprintf(cio, "%s: Read error: %s\n", argv[1], strerror(-ret));
+					goto out_close_f;
+				}
+				shfs_cache_release(cce);
+				++reqs;
+			}
+
+			barrier();
+			gettimeofday(&tm_end, NULL);
+			timersub(&tm_end, &tm_start, &tm_diff);
+			timeradd(&tm_diff, &tm_duration, &tm_duration);
 		}
 	}
-	barrier();
-	gettimeofday(&tm_end, NULL);
 
 	if (ret >= 0 && times > 0) {
-		if (tm_end.tv_usec < tm_start.tv_usec) {
-			tm_end.tv_usec += 1000000l;
-			--tm_end.tv_sec;
-		}
-		usecs = (tm_end.tv_usec - tm_start.tv_usec);
-		usecs += (tm_end.tv_sec - tm_start.tv_sec) * 1000000;
+		usecs = (tm_duration.tv_usec);
+		usecs += (tm_duration.tv_sec) * 1000000;
 		fprintf(cio, "%s: Read %lu bytes with %"PRIu64" requests in %"PRIu64".%06"PRIu64" seconds ",
 		        argv[1], fsize * shfs_vol.chunksize * times, reqs, usecs / 1000000, usecs % 1000000);
 		bps = (fsize * shfs_vol.chunksize * times * 1000000 + usecs / 2) / usecs;
