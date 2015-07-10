@@ -353,7 +353,7 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
     if (unlikely(!cce->t)) {
 	    dlist_unlink(cce, shfs_vol.chunkcache->alist, alist);
 	    shfs_cache_put_cce(cce);
-	    printd("Could not initiate I/O request for chunk %llu: %d\n", addr, errno);
+	    printd("Could not initiate I/O request for chunk %"PRIchk": %d\n", addr, errno);
 	    return NULL;
     }
 
@@ -370,16 +370,24 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 static inline void shfs_cache_readahead(chk_t addr)
 {
 	struct shfs_cache_entry *cce;
-	chk_t i;
+	register chk_t i;
 
 	for (i = 1; i <= SHFS_CACHE_READAHEAD; ++i) {
-		if (unlikely((addr + i) >= shfs_vol.volsize))
+		register chk_t addri = addr + i;
+
+		if (unlikely((addri) >= shfs_vol.volsize))
 			return; /* end of volume */
-		cce = shfs_cache_find(addr + i);
+		cce = shfs_cache_find(addri);
 		if (!cce) {
-			cce = shfs_cache_add(addr + i);
-			if (!cce)
+			cce = shfs_cache_add(addri);
+			if (!cce) {
+				printd("Read-ahead chunk %"PRIchk" (%u/%u): Failed: Out of buffers\n", (addri), i, SHFS_CACHE_READAHEAD);
 				return; /* out of buffers */
+			} else {
+				printd("Read-ahead chunk %"PRIchk" (%u/%u): Requested\n", (addri), i, SHFS_CACHE_READAHEAD);
+			}
+		} else {
+			printd("Read-ahead chunk %"PRIchk" (%u/%u): Already in cache\n", (addri), i, SHFS_CACHE_READAHEAD);
 		}
 	}
 }
