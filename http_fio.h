@@ -21,7 +21,7 @@ void httpreq_fio_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp);
 
 static inline int httpreq_fio_aioreq(struct http_req *hreq, chk_t addr, unsigned int cce_idx)
 {
-	/* gets called whenever an async I/O request completed */
+	/* called whenever an async I/O is completed */
 	int ret;
 
 	BUG_ON(hreq->f.cce_t);
@@ -32,11 +32,10 @@ static inline int httpreq_fio_aioreq(struct http_req *hreq, chk_t addr, unsigned
 	                       NULL,
 	                       &hreq->f.cce[cce_idx],
 	                       &hreq->f.cce_t);
-	if (unlikely(ret < 0)) {
+	if (ret < 0)
 		printd("failed to perform request for [cce_idx=%u]: %d\n", cce_idx, ret);
-		return ret;
-	}
-	printd("request set up for [cce_idx=%u]\n", cce_idx);
+	else
+		printd("request set up for [cce_idx=%u]\n", cce_idx);
 	return ret;
 }
 
@@ -101,7 +100,7 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 
 	/* is the chunk to process ready now? */
 	if (unlikely(!shfs_aio_is_done(hreq->f.cce_t))) {
-		printd("[idx=%u] requested chunk is not ready yet\n", idx);
+		printd("[idx=%u] current chunk %"PRIchk" is not ready yet\n", idx, cur_chk);
 		httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
 		                                we have no new data for now */
 		goto out;

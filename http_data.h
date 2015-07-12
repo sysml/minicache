@@ -3,6 +3,8 @@
 
 static const char _http_sep[] = "\r\n";
 static const size_t _http_sep_len = sizeof(_http_sep) - 1;
+#define _http_ftr _http_sep
+#define _http_ftr_len _http_sep_len
 
 static const char __http_shdr00[] = "HTTP/0.9 200\r\n";
 static const char __http_shdr01[] = "HTTP/0.9 206\r\n";

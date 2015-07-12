@@ -568,16 +568,19 @@ err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint
 		goto try_next;
 	}
 	if (err == ERR_MEM) {
-		if (!tcp_sndbuf(pcb) ||
+		if (slen <= 1 || !tcp_sndbuf(pcb) ||
 		    (tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN)) {
+			printd("tcp_write returned memory error\n");
 			goto out; /* no need to try smaller sizes, send buffers are full */
 		} else {
+			printd("tcp_write returned memory error, retry with half send length\n", err);
 			slen >>= 1; /* l /= 2 */
 			goto try_again;
 		}
 	}
 
  out:
+	printd("leaving: sent %"PRIu64"/%"PRIu64" bytes\n", (uint64_t) s, (uint64_t) (*len));
 	hsess->sent_infly += s;
 	*len = s;
 	return err;
@@ -988,7 +991,7 @@ static inline void httpreq_finalize_hdr(struct http_req *hreq)
 		       hreq->response.hdr.dline[l].b);
 	}
 	printd(" Header length: %lu\n", hreq->response.hdr.total_len);
-	printd(" Body length:   %lu\n", hreq->rlen + _http_sep_len);
+	printd(" Body length:   %lu\n", hreq->rlen + _http_ftr_len);
 #endif
 #ifdef HTTP_DEBUG_PRINTACCESS
 	printk("[%03u] %s\n",
@@ -1213,10 +1216,10 @@ err_t httpsess_respond(struct http_sess *hsess)
 		hsess->sent = 0;
 	case HRS_RESPONDING_EOM:
 		err = httpsess_write_sbuf(hsess, &hsess->sent,
-		                          _http_sep, _http_sep_len);
+		                          _http_ftr, _http_ftr_len);
 		if (unlikely(err != ERR_OK && err != ERR_MEM))
 			goto err_close; /* drop connection because of an unrecoverable error */
-		if (hsess->sent == _http_sep_len) {
+		if (hsess->sent == _http_ftr_len) {
 			/* we are done */
 			err = httpsess_eor(hsess);
 			if (unlikely(err))
@@ -1283,18 +1286,18 @@ static inline void httpreq_acknowledge(struct http_req *hreq, size_t *len, int *
 		}
 	}
 
-	/* adds 2 bytes to keep-alive connections */
+	/* adds ftr bytes to keep-alive connections */
 	if (hreq->hsess->keepalive) {
-	ftr_infly = _http_sep_len - hreq->response.ftr_acked_len;
-	printd("ftr_infly: %"PRIu64"\n", (uint64_t) ftr_infly);
-	if (ftr_infly > acked) {
-		hreq->response.ftr_acked_len += acked;
-		*len = 0;
-		*isdone = 0;
-		return;
-	}
-	hreq->response.ftr_acked_len += ftr_infly;
-	acked -= ftr_infly;
+		ftr_infly = _http_ftr_len - hreq->response.ftr_acked_len;
+		printd("ftr_infly: %"PRIu64"\n", (uint64_t) ftr_infly);
+		if (ftr_infly > acked) {
+			hreq->response.ftr_acked_len += acked;
+			*len = 0;
+			*isdone = 0;
+			return;
+		}
+		hreq->response.ftr_acked_len += ftr_infly;
+		acked -= ftr_infly;
 	}
 	*len = acked;
 	*isdone = 1;
