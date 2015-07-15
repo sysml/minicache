@@ -46,8 +46,24 @@
 
 #define HTTPREQ_TCP_MAXSNDBUF     ((size_t) TCP_SND_BUF)
 
-#define HTTPREQ_FIO_MAXNB_BUFFERS          (DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE))
-#define HTTPREQ_LINK_MAXNB_BUFFERS        ((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE)) << 1)
+#if LWIP_WND_SCALE
+#if (((TCP_WND) << (TCP_RCV_SCALE)) > (TCP_SND_BUF))
+#warning "lwIP's TCP send buffer is smaller than the maximum TCP window: Bad TCP/IP performance is expected."
+#define HTTP_LOW_TCPSNDBUF
+#endif
+#else
+#if ((TCP_WND) > (TCP_SND_BUF))
+#warning "lwIP's TCP send buffer is smaller than the TCP window: Bad TCP/IP performance is expected."
+#define HTTP_LOW_TCPSNDBUF
+#endif
+#endif
+
+#ifndef SMAX
+#define SMAX(x, y) ((x) > (y) ? (x) : (y))
+#endif
+
+#define HTTPREQ_FIO_MAXNB_BUFFERS         (SMAX(2,(DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE))))
+#define HTTPREQ_LINK_MAXNB_BUFFERS        (SMAX(2,((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE)) << 1)))
 
 #ifndef min
 #define min(a, b) \
@@ -62,6 +78,12 @@
 #ifndef min4
 #define min4(a, b, c, d) \
 	min(min((a), (b)), min((c), (d)))
+#endif
+#ifndef max
+#define max(a, b) \
+    ({ __typeof__ (a) __a = (a); \
+       __typeof__ (b) __b = (b); \
+       __a > __b ? __a : __b; })
 #endif
 
 #ifndef container_of

@@ -11,7 +11,7 @@
 #include "http_defs.h"
 #include "http_hdr.h"
 
-#define httpreq_fio_nb_buffers(chunksize)  (max((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize)), 2))
+#define httpreq_fio_nb_buffers(chunksize)  (max(2,(DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize))))
 
 void httpreq_fio_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp);
 
@@ -30,12 +30,12 @@ static inline int httpreq_fio_aioreq(struct http_req *hreq, chk_t addr, unsigned
 	                       httpreq_fio_aiocb,
 	                       hreq,
 	                       NULL,
-	                       &hreq->f.cce[cce_idx],
-	                       &hreq->f.cce_t);
+	                       &(hreq->f.cce[cce_idx]),
+			       &(hreq->f.cce_t));
 	if (ret < 0)
-		printd("failed to perform request for [cce_idx=%u]: %d\n", cce_idx, ret);
+		printd("failed to perform request for chunk %"PRIchk" [cce_idx=%u]: %d\n", addr, cce_idx, ret);
 	else
-		printd("request set up for [cce_idx=%u]\n", cce_idx);
+		printd("requested for chunk %"PRIchk" [cce_idx=%u]: %d (cce: %p, t: %p)\n", addr, cce_idx, ret, hreq->f.cce[cce_idx], hreq->f.cce_t);
 	return ret;
 }
 
@@ -85,7 +85,7 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 			/* current request is not done yet,
 			 * we need to wait. httpsess_response
 			 * will be recalled from within callback */
-			printd("[idx=%u] requested chunk is not ready yet\n", idx);
+			printd("[idx=%u] chunk %"PRIchk" is not ready yet but request was sent\n", idx, cur_chk);
 			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
 			                                we have no new data for now */
 			goto out; /* we need to wait for completion */
@@ -156,11 +156,14 @@ static inline void httpreq_fio_init(struct http_req *hreq)
 	if (shfs_mounted)
 		hreq->f.cce_max_nb = httpreq_fio_nb_buffers(shfs_vol.chunksize);
 	else
-		hreq->f.cce_max_nb = HTTPREQ_FIO_MAXNB_BUFFERS; /* shfs_open() will fail later --> no file content will be served */
+		hreq->f.cce_max_nb = HTTPREQ_FIO_MAXNB_BUFFERS; /* a file open (shfs_open()) will fail when building response hdr
+								 * there will be no file contents served */
 	hreq->f.cce_idx_ack = hreq->f.cce_max_nb - 1;
 	for (i = 0; i < hreq->f.cce_max_nb; ++i)
 		hreq->f.cce[i] = NULL;
 	hreq->f.cce_t = NULL;
+
+	BUG_ON(hreq->f.cce_max_nb > HTTPREQ_FIO_MAXNB_BUFFERS);
 }
 
 static inline int httpreq_fio_build_hdr(struct http_req *hreq)

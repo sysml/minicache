@@ -580,6 +580,11 @@ err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint
 	}
 
  out:
+#ifdef HTTP_LOW_TCPSNDBUF
+	/* workaround that enforces an ACK because our send buffer is actually smaller than the TCP window */
+	if (tcp_sndbuf(pcb) == 0)
+		httpsess_flush(hsess);
+#endif
 	printd("leaving: sent %"PRIu64"/%"PRIu64" bytes\n", (uint64_t) s, (uint64_t) (*len));
 	hsess->sent_infly += s;
 	*len = s;
@@ -1393,12 +1398,20 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, " Number of active uplinks:             %4"PRIu16"/%4"PRIu16" (%4"PRIu64" B per uplink)\n", nb_links, max_nb_links, sizeof(struct http_req_link_origin));
 	if (fio_nb_buffers) {
 		fprintf(cio, " File-I/O chunkbuffer chain length:     %8"PRIu64, (uint64_t) fio_nb_buffers);
-		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) fio_bffrlen / 1024);
+		fprintf(cio, " (max: %"PRIu64", cur: %"PRIu64" KiB)\n", HTTPREQ_FIO_MAXNB_BUFFERS, (uint64_t) fio_bffrlen / 1024);
 		fprintf(cio, " Remote link chunkbuffer chain length:  %8"PRIu64, (uint64_t) link_nb_buffers);
-		fprintf(cio, " (%"PRIu64" KiB)\n", (uint64_t) link_bffrlen / 1024);
+		fprintf(cio, " (max: %"PRIu64", cur: %"PRIu64" KiB)\n", HTTPREQ_LINK_MAXNB_BUFFERS, (uint64_t) link_bffrlen / 1024);
 	}
-	fprintf(cio, " Maximum TCP send buffer:               %8"PRIu64" KiB", (uint64_t) HTTPREQ_TCP_MAXSNDBUF / 1024);
+	fprintf(cio, " TCP send buffer:                       %8"PRIu64" KiB", (uint64_t) HTTPREQ_TCP_MAXSNDBUF / 1024);
+#ifdef HTTP_LOW_TCPSNDBUF
+	fprintf(cio, " (Warning!)");
+#endif
 	fprintf(cio, "\n");
+#if LWIP_WND_SCALE
+	fprintf(cio, " Maximum TCP window size:               %8"PRIu64" KiB (Window scaling enabled)\n", (((uint64_t) TCP_WND) << TCP_RCV_SCALE) / 1024);
+#else
+	fprintf(cio, " TCP window size:                       %8"PRIu64" KiB\n", (uint64_t) TCP_WND / 1024);
+#endif
 	fprintf(cio, " HTTP parser version:                     %2hu.%hu.%hu\n",
 	        (pver >> 16) & 255, /* major */
 	        (pver >> 8) & 255, /* minor */

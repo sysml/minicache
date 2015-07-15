@@ -15,7 +15,7 @@
 
 #define HTTPLINK_DEFAULT_FORMAT LFT_RAW512
 
-#define httpreq_link_nb_buffers(chunksize)  ((max((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize)), 2)) << 1)
+#define httpreq_link_nb_buffers(chunksize)  (max(2,((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize)) << 1)))
 
 /* server states */
 enum http_req_link_origin_sstate {
