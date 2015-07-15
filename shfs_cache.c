@@ -282,15 +282,17 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
     ret = shfs_aio_finalize(t);
     cce->t = NULL;
     cce->invalid = (ret < 0) ? 1 : 0;
+    printd("Cache I/O at chunk %"PRIchk" returned: %d\n", cce->addr, ret);
 
     /* I/O failed and no references? (in case of read-ahead) */
     if (unlikely(cce->refcount == 0
 #ifndef SHFS_CACHE_DISABLE
 		 && cce->invalid)) {
+        printd("Destroy failed cache I/O at chunk %"PRIchk"\n", cce->addr);
 #else /* SHFS_CACHE_DISABLE */
 		 )) {
+        printd("Releasing unreferenced cached chunk %"PRIchk"\n", cce->addr);
 #endif /* SHFS_CACHE_DISABLE */
-        printd("Destroy failed cache I/O at chunk %llu: %d\n", cce->addr, ret);
 	shfs_cache_unlink(cce);
 	shfs_cache_put_cce(cce);
         return;
@@ -418,7 +420,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     if (!cce) {
 #endif /* SHFS_CACHE_DISABLE */
         /* no -> initiate a new I/O request */
-        printd("Try to adding chunk %llu to cache\n", addr);
+        printd("Try to add chunk %"PRIchk" to cache\n", addr);
 	cce = shfs_cache_add(addr);
 	if (!cce) {
 	    ret = -errno;
@@ -443,15 +445,15 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 
     /* I/O of element done already? */
     if (likely(shfs_aio_is_done(cce->t))) {
-        printd("Chunk %llu found in cache and it is ready\n", addr);
+        printd("Chunk %"PRIchk" found in cache and it is ready\n", addr);
         *t_out = NULL;
         *cce_out = cce;
         return 0;
     }
 #endif /* SHFS_CACHE_DISABLE */
 
-    /* chain a new AIO token for caller (emulates async I/O) */
-    printd("Chunk %llu found in cache but it is not ready yet: Appending AIO token\n", addr);
+    /* chain a new AIO token for caller (multiplexes async I/O) */
+    printd("Chunk %"PRIchk" found in cache but it is not ready yet: Appending AIO token\n", addr);
     t = shfs_aio_pick_token();
     if (unlikely(!t)) {
 	printd("Failed to append AIO token: Out of token\n");
@@ -462,6 +464,8 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     t->cb_cookie = cb_cookie;
     t->cb_argp = cb_argp;
     t->infly = 1; /* mark token as "busy" */
+
+    /* append token to cce's token list */
     if (cce->aio_chain.last) {
 	    cce->aio_chain.last->_next = t;
 	    t->_prev = cce->aio_chain.last;
@@ -471,6 +475,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     }
     t->_next = NULL;
     cce->aio_chain.last = t;
+
     *t_out = t;
     *cce_out = cce;
     return 1;
