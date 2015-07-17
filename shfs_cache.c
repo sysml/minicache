@@ -199,8 +199,9 @@ static inline void shfs_cache_put_cce(struct shfs_cache_entry *cce) {
 static inline struct shfs_cache_entry *shfs_cache_find(chk_t addr)
 {
     struct shfs_cache_entry *cce;
-    register uint32_t i = shfs_cache_htindex(addr);
+    register uint32_t i;
 
+    i = shfs_cache_htindex(addr);
     dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
         if (cce->addr == addr)
             return cce;
@@ -626,32 +627,39 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 #ifdef SHFS_CACHE_INFO
 int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 {
-#ifdef SHFS_CACHE_DEBUG
-	uint32_t i;
 	struct shfs_cache_entry *cce;
-#endif
+	uint32_t i;
 	uint32_t chunksize;
 	uint64_t nb_entries;
 	uint64_t nb_ref_entries;
 	uint32_t htlen;
+	uint64_t depth, max_depth;
 
 	if (!shfs_mounted) {
 		fprintf(cio, "Filesystem is not mounted\n");
 		return -1;
 	}
 
+	max_depth = 0;
 #ifdef SHFS_CACHE_DEBUG
 	printk("\nBuffer states:\n");
+#endif
 	for (i = 0; i < shfs_vol.chunkcache->htlen; ++i) {
-	  printk(" ht[%3"PRIu32"]:\n", i);
+#ifdef SHFS_CACHE_DEBUG
+		printk(" ht[%3"PRIu32"]:\n", i);
+#endif
+		depth = 0;
 		dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
+#ifdef SHFS_CACHE_DEBUG
 			printk(" %12"PRIchk" chk: %s, refcount: %3"PRIu32"\n",
 			       cce->addr,
 			       cce->invalid ? "INVALID" : "valid",
 			       cce->refcount);
-		}
-	}
 #endif
+			++depth;
+		}
+		max_depth = depth > max_depth ? depth : max_depth;
+	}
 
 	chunksize      = shfs_vol.chunksize;
 	nb_entries     = shfs_vol.chunkcache->nb_entries;
@@ -665,6 +673,8 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	        nb_ref_entries);
 	fprintf(cio, " Hash table size:                    %12"PRIu32"\n",
 	        htlen);
+	fprintf(cio, " Current max list depth:             %12"PRIu32"\n",
+	        max_depth);
 #if SHFS_CACHE_READAHEAD
 	fprintf(cio, " Buffer read-ahead:                  %12"PRIu32"\n",
 	        SHFS_CACHE_READAHEAD);
