@@ -9,6 +9,13 @@ extern struct timeval __debug_tsref;
 
 #define init_debug() (gettimeofday(&__debug_tsref, NULL))
 
+#ifndef STRINGIFY
+#define STRINGIFY(s) #s
+#endif
+#ifndef XSTRINGIFY
+#define XSTRINGIFY(s) STRINGIFY(s)
+#endif
+
 #ifdef ENABLE_DEBUG
 #ifdef __MINIOS__
 #if (defined __x86_64__ || defined __x86_32__)
@@ -130,4 +137,12 @@ extern struct timeval __debug_tsref;
 #define get_calldepth() (0x0)
 
 #endif /* ENABLE_DEBUG */
+
+#define tprobe_start(x) \
+	uint64_t x; \
+	x = target_now_ns();
+#define tprobe_end(x) \
+	x = target_now_ns() - x; \
+	printk(STRINGIFY(x)": %01"PRIu64".%09"PRIu64"s\n", x / 1000000000ull, x % 1000000000ull);
+
 #endif /* _DEBUG_H_ */
