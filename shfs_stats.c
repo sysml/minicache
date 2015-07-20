@@ -104,7 +104,7 @@ static int _shcmd_shfs_print_el_stats(void *argp, hash512_t h, int available, st
 		        str_date);
 #else
 		fprintf(cio, "%c%s %c%c %8"PRIu32" %8"PRIu32" %-16s\n",
-		        SFHS_HASH_INDICATOR_PREFIX,
+		        SHFS_HASH_INDICATOR_PREFIX,
 		        str_hash,
 		        available ? 'I' : ' ',
 		        available ? 'N' : ' ',
