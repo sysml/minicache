@@ -91,9 +91,21 @@ int shfs_alloc_cache(void)
 	    ret = -ENOMEM;
 	    goto err_out;
     }
-#ifdef SHFS_CACHE_GROW
+#if defined SHFS_CACHE_GROW && !defined SHFS_CACHE_POOL_MAXALLOC
     if (SHFS_CACHE_POOL_NB_BUFFERS) {
 #endif
+#ifdef SHFS_CACHE_POOL_MAXALLOC
+    cc->pool = alloc_enhanced_mempool2(shfs_cache_free_mem() - (shfs_cache_free_mem() / 100), /* 1% tolerance */
+				       shfs_vol.chunksize,
+				       shfs_vol.ioalign,
+				       0,
+				       0,
+				       sizeof(struct shfs_cache_entry),
+				       1,
+				       NULL, NULL,
+				       _cce_pobj_init, NULL,
+				       NULL, NULL);
+#else
     cc->pool = alloc_enhanced_mempool(SHFS_CACHE_POOL_NB_BUFFERS,
 				      shfs_vol.chunksize,
 				      shfs_vol.ioalign,
@@ -104,11 +116,12 @@ int shfs_alloc_cache(void)
 				      NULL, NULL,
 				      _cce_pobj_init, NULL,
 				      NULL, NULL);
+#endif /* SHFS_CACHE_POOL_MAXALLOC */
     if (!cc->pool) {
 	    ret = -ENOMEM;
 	    goto err_free_cc;
     }
-#ifdef SHFS_CACHE_GROW
+#if defined SHFS_CACHE_GROW && !defined SHFS_CACHE_POOL_MAXALLOC
     } else {
 	    cc->pool = NULL;
     }
@@ -634,6 +647,7 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	uint64_t nb_ref_entries;
 	uint32_t htlen;
 	uint64_t depth, max_depth;
+	uint32_t nb_objs;
 
 	if (!shfs_mounted) {
 		fprintf(cio, "Filesystem is not mounted\n");
@@ -665,6 +679,10 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	nb_entries     = shfs_vol.chunkcache->nb_entries;
 	nb_ref_entries = shfs_vol.chunkcache->nb_ref_entries;
 	htlen          = shfs_vol.chunkcache->htlen;
+	if (shfs_vol.chunkcache->pool)
+		nb_objs = mempool_nb_objs(shfs_vol.chunkcache->pool);
+	else
+		nb_objs = 0;
 
 	fprintf(cio, " Number of buffers in cache:         %12"PRIu64" (total: %"PRIu64" KiB)\n",
 	        nb_entries,
@@ -681,7 +699,7 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 #endif
 #if SHFS_CACHE_POOL_NB_BUFFERS
 	fprintf(cio, " Number pre-allocated buffers:       %12"PRIu32"\n",
-	        SHFS_CACHE_POOL_NB_BUFFERS);
+	        nb_objs);
 #endif
 #ifdef SHFS_CACHE_GROW
 	fprintf(cio, " Dynamic buffer allocation:               enabled");
