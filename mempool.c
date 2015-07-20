@@ -208,6 +208,47 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
   return NULL;
 }
 
+struct mempool *alloc_enhanced_mempool2(size_t pool_size,
+					 size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+					 void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+					 void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+					 void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp)
+{
+  size_t h_size, p_size, m_size, o_size;
+  uint32_t nb_objs = 0;
+
+  /* calculate private data sizes */
+  h_size         = sizeof(struct mempool); /* header length  */
+  m_size         = align_up(sizeof(struct mempool_obj), MIN_ALIGN);
+  p_size         = m_size + obj_private_len; /* private length */
+
+  if (pool_size < h_size + (sizeof(struct ring))) {
+    errno = EINVAL;
+    return NULL;
+  }
+  pool_size   -= h_size + (sizeof(struct ring));
+
+  /* calculate object sizes */
+  if (sep_obj_data) {
+    obj_headroom = align_up(obj_headroom, obj_data_align);
+    o_size       = align_up(obj_headroom + obj_size + obj_tailroom, obj_data_align);
+    obj_tailroom = o_size - obj_headroom - obj_size;
+
+    /* convert pool_size -> nb_objs */
+    nb_objs      = pool_size / (p_size + o_size + sizeof(void *));
+  } else {
+    obj_headroom = align_up(p_size + obj_headroom, obj_data_align) - p_size;
+    o_size       = align_up(p_size + obj_headroom + obj_size + obj_tailroom, obj_data_align);
+    obj_tailroom = o_size - obj_headroom - obj_size - p_size;
+
+    /* convert pool_size -> nb_objs */
+    nb_objs      = pool_size / (o_size + sizeof(void *));
+  }
+
+  return alloc_enhanced_mempool(nb_objs, obj_size, obj_data_align, obj_headroom, obj_tailroom, obj_private_len, sep_obj_data,
+				obj_init_func, obj_init_func_argp, obj_pick_func, obj_pick_func_argp, obj_put_func, obj_put_func_argp);
+}
+
 void free_mempool(struct mempool *p)
 {
   if (p) {

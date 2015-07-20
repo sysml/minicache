@@ -113,6 +113,19 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
   alloc_enhanced_mempool((nb_objs), (obj_size), (obj_data_align), (obj_headroom), (obj_tailroom), (obj_private_len), 0, NULL, NULL, (obj_pick_func), (obj_pick_func_argp), NULL, NULL)
 #define alloc_simple_mempool(nb_objs, obj_size) \
   alloc_enhanced_mempool((nb_objs), (obj_size), 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL)
+
+/* mempool allocation variant where final pool memory size can be specified (inclusive meta data and _estimation_ of mgmt ring size) is specified instead by number of objects
+ * Note: the actual allocation size might still differ (+/-), it is _not_ a guarentee */
+struct mempool *alloc_enhanced_mempool2(size_t pool_size,
+  size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+  void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+  void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+  void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp);
+#define alloc_mempool2(pool_size, obj_size, obj_data_align, obj_headroom, obj_tailroom, obj_pick_func, obj_pick_func_argp, obj_private_len) \
+  alloc_enhanced_mempool2((pool_size), (obj_size), (obj_data_align), (obj_headroom), (obj_tailroom), (obj_private_len), 0, NULL, NULL, (obj_pick_func), (obj_pick_func_argp), NULL, NULL)
+#define alloc_simple_mempool2(pool_size, obj_size) \
+  alloc_enhanced_mempool2((pool_size), (obj_size), 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL)
+
 void free_mempool(struct mempool *p);
 
 #define mempool_reset_obj(obj)						  \
@@ -162,6 +175,8 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
 }
 
 #define mempool_free_count(p) ring_count((p)->free_objs)
+
+#define mempool_nb_objs(p) ((p)->nb_objs)
 
 /*
  * Put an object back to its depending memory pool.
@@ -247,6 +262,8 @@ static inline int mempool_obj_append(struct mempool_obj *obj, ssize_t len)
  * because obj->data is a reference to the head of your struct
  * that is located in the data field. It is not the head of the
  * struct itself.
+ * In case you enable sep_obj_data, obj->data even points to a complete
+ * different memory location.
  *
  * If you need to back reference to the memory pool container,
  * it is recommended to add reference to it in your struct definition.
