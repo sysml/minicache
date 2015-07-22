@@ -81,11 +81,15 @@ static inline sector_t blkdev_sectors(struct blkdev *bd)
  */
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret);
 
+#define blkdev_async_io_submit(bd) blkfront_aio_submit((bd)->dev)
+#define blkdev_async_io_wait_slot(bd) blkfront_wait_slot((bd)->dev)
+
 static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sector_t len,
                                           int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {
   struct mempool_obj *robj;
   struct _blkdev_req *req;
+  int ret;
 
   robj = mempool_pick(bd->reqpool);
   if (unlikely(!robj))
@@ -107,8 +111,14 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req->cb = cb;
   req->cb_argp = cb_argp;
 
-  blkfront_aio(&(req->aiocb), write);
-  return 0;
+ retry:
+  ret = blkfront_aio_enqueue(&(req->aiocb), write);
+  if (unlikely(ret == -EBUSY)) {
+	blkdev_async_io_submit(bd);
+	blkdev_async_io_wait_slot(bd); /* yields CPU */
+	goto retry;
+  }
+  return ret;
 }
 #define blkdev_async_write_nocheck(bd, start, len, buffer, cb, cb_argp) \
 	blkdev_async_io_nocheck((bd), (start), (len), 1, (buffer), (cb), (cb_argp))
@@ -124,7 +134,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 	}
 
 	if (unlikely((len * blkdev_ssize(bd)) / PAGE_SIZE > BLKIF_MAX_SEGMENTS_PER_REQUEST)) {
-		/* request too big -> blockfront cannot handle it with a single request */
+		/* request too big -> cannot be handled with a single request */
 		return -ENXIO;
 	}
 
@@ -165,23 +175,27 @@ static inline int blkdev_sync_io_nocheck(struct blkdev *bd, sector_t start, sect
 	int ret;
 
 	init_SEMAPHORE(&iosync.sem, 0);
+ retry:
 	ret = blkdev_async_io_nocheck(bd, start, len, write, target,
 	                              _blkdev_sync_io_cb, &iosync);
-	while (ret == -EAGAIN) {
+	blkdev_async_io_submit(bd);
+	if (unlikely(ret == -EAGAIN)) {
 		/* try again, queue was full */
 		blkdev_poll_req(bd);
 		schedule();
-		ret = blkdev_async_io_nocheck(bd, start, len, write, target,
-		                              _blkdev_sync_io_cb, &iosync);
+		goto retry;
 	}
-	if (ret < 0)
+	if (unlikely(ret == -EBUSY)) {
+		blkdev_async_io_wait_slot(bd); /* yields CPU */
+		goto retry;
+	}
+	if (unlikely(ret < 0))
 		return ret;
 
 	/* wait for I/O completion */
-	blkdev_poll_req(bd);
 	while (trydown(&iosync.sem) == 0) {
-		schedule(); /* yield CPU */
 		blkdev_poll_req(bd);
+		schedule(); /* yield CPU */
 	}
 
 	return iosync.ret;
@@ -194,30 +208,22 @@ static inline int blkdev_sync_io_nocheck(struct blkdev *bd, sector_t start, sect
 static inline int blkdev_sync_io(struct blkdev *bd, sector_t start, sector_t len,
                                  int write, void *target)
 {
-	struct _blkdev_sync_io_sync iosync;
-	int ret;
-
-	init_SEMAPHORE(&iosync.sem, 0);
-	ret = blkdev_async_io(bd, start, len, write, target,
-	                      _blkdev_sync_io_cb, &iosync);
-	while (ret == -EAGAIN) {
-		/* try again, queue was full */
-		blkdev_poll_req(bd);
-		schedule();
-		ret = blkdev_async_io(bd, start, len, write, target,
-		                      _blkdev_sync_io_cb, &iosync);
-	}
-	if (ret < 0)
-		return ret;
-
-	/* wait for I/O completion */
-	blkdev_poll_req(bd);
-	while (trydown(&iosync.sem) == 0) {
-		schedule(); /* yield CPU */
-		blkdev_poll_req(bd);
+	if (unlikely(write && !(bd->info.mode & (O_WRONLY | O_RDWR)))) {
+		/* write access on non-writable device or read access on non-readable device */
+		return -EACCES;
 	}
 
-	return iosync.ret;
+	if (unlikely((len * blkdev_ssize(bd)) / PAGE_SIZE > BLKIF_MAX_SEGMENTS_PER_REQUEST)) {
+		/* request too big -> cannot be handled with a single request */
+		return -ENXIO;
+	}
+
+	if (unlikely(((uintptr_t) target) & ((uintptr_t) blkdev_ssize(bd) - 1))) {
+		/* buffer is not aligned to device sector size */
+		return -EINVAL;
+	}
+
+	return blkdev_sync_io_nocheck(bd, start, len, write, target);
 }
 #define blkdev_sync_write(bd, start, len, buffer)	  \
 	blkdev_sync_io((bd), (start), (len), 1, (buffer))

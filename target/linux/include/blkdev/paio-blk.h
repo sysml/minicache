@@ -85,6 +85,9 @@ int blkdev_id_parse(const char *id, blkdev_id_t *out);
  */
 void _blkdev_io_cb(struct aiocb *aiocb, long res, long res2);
 
+#define blkdev_async_io_submit(bd) do {} while(0)
+#define blkdev_async_io_wait_slot(bd) do {} while(0)
+
 static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sector_t len,
                                           int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {

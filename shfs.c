@@ -158,7 +158,7 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 		}
 #ifdef SHFS_DEBUG
 		blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
-		printd("SHFSv1 label on block device %s detected\n", str_id);
+		printd("Supported SHFS label on block device %s detected\n", str_id);
 #endif
 
 		/* chk0 now contains the first chunk read from disk */
@@ -416,8 +416,9 @@ static int load_vol_htable(void)
 		printd("Setup async read for chunk %"PRIchk"\n", c);
 		aioret = shfs_aread_chunk(shfs_vol.htable_ref + c, 1, chk_buf,
 		                          _load_vol_htable_cb, &aiot, NULL);
-		if (!aioret && errno == EAGAIN) {
+		if (!aioret && (errno == EAGAIN || errno == EBUSY)) {
 			printd("Device is busy: Retrying...\n");
+			shfs_aio_submit();
 			shfs_poll_blkdevs();
 			goto repeat_aio;
 		}
@@ -427,6 +428,7 @@ static int load_vol_htable(void)
 			goto err_cancel_aio;
 		}
 	}
+	shfs_aio_submit();
 
 	/* allocate bucket table */
 	printd("Allocating btable...\n");
