@@ -457,7 +457,9 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
     /* try to read ahead next addresses */
     shfs_cache_readahead(addr);
 #endif
+#endif /* SHFS_CACHE_DISABLE */
     shfs_aio_submit();
+#ifndef SHFS_CACHE_DISABLE
 
     /* I/O of element done already? */
     if (likely(shfs_aio_is_done(cce->t))) {
