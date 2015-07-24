@@ -27,6 +27,16 @@
 #endif
 #endif
 
+#ifdef SHFS_CACHE_POOL_MAXALLOC /* if enabled, cache allocates a pool by covering the left space completely */
+#ifndef SHFS_CACHE_POOL_MAXALLOC_THRESHOLD
+#define SHFS_CACHE_POOL_MAXALLOC_THRESHOLD (2 * 1024 * 1024) /* keep 2MB space left (note: don't put this value too small,
+							      * any successor allocataion might fail when we run out of memory.
+							      * Also note that on remount this pool is reallocated, which might fail
+							      * when the free memory is too fragmented
+							      * (this number shall compensate this as well)) */
+#endif
+#endif
+
 /*#define SHFS_CACHE_GROW*/ /* uncomment this line to allow the cache to grow in size by
 			     * allocating more buffers on demand (via malloc()). When
 			     * SHFS_GROW_THRESHOLD is defined, left system memory 

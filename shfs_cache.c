@@ -95,16 +95,17 @@ int shfs_alloc_cache(void)
     if (SHFS_CACHE_POOL_NB_BUFFERS) {
 #endif
 #ifdef SHFS_CACHE_POOL_MAXALLOC
-    cc->pool = alloc_enhanced_mempool2(shfs_cache_free_mem() - (shfs_cache_free_mem() / 100), /* 1% tolerance */
-				       shfs_vol.chunksize,
-				       shfs_vol.ioalign,
-				       0,
-				       0,
-				       sizeof(struct shfs_cache_entry),
-				       1,
-				       NULL, NULL,
-				       _cce_pobj_init, NULL,
-				       NULL, NULL);
+      cc->pool = alloc_enhanced_mempool2(((SHFS_CACHE_POOL_MAXALLOC_THRESHOLD >= shfs_cache_free_mem()) ?
+					  0 : (shfs_cache_free_mem() - SHFS_CACHE_POOL_MAXALLOC_THRESHOLD)),
+					 shfs_vol.chunksize,
+					 shfs_vol.ioalign,
+					 0,
+					 0,
+					 sizeof(struct shfs_cache_entry),
+					 1,
+					 NULL, NULL,
+					 _cce_pobj_init, NULL,
+					 NULL, NULL);
 #else
     cc->pool = alloc_enhanced_mempool(SHFS_CACHE_POOL_NB_BUFFERS,
 				      shfs_vol.chunksize,
