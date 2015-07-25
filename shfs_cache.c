@@ -14,16 +14,16 @@
 #if defined HAVE_LIBC && !defined CONFIG_ARM
 #define shfs_cache_free_mem() \
 	({ struct mallinfo minfo = mallinfo(); \
-	((mm_free_pages() << PAGE_SHIFT) + /* free pages in page allocator (used for heap increase) */ \
-	((mm_heap_pages() << PAGE_SHIFT) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
-	 (minfo.fordblks / minfo.ordblks)); }) /* minimum possible allocation on current heap size */
+	  ((((size_t) mm_free_pages()) << PAGE_SHIFT) + /* free pages in page allocator (used for heap increase) */ \
+	   ((((size_t) mm_heap_pages()) << PAGE_SHIFT) - minfo.arena) + /* pages reserved for heap (but not allocated to it yet) */ \
+	   (minfo.fordblks / minfo.ordblks)); }) /* minimum possible allocation on current heap size */
 #else
 #define shfs_cache_free_mem() \
-	(mm_free_pages() << PAGE_SHIFT) /* free pages in page allocator */
+	(((size_t) mm_free_pages()) << PAGE_SHIFT) /* free pages in page allocator */
 #endif
 #else /* __MINIOS__ */
 #define shfs_cache_free_mem() \
-	(0)
+	((size_t) 0)
 #endif /* __MINIOS__ */
 
 static void _cce_pobj_init(struct mempool_obj *pobj, void *unused)
@@ -79,6 +79,9 @@ int shfs_alloc_cache(void)
     struct shfs_cache *cc;
     uint32_t htlen, i;
     size_t cc_size;
+#ifdef SHFS_CACHE_POOL_MAXALLOC
+    size_t pool_size;
+#endif
     int ret;
 
     ASSERT(shfs_vol.chunkcache == NULL);
@@ -95,8 +98,14 @@ int shfs_alloc_cache(void)
     if (SHFS_CACHE_POOL_NB_BUFFERS) {
 #endif
 #ifdef SHFS_CACHE_POOL_MAXALLOC
-      cc->pool = alloc_enhanced_mempool2(((SHFS_CACHE_POOL_MAXALLOC_THRESHOLD >= shfs_cache_free_mem()) ?
-					  0 : (shfs_cache_free_mem() - SHFS_CACHE_POOL_MAXALLOC_THRESHOLD)),
+#if defined HAVE_LIBC && !defined CONFIG_ARM
+      pool_size = (SHFS_CACHE_POOL_MAXALLOC_THRESHOLD >= shfs_cache_free_mem()) ? 0 : (shfs_cache_free_mem() - SHFS_CACHE_POOL_MAXALLOC_THRESHOLD);
+#else
+      pool_size = (1 << (log2(mm_free_pages() - (SHFS_CACHE_POOL_MAXALLOC_THRESHOLD >> PAGE_SHIFT)) - 1)) << PAGE_SHIFT; /* FIXME: -1 is a workaround!!!!,
+															  * it seems that the page allocator on arm still returns 
+															  * memory even if the allocation failed! -> crash on pool access */
+#endif
+      cc->pool = alloc_enhanced_mempool2(pool_size,
 					 shfs_vol.chunksize,
 					 shfs_vol.ioalign,
 					 0,
@@ -119,6 +128,7 @@ int shfs_alloc_cache(void)
 				      NULL, NULL);
 #endif /* SHFS_CACHE_POOL_MAXALLOC */
     if (!cc->pool) {
+	    printd("Could not allocate cache pool\n");
 	    ret = -ENOMEM;
 	    goto err_free_cc;
     }
@@ -708,7 +718,7 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 #ifdef SHFS_CACHE_GROW
 	fprintf(cio, " Dynamic buffer allocation:               enabled");
 #ifdef SHFS_CACHE_GROW_THRESHOLD
-	fprintf(cio, " (limited by %"PRIu64" B left free memory)\n", SHFS_CACHE_GROW_THRESHOLD);
+	fprintf(cio, " (limited by %"PRIu64" B left free memory)\n", (uint64_t) SHFS_CACHE_GROW_THRESHOLD);
 #else
 	fprintf(cio, "\n");
 #endif
