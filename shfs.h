@@ -89,34 +89,34 @@ int remount_shfs(void);
 int umount_shfs(int force);
 void exit_shfs(void);
 
-static inline void shfs_poll_blkdevs(void) {
-	unsigned int i;
-
-	if (likely(shfs_mounted))
-		for(i = 0; i < shfs_vol.nb_members; ++i)
-			blkdev_poll_req(shfs_vol.member[i].bd);
-}
-
 #define shfs_blkdevs_count() \
 	((shfs_mounted) ? shfs_vol.nb_members : 0)
+
+static inline void shfs_poll_blkdevs(void) {
+	register unsigned int i;
+	register uint8_t m = shfs_blkdevs_count();
+
+	for(i = 0; i < m; ++i)
+		blkdev_poll_req(shfs_vol.member[i].bd);
+}
 
 #ifdef CAN_POLL_BLKDEV
 #include <sys/select.h>
 
 static inline void shfs_blkdevs_fds(int *fds) {
-	unsigned int i;
+	register unsigned int i;
+	register uint8_t m = shfs_blkdevs_count();
 
-	if (likely(shfs_mounted))
-		for(i = 0; i < shfs_vol.nb_members; ++i)
-			fds[i] = blkdev_get_fd(shfs_vol.member[i].bd);
+	for(i = 0; i < m; ++i)
+		fds[i] = blkdev_get_fd(shfs_vol.member[i].bd);
 }
 
 static inline void shfs_blkdevs_fdset(fd_set *fdset) {
-	unsigned int i;
+	register unsigned int i;
+	register uint8_t m = shfs_blkdevs_count();
 
-	if (likely(shfs_mounted))
-		for(i = 0; i < shfs_blkdevs_count(); ++i)
-			FD_SET(blkdev_get_fd(shfs_vol.member[i].bd), fdset);
+	for(i = 0; i < m; ++i)
+		FD_SET(blkdev_get_fd(shfs_vol.member[i].bd), fdset);
 }
 #endif /* CAN_POLL_BLKDEV */
 
@@ -162,6 +162,22 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	shfs_aio_chunk((start), (len), 0, (buffer), (cb), (cb_cookie), (cb_argp))
 #define shfs_awrite_chunk(start, len, buffer, cb, cb_cookie, cb_argp) \
 	shfs_aio_chunk((start), (len), 1, (buffer), (cb), (cb_cookie), (cb_argp))
+
+static inline void shfs_aio_submit(void) {
+	register unsigned int i;
+	register uint8_t m = shfs_blkdevs_count();
+
+	for(i = 0; i < m; ++i)
+		blkdev_async_io_submit(shfs_vol.member[i].bd);
+}
+
+static inline void shfs_aio_wait_slot(void) {
+	register unsigned int i;
+	register uint8_t m = shfs_blkdevs_count();
+
+	for(i = 0; i < m; ++i)
+		blkdev_async_io_wait_slot(shfs_vol.member[i].bd);
+}
 
 /*
  * Internal AIO token management (do not use this functions directly!)
@@ -225,9 +241,16 @@ static inline int shfs_aio_finalize(SHFS_AIO_TOKEN *t)
 static inline int shfs_io_chunk(chk_t start, chk_t len, int write, void *buffer) {
 	SHFS_AIO_TOKEN *t;
 
+ retry:
 	t = shfs_aio_chunk(start, len, write, buffer, NULL, NULL, NULL);
-	if (!t)
+	shfs_aio_submit();
+	if (unlikely(!t && errno == EBUSY)) {
+		shfs_aio_wait_slot(); /* yield CPU */
+		goto retry;
+	}
+	if (unlikely(!t))
 		return -errno;
+
 	shfs_aio_wait(t);
 	return shfs_aio_finalize(t);
 }
@@ -239,9 +262,14 @@ static inline int shfs_io_chunk(chk_t start, chk_t len, int write, void *buffer)
 static inline int shfs_io_chunk_nosched(chk_t start, chk_t len, int write, void *buffer) {
 	SHFS_AIO_TOKEN *t;
 
+ retry:
 	t = shfs_aio_chunk(start, len, write, buffer, NULL, NULL, NULL);
-	if (!t)
+	shfs_aio_submit();
+	if (unlikely(!t && errno == EBUSY))
+		goto retry;
+	if (unlikely(!t))
 		return -errno;
+
 	shfs_aio_wait_nosched(t);
 	return shfs_aio_finalize(t);
 }

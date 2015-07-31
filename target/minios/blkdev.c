@@ -132,6 +132,8 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   _open_bd_list = bd;
   if (bd->_next)
     bd->_next->_prev = bd;
+
+  blkdev_async_io_wait_slot(bd);
   return bd;
 
 #ifdef CONFIG_SELECT_POLL
