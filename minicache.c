@@ -725,7 +725,8 @@ int main(int argc, char *argv[])
     printk("Starting HTTP server (max number of connections: %u)...\n",
            args.nb_http_sess);
     init_http(args.nb_http_sess,
-              args.nb_http_sess + args.nb_http_sess / 2);
+              args.nb_http_sess << 1); /* nb reqs have to be at least double to
+					* ensure all connections can be used simultaneously */
 #ifdef IPERF_SERVER
     printk("Starting IPERF server...\n");
     register_iperfsrv();
