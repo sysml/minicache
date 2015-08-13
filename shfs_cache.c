@@ -661,7 +661,8 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	uint64_t nb_ref_entries;
 	uint32_t htlen;
 	uint64_t depth, max_depth;
-	uint32_t nb_objs;
+	uint32_t nb_objs = 0;
+	uint64_t pool_size = 0;
 
 	if (!shfs_mounted) {
 		fprintf(cio, "Filesystem is not mounted\n");
@@ -693,10 +694,10 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	nb_entries     = shfs_vol.chunkcache->nb_entries;
 	nb_ref_entries = shfs_vol.chunkcache->nb_ref_entries;
 	htlen          = shfs_vol.chunkcache->htlen;
-	if (shfs_vol.chunkcache->pool)
+	if (shfs_vol.chunkcache->pool) {
 		nb_objs = mempool_nb_objs(shfs_vol.chunkcache->pool);
-	else
-		nb_objs = 0;
+		pool_size = mempool_size(shfs_vol.chunkcache->pool);
+	}
 
 	fprintf(cio, " Number of buffers in cache:         %12"PRIu64" (total: %"PRIu64" KiB)\n",
 	        nb_entries,
@@ -712,8 +713,8 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	        SHFS_CACHE_READAHEAD);
 #endif
 #if SHFS_CACHE_POOL_NB_BUFFERS
-	fprintf(cio, " Number pre-allocated buffers:       %12"PRIu32"\n",
-	        nb_objs);
+	fprintf(cio, " Number pre-allocated buffers:       %12"PRIu32" (pool size: %7"PRIu64" KiB)\n",
+	        nb_objs, pool_size / 1024);
 #endif
 #ifdef SHFS_CACHE_GROW
 	fprintf(cio, " Dynamic buffer allocation:               enabled");
@@ -723,7 +724,7 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, "\n");
 #endif
 #else
-	fprintf(cio, " Dynamic buffer allocation:              disabled");
+	fprintf(cio, " Dynamic buffer allocation:              disabled\n");
 #endif
 
 #ifdef SHFS_CACHE_DEBUG

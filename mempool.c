@@ -125,6 +125,7 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
   /* initialize pool management */
   p->nb_objs            = nb_objs;
   p->obj_size           = obj_size;
+  p->pool_size          = pool_size + data_size;
   p->obj_headroom       = obj_headroom;
   p->obj_tailroom       = obj_tailroom;
   p->obj_pick_func      = obj_pick_func;

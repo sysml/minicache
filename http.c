@@ -1364,6 +1364,7 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 	uint16_t nb_sess, max_nb_sess;
 	uint32_t nb_reqs, max_nb_reqs;
 	uint16_t nb_links, max_nb_links;
+	uint64_t ps_sess, ps_reqs, ps_links;
 	unsigned long pver;
 	size_t fio_nb_buffers = 0;
 	size_t link_nb_buffers = 0;
@@ -1390,17 +1391,20 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 		link_nb_buffers = httpreq_link_nb_buffers(shfs_vol.chunksize);
 		link_bffrlen = shfs_vol.chunksize * link_nb_buffers;
 	}
+	ps_sess  = mempool_size(hs->sess_pool);
+	ps_reqs  = mempool_size(hs->req_pool);
+	ps_links = mempool_size(hs->link_pool);
 
 	/* thread switching might happen from here on */
 	fprintf(cio, " Listen port:                           %8"PRIu16"\n", HTTP_LISTEN_PORT);
-	fprintf(cio, " Number of sessions:                   %4"PRIu16"/%4"PRIu16" (%4"PRIu64" B per session)\n", nb_sess,  max_nb_sess, sizeof(struct http_sess));
-	fprintf(cio, " Number of requests:                   %4"PRIu32"/%4"PRIu32" (%4"PRIu64" B per request)\n", nb_reqs,  max_nb_reqs, sizeof(struct http_req));
-	fprintf(cio, " Number of active uplinks:             %4"PRIu16"/%4"PRIu16" (%4"PRIu64" B per uplink)\n", nb_links, max_nb_links, sizeof(struct http_req_link_origin));
+	fprintf(cio, " Number of sessions:                   %4"PRIu16"/%4"PRIu16" (%5"PRIu64" B per session, pool size: %6"PRIu64" KiB)\n", nb_sess,  max_nb_sess, (uint64_t) sizeof(struct http_sess), ps_sess / 1024);
+	fprintf(cio, " Number of requests:                   %4"PRIu32"/%4"PRIu32" (%5"PRIu64" B per request, pool size: %6"PRIu64" KiB)\n", nb_reqs,  max_nb_reqs, (uint64_t) sizeof(struct http_req), ps_reqs / 1024);
+	fprintf(cio, " Number of active uplinks:             %4"PRIu16"/%4"PRIu16" (%5"PRIu64" B per uplink,  pool size: %6"PRIu64" KiB)\n", nb_links, max_nb_links, (uint64_t) sizeof(struct http_req_link_origin), ps_links / 1024);
 	if (fio_nb_buffers) {
 		fprintf(cio, " File-I/O chunkbuffer chain length:     %8"PRIu64, (uint64_t) fio_nb_buffers);
-		fprintf(cio, " (max: %"PRIu64", cur: %"PRIu64" KiB)\n", HTTPREQ_FIO_MAXNB_BUFFERS, (uint64_t) fio_bffrlen / 1024);
+		fprintf(cio, " (cur: %5"PRIu64" KiB, max: %"PRIu64" chks)\n", (uint64_t) fio_bffrlen / 1024, HTTPREQ_FIO_MAXNB_BUFFERS);
 		fprintf(cio, " Remote link chunkbuffer chain length:  %8"PRIu64, (uint64_t) link_nb_buffers);
-		fprintf(cio, " (max: %"PRIu64", cur: %"PRIu64" KiB)\n", HTTPREQ_LINK_MAXNB_BUFFERS, (uint64_t) link_bffrlen / 1024);
+		fprintf(cio, " (cur: %5"PRIu64" KiB, max: %"PRIu64" chks)\n", (uint64_t) link_bffrlen / 1024, HTTPREQ_LINK_MAXNB_BUFFERS);
 	}
 	fprintf(cio, " TCP send buffer:                       %8"PRIu64" KiB", (uint64_t) HTTPREQ_TCP_MAXSNDBUF / 1024);
 #ifdef HTTP_LOW_TCPSNDBUF

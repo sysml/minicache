@@ -91,6 +91,7 @@ struct mempool {
   void (*obj_put_func)(struct mempool_obj *, void *);
   void *obj_put_func_argp;
   uint32_t nb_objs;
+  size_t pool_size;
   void *obj_data_area; /* points to data allocation when sep_obj_data = 1 */
 };
 
@@ -177,6 +178,8 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
 #define mempool_free_count(p) ring_count((p)->free_objs)
 
 #define mempool_nb_objs(p) ((p)->nb_objs)
+
+#define mempool_size(p) ((p)->pool_size)
 
 /*
  * Put an object back to its depending memory pool.
