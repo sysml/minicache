@@ -63,7 +63,7 @@ void exit_shfs(void) {
  *
  * Note: chk0 has to be a buffer of 4096 bytes and be aligned to 4096 bytes
  */
-static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
+static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0, int mode)
 {
 	struct blkdev *bd;
 #ifdef SHFS_DEBUG
@@ -73,17 +73,19 @@ static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
 	int ret;
 	TT_DECLARE(_tt_vbdopen);
 
+#ifdef SHFS_DEBUG
+	blkdev_id_unparse(bd_id, str_id, sizeof(str_id));
+#endif
 	TT_START(_tt_vbdopen);
-	bd = open_blkdev(bd_id, O_RDWR);
+	bd = open_blkdev(bd_id, mode);
 	TT_END(_tt_vbdopen);
 #if defined TRACE_BOOTTIME && CONFIG_AUTOMOUNT
 	shfs_tt_vbdopen += _tt_vbdopen;
 #endif
-	if (!bd)
+	if (!bd) {
+		printd("Could not open %s: %s\n", str_id, strerror(errno));
 		goto err_out;
-#ifdef SHFS_DEBUG
-	blkdev_id_unparse(bd_id, str_id, sizeof(str_id));
-#endif
+	}
 
 	if (blkdev_ssize(bd) > 4096 || blkdev_ssize(bd) < 512 ||
 	    !POWER_OF_2(blkdev_ssize(bd))) {
@@ -152,13 +154,16 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 	/* Iterate over block devices and try to find those with a valid SHFS disk label */
 	nb_detected_members = 0;
 	for (i = 0; i < count; i++) {
-		bd = shfs_checkopen_blkdev(bd_id[i], chk0);
+#ifdef SHFS_DEBUG
+		blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
+		printd("Search for SHFS label on device %s...\n", str_id);
+#endif
+		bd = shfs_checkopen_blkdev(bd_id[i], chk0, O_RDONLY);
 		if (!bd) {
 			continue; /* try next device */
 		}
 #ifdef SHFS_DEBUG
-		blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
-		printd("Supported SHFS label on block device %s detected\n", str_id);
+		printd("Supported SHFS label detected on %s\n", str_id);
 #endif
 
 		/* chk0 now contains the first chunk read from disk */
@@ -173,6 +178,10 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 	}
 
 	/* Load label from first detected member */
+#ifdef SHFS_DEBUG
+	blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
+	printd("Load SHFS label from %s...\n", str_id);
+#endif
 	rlen = 4096 / blkdev_ssize(detected_member[0].bd);
 	ret = blkdev_sync_read(detected_member[0].bd, 0, rlen, chk0);
 	if (ret < 0)
