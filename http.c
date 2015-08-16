@@ -561,13 +561,7 @@ err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint
 	printd("tcp_write(buf=@%p, slen=%"PRIu16", left=%"PRIu64", sndbuf=%"PRIu32", sndqueuelen=%"PRIu16")\n",
 	       buf, slen, l, (uint32_t) tcp_sndbuf(pcb), (uint16_t) tcp_sndqueuelen(pcb));
 	err = tcp_write(pcb, buf, slen, apiflags);
-	if (err == ERR_OK) {
-		s += slen;
-		l -= slen;
-		buf = (const void *) ((uintptr_t) buf + slen);
-		goto try_next;
-	}
-	if (err == ERR_MEM) {
+	if (unlikely(err == ERR_MEM)) {
 		if (slen <= 1 || !tcp_sndbuf(pcb) ||
 		    (tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN)) {
 			printd("tcp_write returned memory error\n");
@@ -576,6 +570,14 @@ err_t httpsess_write(struct http_sess *hsess, const void* buf, size_t *len, uint
 			printd("tcp_write returned memory error, retry with half send length\n", err);
 			slen >>= 1; /* l /= 2 */
 			goto try_again;
+		}
+	}
+	if (likely(err == ERR_OK)) {
+		s += slen;
+		l -= slen;
+		if (l) {
+			buf = (const void *) ((uintptr_t) buf + slen);
+			goto try_next;
 		}
 	}
 
