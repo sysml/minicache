@@ -236,6 +236,18 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 			fprintf(cio, "ARP ");
 		if (flags & NETIF_FLAG_ETHERNET)
 			fprintf(cio, "ETHERNET ");
+#ifdef CONFIG_NETFRONT_GSO
+		fprintf(cio, "GSO ");
+#endif
+#ifdef  CONFIG_NETFRONT_PERSISTENT_GRANTS
+		fprintf(cio, "PGNTS ");
+#endif
+#ifdef CONFIG_LWIP_BATCHTX
+		fprintf(cio, "BTH ");
+#endif
+#ifdef CONFIG_LWIP_WAITFORTX
+		fprintf(cio, "WTX ");
+#endif
 		if (netif->dhcp)
 			fprintf(cio, "DHCP ");
 		fprintf(cio, "MTU:%u\n", netif->mtu);
