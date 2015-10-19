@@ -113,8 +113,14 @@ post-includes-bsd += -isystem $(OSV_ROOT)/bsd/x64
 
 common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL \
 	-include $(OSV_ROOT)/compiler/include/intrinsics.hh -Wformat=0 \
-	-Wno-format-security -O3 -DNDEBUG -DCONF_debug_memory=0 \
+	-Wno-format-security-DNDEBUG -DCONF_debug_memory=0 \
 	-D__OSV__
+ifndef CONFIG_BUILD_OPTIMISATION
+common +=  -O3
+else
+common += $(CONFIG_BUILD_OPTIMISATION)
+endif
+
 CFLAGS+=$(common)
 CXXFLAGS+=-std=gnu++11 $(common)
 LDFLAGS+=$(autodepend)
