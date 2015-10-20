@@ -111,7 +111,7 @@ post-includes-bsd += -isystem $(OSV_ROOT)/bsd/
 post-includes-bsd += -isystem $(OSV_ROOT)/bsd/x64
 #autodepend = -MD -MT $@ -MP
 
-common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL \
+common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL -g \
 	-include $(OSV_ROOT)/compiler/include/intrinsics.hh -Wformat=0 \
 	-Wno-format-security-DNDEBUG -DCONF_debug_memory=0 \
 	-D__OSV__
