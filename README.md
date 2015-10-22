@@ -56,9 +56,9 @@ After that, please ensure that you set the following environment variables set
     export XEN_ROOT=$WORKSPACE/xen
 
 
-### Download and Build toolchain
+### Download dependencies
 The toolchain is required to comile and link the MiniCache VM binary. A
-toolchain having lightweightIP 1.4.1 (or newer) is required.
+toolchain for lightweightIP 1.4.1 (or newer) is required.
 
     git clone git@repos:oss/toolchain.git
     cd toolchain
@@ -67,21 +67,14 @@ toolchain having lightweightIP 1.4.1 (or newer) is required.
 
 Note: Please checkout the branch skuenzer/lwip-latest-arm32 when you build for ARM.
 
-Please follow the build procedure as described in 'toolchain/README'.
-In principle it should be:
+Next, download lightweightIP with GSO support.
 
-    make
+    git clone git@repos:skuenzer/lwip.git
+    cd toolchain
+    git checkout skuenzer/gso
+    cd ..
 
-For ARM it should be
-
-    make XEN_TARGET_ARCH=arm32
-
-After that, please ensure that you set the following environment variables
-(I also recommend to add this to your shell profile):
-
-    export TOOLCHAIN_ROOT=$WORKSPACE/toolchain
-
-### Download mini-os
+Also, Mini-OS, the base OS for MiniCache, is required.
 
     git clone git@repos:oss/mini-os.git
     cd mini-os
@@ -90,14 +83,30 @@ After that, please ensure that you set the following environment variables
 
 Note: Please checkout the branch skuenzer/edge-arm32 when you build for ARM.
 
-After that, please ensure that you set the following environment variables set
+After that, please ensure that you set the following environment variables
 (I also recommend to add this to your shell profile):
 
+    export TOOLCHAIN_ROOT=$WORKSPACE/toolchain
     export MINIOS_ROOT=$WORKSPACE/mini-os
 
-### Download and Build Cosmos (optional, x86_64 only)
-Cosmos is used to instiate the MiniCache VM. However, you can also use the
-traditional xl tools from Xen but netmap/vale will not be supported then.
+
+### Build toolchain
+Please follow the build procedure as described in 'toolchain/README'.
+In principle it should be:
+
+    cd toolchain
+    make cross-lwip-git
+    cd ..
+
+For ARM it should be
+
+    cd toolchain
+    make cross-lwip-git XEN_TARGET_ARCH=arm32
+    cd ..
+
+
+### Download and Build Cosmos (optional)
+Cosmos can be used to instiate the MiniCache VM faster than with the standard Xen tools (e.g., xl).
 
     git clone https://github.com/cnplab/cosmos.git
 
@@ -121,16 +130,6 @@ You can configure your build by enabling/disabling features in MiniCache.
 This can be done by placing a file called .config.mk in your MiniCache
 source directory. You can have a look in Config.mk which is the managed
 configuration file (do not change this one).
-For instance, a netmap-based netfrontend is activated by adding the
-following line to .config.mk:
-
-    ## vif
-    CONFIG_NETMAP                   = y
-
-Mini-OS's standard netfront (vif) is enabled with the following settings:
-
-    ## vif
-    CONFIG_NETMAP                   = n
 
 #### Build
 
@@ -140,7 +139,7 @@ Note: If you want to build for ARM, call the following make command instead:
 
     make ARCH=arm32
 
-Note: Multi-threaded building (-j option) is not working at the moment.
+Note: Multi-threaded building (-j option) is not working properly at the moment.
 
 #### Build SHFS Tools
 The SHFS tools are required to create and maintain SHFS filesystems.
@@ -149,7 +148,7 @@ Please read 'shfs-tools/README.md' for more details.
 
 ### Getting Started
 In order to boot MiniCache, create a Xen VM configuration file. You can use the
-following example as a basis:
+following example as a basis (her for x86):
 
     #!/usr/local/bin/cosmos load
 
@@ -171,12 +170,16 @@ this file and instantiate the VM like a regular binary that is executed
 in Domain-0. The parameters are passed as kernel parameters to the image:
 
     chmod a+x minicache
-    ./minicache -i 192.168.0.2/24 -g 192.168.0.1
+    ./minicache -i 192.168.0.2/24 -g 192.168.0.1 -d 192.168.0.1
 
 Otherwise, use the `extra` option in the Xen Domain configuration file to
 specify the kernel parameters:
 
-    extra         = '-i 192.168.0.2/24 -g 192.168.0.1'
+    extra         = '-i 192.168.0.2/24 -g 192.168.0.1 -d 192.168.0.1'
+
+...and launch the VM with xl:
+
+    xl create -c minicache
 
 
 ### MiniCache Parameters
