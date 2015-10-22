@@ -70,6 +70,8 @@ static inline int onio_pf_hook(
 
   /* increase refcount of packet and enqueue it */
   m2 = m_copypacket(*m, M_NOWAIT);
+  m_freem(*m);
+  *m = nullptr;
   if (!m2) {
     /* drop packet */
     return 1;
