@@ -301,8 +301,8 @@ static int parse_args(int argc, char *argv[])
     args.startup_delay = 0;
     args.no_ctldir = 0;
     args.nb_http_sess = CONFIG_LWIP_NUM_TCPCON;
-#if (!MEMP_MEM_MALLOC) && ((100 + 4) > MEMP_NUM_TCP_PCB)
-    #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
+#if (!MEMP_MEM_MALLOC) && ((CONFIG_LWIP_NUM_TCPCON) < (MEMP_NUM_TCP_PCB))
+    #error "MEMP_NUM_TCP_PCB has to be a least CONFIG_LWIP_NUM_TCPCON"
 #endif
     args.nb_sarp_entries = 0;
     while ((opt = getopt(argc, argv,
