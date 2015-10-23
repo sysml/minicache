@@ -239,6 +239,9 @@ static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
 #ifdef CONFIG_NETFRONT_GSO
 		fprintf(cio, "GSO ");
 #endif
+#if LWIP_CHECKSUM_PARTIAL
+		fprintf(cio, "CSO ");
+#endif
 #ifdef  CONFIG_NETFRONT_PERSISTENT_GRANTS
 		fprintf(cio, "PGNTS ");
 #endif
