@@ -529,6 +529,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	shfs_mounted = 0;
 
 	/* load common volume information and open devices */
+	printd("Loading common volume information...\n");
 	ret = load_vol_cconf(bd_id, count);
 	if (ret < 0)
 		goto err_out;
@@ -541,6 +542,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	shfs_mounted = 1; /* required by next function calls */
 
 	/* load hash conf (uses shfs_sync_read_chunk) */
+	printd("Loading volume configuration...\n");
 	ret = load_vol_hconf();
 	if (ret < 0)
 		goto err_free_aiotoken_pool;
@@ -548,20 +550,24 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	/* load htable (uses shfs_sync_read_chunk)
 	 * This function also allocates htable_chunk_cache,
 	 * htable_chunk_cache_state and btable */
+	printd("Loading volume hash table...\n");
 	ret = load_vol_htable();
 	if (ret < 0)
 		goto err_close_members;
 
+	printd("Allocating remount chunk buffer...\n");
 	shfs_vol.remount_chunk_buffer = target_malloc(shfs_vol.ioalign, shfs_vol.chunksize);
 	if (!shfs_vol.remount_chunk_buffer)
 		goto err_free_htable;
 
 	/* chunk buffer cache for I/O */
+	printd("Allocating chunk cache...\n");
 	ret = shfs_alloc_cache();
 	if (ret < 0)
 		goto err_free_remount_buffer;
 
 #ifdef SHFS_STATS
+	printd("Initializing statistics...\n");
 	ret = shfs_init_mstats(shfs_vol.htable_nb_buckets,
 	                       shfs_vol.htable_nb_entries_per_bucket,
 	                       shfs_vol.hlen);
@@ -573,6 +579,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 
 	shfs_nb_open = 0;
 	up(&shfs_mount_lock);
+	printd("SHFS volume mounted\n");
 	return 0;
 
  err_free_chunkcache:
