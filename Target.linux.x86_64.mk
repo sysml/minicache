@@ -102,7 +102,7 @@ CINCLUDES+=-isystem $(OSV_ROOT)/external/x64/acpica/source/include \
 CINCLUDES+=-isystem $(gcc-inc-base2) \
            -isystem gen/include \
            $(post-includes-bsd)
-OSV_BUILD_MODE=release
+OSV_BUILD_MODE=${mode}
 CINCLUDES+=-I$(OSV_ROOT)/build/$(OSV_BUILD_MODE)/gen/include/
 
 post-includes-bsd += -isystem $(OSV_ROOT)/bsd/sys
