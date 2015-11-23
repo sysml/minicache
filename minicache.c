@@ -607,6 +607,14 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * network interface initialization
      * ----------------------------------- */
+    printk("Initialize network interface: ");
+    if (args.dhclient)
+      printk("DHCP...\n");
+    else
+      printk("%u.%u.%u.%u netmask %u.%u.%u.%u gw %u.%u.%u.%u...\n",
+             ip4_addr1(&args.ip),   ip4_addr2(&args.ip),   ip4_addr3(&args.ip),   ip4_addr4(&args.ip),
+	     ip4_addr1(&args.mask), ip4_addr2(&args.mask), ip4_addr3(&args.mask), ip4_addr4(&args.mask),
+	     ip4_addr1(&args.gw),   ip4_addr2(&args.gw),   ip4_addr3(&args.gw),   ip4_addr4(&args.gw));
     TT_START(tt_netifadd);
     /* NOTE: IP-level devices are currently only
      * supported in non-threaded env */
