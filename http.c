@@ -1363,6 +1363,10 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 #ifdef HTTP_INFO
 static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 {
+#ifdef HTTP_DEBUG_SESSIONSTATES
+	struct http_sess *hsess;
+	struct http_req *hreq;
+#endif
 	uint16_t nb_sess, max_nb_sess;
 	uint32_t nb_reqs, max_nb_reqs;
 	uint16_t nb_links, max_nb_links;
@@ -1422,6 +1426,42 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 	        (pver >> 16) & 255, /* major */
 	        (pver >> 8) & 255, /* minor */
 	        (pver) & 255); /* patch */
+
+#ifdef HTTP_DEBUG_SESSIONSTATES
+	for (hsess = hs->hsess_head; hsess != NULL; hsess = hsess->next) {
+		printk("hsess: 0x%p\n", hsess);
+		printk("   sent+acked:  %"PRIu64" B\n", (uint64_t) hsess->sent);
+		printk("   inflight:    %"PRIu64" B\n", (uint64_t) hsess->sent_infly);
+		printk("   sndbuf free: %"PRIu64" B\n", (uint64_t) tcp_sndbuf(hsess->tpcb));
+		printk("   TCP state:   %c%c%c%c%c%c%c%c%c\n",
+		       (hsess->tpcb->flags & TF_ACK_DELAY)   ? 'D' : '-',
+		       (hsess->tpcb->flags & TF_ACK_NOW)     ? 'I' : '-',
+		       (hsess->tpcb->flags & TF_INFR)        ? 'R' : '-',
+		       (hsess->tpcb->flags & TF_TIMESTAMP)   ? 'T' : '-',
+		       (hsess->tpcb->flags & TF_RXCLOSED)    ? 'C' : '-',
+		       (hsess->tpcb->flags & TF_FIN)         ? 'F' : '-',
+		       (hsess->tpcb->flags & TF_NODELAY)     ? 'N' : '-',
+#if LWIP_WND_SCALE
+		       (hsess->tpcb->flags & TF_WND_SCALE)   ? 'W' : '-',
+#else
+		       '-',
+#endif
+		       (hsess->tpcb->flags & TF_NAGLEMEMERR) ? 'E' : '-'
+		      );
+#if LWIP_WND_SCALE
+		printk("   TCP snd_scale: %"PRIu8"\n", hsess->tpcb->snd_scale);
+		printk("   TCP rcv_scale: %"PRIu8"\n", hsess->tpcb->rcv_scale);
+#endif
+		printk("\n");
+		for (hreq = hsess->rqueue_head; hreq != NULL; hreq = hreq->next) {
+			printk("   hreq:        0x%p (code %u)\n", hreq, hreq->response.code);
+		}
+		for (hreq = hsess->aqueue_head; hreq != NULL; hreq = hreq->next) {
+			printk("   hreq (ack):  0x%p (code %u)\n", hreq, hreq->response.code);
+		}
+	}
+	fprintf(cio, " Session states dumped to system output\n");
+#endif
 	return 0;
 }
 #endif
