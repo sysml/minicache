@@ -142,6 +142,17 @@ static inline void minder_print(void)
 }
 #endif /* CONFIG_MINDER_PRINT */
 
+#ifdef CONFIG_DEBUG_PRINT
+#define DEBUG_INTERVAL 1000
+static inline void debug_print(void)
+{
+    static unsigned int debug_step = 0;
+
+    printk("DEBUG[%u] --->>>\n", debug_step++);
+    printk("---<<<\n");
+}
+#endif /* CONFIG_DEBUG_PRINT */
+
 #define MAX_NB_STATIC_ARP_ENTRIES 6
 
 /**
@@ -522,6 +533,9 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
     uint64_t ts_minder = 0;
 #endif /* CONFIG_MINDER_PRINT */
+#ifdef CONFIG_DEBUG_PRINT
+    uint64_t ts_debug = 0;
+#endif /* CONFIG_DEBUG_PRINT */
     TT_DECLARE(tt_boot);
     TT_DECLARE(tt_netifadd);
     TT_DECLARE(tt_lwipinit);
@@ -904,7 +918,10 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
         TIMED(ts_now, ts_till, ts_minder,  MINDER_INTERVAL,  minder_print());
 #endif /* CONFIG_MINDER_PRINT */
-#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+#ifdef CONFIG_DEBUG_PRINT
+        TIMED(ts_now, ts_till, ts_debug,  DEBUG_INTERVAL,  debug_print());
+#endif /* CONFIG_DEBUG_PRINT */
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT || defined CONFIG_DEBUG_PRINT
         ts_to = ts_till - ts_now;
 #endif
 
