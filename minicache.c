@@ -147,8 +147,27 @@ static inline void minder_print(void)
 static inline void debug_print(void)
 {
     static unsigned int debug_step = 0;
+    static int sys_cfd = -1;
+    static FILE *sys_cio;
+
+    /* open system in/out device on first call */
+    if (unlikely(sys_cfd < 0)) {
+#ifdef __MINIOS__
+        sys_cfd = open("/var/log/", O_RDWR); /* workaround to
+					      * access stdin/stdout */
+	if (sys_cfd < 0) {
+            printk("Could not open sysin/sysout\n");
+	    return;
+        }
+	sys_cio = fdopen(sys_cfd, "r+");
+#else
+	sys_cfd = 0;
+	sys_cio = stdin; /* FIXME */
+#endif
+    }
 
     printk("DEBUG[%u] --->>>\n", debug_step++);
+
     printk("---<<<\n");
 }
 #endif /* CONFIG_DEBUG_PRINT */
