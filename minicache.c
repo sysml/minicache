@@ -144,6 +144,10 @@ static inline void minder_print(void)
 
 #ifdef CONFIG_DEBUG_PRINT
 #define DEBUG_INTERVAL 1000
+
+#if LWIP_STATS_DISPLAY
+#include <lwip/stats.h>
+#endif
 static inline void debug_print(void)
 {
     static unsigned int debug_step = 0;
@@ -167,7 +171,12 @@ static inline void debug_print(void)
     }
 
     printk("DEBUG[%u] --->>>\n", debug_step++);
-
+#if LWIP_STATS_DISPLAY
+    stats_display();
+#endif
+#ifdef HTTP_INFO
+    shcmd_http_info(sys_cio, 0, NULL);
+#endif
     printk("---<<<\n");
 }
 #endif /* CONFIG_DEBUG_PRINT */

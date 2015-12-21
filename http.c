@@ -27,9 +27,6 @@ static err_t httpsess_poll   (void *argp, struct tcp_pcb *tpcb);
 static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len);
 static int httprecv_req_complete(struct http_parser *parser);
 static int httprecv_hdr_url(struct http_parser *parser, const char *buf, size_t len);
-#if defined HAVE_SHELL && defined HTTP_INFO
-static int shcmd_http_info(FILE *cio, int argc, char *argv[]);
-#endif
 
 static http_parser_settings _http_parser_settings = {
 	.on_message_begin = NULL,
@@ -1361,7 +1358,7 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 }
 
 #ifdef HTTP_INFO
-static int shcmd_http_info(FILE *cio, int argc, char *argv[])
+int shcmd_http_info(FILE *cio, int argc, char *argv[])
 {
 #ifdef HTTP_DEBUG_SESSIONSTATES
 	struct http_sess *hsess;
@@ -1432,7 +1429,9 @@ static int shcmd_http_info(FILE *cio, int argc, char *argv[])
 		printk("hsess: 0x%p\n", hsess);
 		printk("   sent+acked:  %"PRIu64" B\n", (uint64_t) hsess->sent);
 		printk("   inflight:    %"PRIu64" B\n", (uint64_t) hsess->sent_infly);
-		printk("   sndbuf free: %"PRIu64" B\n", (uint64_t) tcp_sndbuf(hsess->tpcb));
+		printk("   sndbuf free: %"PRIu64" B (%"PRIu64"/%"PRIu64" pbufs)\n",
+		       (uint64_t) tcp_sndbuf(hsess->tpcb),
+		       (uint64_t) hsess->tpcb->snd_queuelen, (uint64_t) TCP_SND_QUEUELEN);
 		printk("   TCP state:   %c%c%c%c%c%c%c%c%c\n",
 		       (hsess->tpcb->flags & TF_ACK_DELAY)   ? 'D' : '-',
 		       (hsess->tpcb->flags & TF_ACK_NOW)     ? 'I' : '-',
