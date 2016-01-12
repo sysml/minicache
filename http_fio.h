@@ -307,8 +307,8 @@ static inline void httpreq_ack_fio(struct http_req *hreq, size_t acked)
 		nb_chk = end_chk - start_chk;
 		idx = hreq->f.cce_idx_ack;
 		for (i = 0; i < nb_chk; ++i) {
-			printd("[idx=%u] Releasing buffer because data got acknowledged\n", idx);
 			idx = httpreq_fio_nextidx(hreq, idx);
+			printd("[idx=%u] Releasing buffer because data got acknowledged\n", idx);
 			cce = hreq->f.cce[idx];
 			BUG_ON(cce->addr != start_chk + i);
 			hreq->f.cce[idx] = NULL;
