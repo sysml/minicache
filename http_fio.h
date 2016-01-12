@@ -73,14 +73,14 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
 			                                we have no new data for now */
 			err = ERR_OK;
-			goto err_abort;
+			goto out;
 		} else if (unlikely(ret < 0)) {
 			/* Read ERROR happened -> abort */
 			printd("[idx=%u] fatal read error (%d): aborting...\n", idx, ret);
 			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
 			                                we have no new data for now */
 			err = ERR_ABRT;
-			goto err_abort;
+			goto out;
 		} else if (ret == 1) {
 			/* current request is not done yet,
 			 * we need to wait. httpsess_response
@@ -109,7 +109,7 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 	if (unlikely(hreq->f.cce[idx]->invalid)) {
 		printd("[idx=%u] requested chunk is INVALID! (I/O error)\n", idx);
 		err = ERR_ABRT;
-		goto err_abort;
+		goto out;
 	}
 
 	chk_off = shfs_volchkoff_foff(hreq->fd, foff);
@@ -142,9 +142,6 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 
  out:
 	hreq->f.cce_idx = idx;
-	return err;
-
- err_abort:
 	return err;
 }
 
