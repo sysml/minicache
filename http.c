@@ -1375,7 +1375,7 @@ int shcmd_http_info(FILE *cio, int argc, char *argv[])
 #ifdef HTTP_DEBUG_SESSIONSTATES
 	struct http_sess *hsess;
 	struct http_req *hreq;
-	uint32_t sum32;
+	uint32_t sum32, i32;
 	struct tcp_seg *s;
 #endif
 	uint16_t nb_sess, max_nb_sess;
@@ -1453,17 +1453,21 @@ int shcmd_http_info(FILE *cio, int argc, char *argv[])
 #endif
 		printk("   TCP effective snd window: %12"PRIu64" B = min(%12"PRIu64" B, %12"PRIu64" B)\n", LWIP_MIN(hsess->tpcb->snd_wnd, hsess->tpcb->cwnd), hsess->tpcb->snd_wnd, hsess->tpcb->cwnd);
 
+		i32 = 0;
 		sum32 = 0;
 		for (s = hsess->tpcb->unsent; s != NULL; s = s->next) {
-		  sum32 += s->len;
+		  sum32 += (uint32_t) s->len;
+		  ++i32;
 		}
-		printk("   TCP unsend data:          %12"PRIu32" B\n", sum32);
+		printk("   TCP unsent data:          %12"PRIu32" B (%"PRIu32" segs)\n", sum32, i32);
 
+		i32 = 0;
 		sum32 = 0;
 		for (s = hsess->tpcb->unacked; s != NULL; s = s->next) {
-		  sum32 += s->len;
+		  sum32 += (uint32_t) s->len;
+		  ++i32;
 		}
-		printk("   TCP unacked data:         %12"PRIu32" B\n", sum32);
+		printk("   TCP unacked data:         %12"PRIu32" B (%"PRIu32" segs)\n", sum32, i32);
 
 		printk("   TCP state:                   %c%c%c%c%c%c%c%c%c\n",
 		       (hsess->tpcb->flags & TF_ACK_DELAY)   ? 'D' : '-',
