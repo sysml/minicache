@@ -143,7 +143,7 @@ static inline void minder_print(void)
 #endif /* CONFIG_MINDER_PRINT */
 
 #ifdef CONFIG_DEBUG_PRINT
-#define DEBUG_INTERVAL 1000
+#define DEBUG_INTERVAL 500
 
 #if LWIP_STATS_DISPLAY
 #include <lwip/stats.h>
@@ -153,6 +153,13 @@ static inline void debug_print(void)
     static unsigned int debug_step = 0;
     static int sys_cfd = -1;
     static FILE *sys_cio;
+#if LWIP_STATS_DISPLAY && MEMP_STATS
+    char * memp_names[] = {
+#define LWIP_MEMPOOL(name,num,size,desc) desc,
+#include <lwip/memp_std.h>
+    };
+    s16_t i;
+#endif
 
     /* open system in/out device on first call */
     if (unlikely(sys_cfd < 0)) {
@@ -172,8 +179,27 @@ static inline void debug_print(void)
 
     printk("DEBUG[%u] --->>>\n", debug_step++);
 #if LWIP_STATS_DISPLAY
-    stats_display();
+#if LINK_STATS
+    printk("lwip.link.drop:   %"STAT_COUNTER_F"\n", lwip_stats.link.drop);
+    printk("lwip.link.memerr: %"STAT_COUNTER_F"\n", lwip_stats.link.memerr);
+    printk("lwip.link.err:    %"STAT_COUNTER_F"\n", lwip_stats.link.err);
 #endif
+#if IP_STATS
+    printk("lwip.ip.drop:     %"STAT_COUNTER_F"\n", lwip_stats.ip.drop);
+    printk("lwip.ip.memerr:   %"STAT_COUNTER_F"\n", lwip_stats.ip.memerr);
+    printk("lwip.ip.err:      %"STAT_COUNTER_F"\n", lwip_stats.ip.err);
+#endif
+#if TCP_STATS
+    printk("lwip.tcp.drop:    %"STAT_COUNTER_F"\n", lwip_stats.tcp.drop);
+    printk("lwip.tcp.memerr:  %"STAT_COUNTER_F"\n", lwip_stats.tcp.memerr);
+    printk("lwip.tcp.err:     %"STAT_COUNTER_F"\n", lwip_stats.tcp.err);
+#endif
+#if MEMP_STATS
+    for (i = 0; i < MEMP_MAX; i++) {
+      printk("lwip.memp.%s.err: %"U32_F"\n", memp_names[i], lwip_stats.memp[i].err);
+    }
+#endif
+#endif /* LWIP_STATS_DISPLAY */
 #ifdef HTTP_INFO
     shcmd_http_info(sys_cio, 0, NULL);
 #endif
