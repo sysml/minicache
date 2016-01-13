@@ -70,24 +70,24 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 			/* Retry I/O later because we are out of memory currently */
 			printd("[idx=%u] could not perform I/O: append session to I/O retry chain...\n", idx, ret);
 			httpsess_register_ioretry(hreq->hsess);
-			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
+			httpsess_flush(hreq->hsess); /* enforce sending of enqueued data:
 			                                we have no new data for now */
 			err = ERR_OK;
 			goto out;
 		} else if (unlikely(ret < 0)) {
-			/* Read ERROR happened -> abort */
+			/* I/O ERROR happened -> abort */
 			printd("[idx=%u] fatal read error (%d): aborting...\n", idx, ret);
-			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
-			                                we have no new data for now */
+			httpsess_flush(hreq->hsess); /* enforce sending of enqueued data */
 			err = ERR_ABRT;
 			goto out;
 		} else if (ret == 1) {
-			/* current request is not done yet,
+			/* current request is not done yet (hit+wait),
 			 * we need to wait. httpsess_response
 			 * will be recalled from within callback */
 			printd("[idx=%u] chunk %"PRIchk" is not ready yet but request was sent\n", idx, cur_chk);
 			httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
 			                                we have no new data for now */
+			err = ERR_OK;
 			goto out; /* we need to wait for completion */
 		}
 	}
@@ -103,7 +103,7 @@ static inline err_t httpreq_write_fio(struct http_req *hreq, size_t *sent)
 		printd("[idx=%u] current chunk %"PRIchk" is not ready yet\n", idx, cur_chk);
 		httpsess_flush(hreq->hsess); /* enforce sending of enqueued packets:
 		                                we have no new data for now */
-		goto out;
+		goto out; /* we need to wait for completion */
 	}
 	/* is the chunk to process valid? (it might be invalid due to I/O erros) */
 	if (unlikely(hreq->f.cce[idx]->invalid)) {
