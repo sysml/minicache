@@ -416,12 +416,18 @@ static inline void shfs_cache_readahead(chk_t addr)
 			cce = shfs_cache_add(addri);
 			if (!cce) {
 				printd("Read-ahead chunk %"PRIchk" (%u/%u): Failed: Out of buffers\n", (addri), i, SHFS_CACHE_READAHEAD);
+				shfs_cache_stat_inc(memerr);
 				return; /* out of buffers */
 			} else {
 				printd("Read-ahead chunk %"PRIchk" (%u/%u): Requested\n", (addri), i, SHFS_CACHE_READAHEAD);
+				shfs_cache_stat_inc(rdahead);
 			}
 		} else {
 			printd("Read-ahead chunk %"PRIchk" (%u/%u): Already in cache\n", (addri), i, SHFS_CACHE_READAHEAD);
+			if (shfs_aio_is_done(cce->t))
+				shfs_cache_stat_inc(hit);
+			else
+				shfs_cache_stat_inc(hitwait);
 		}
 	}
 }
@@ -746,6 +752,7 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 	fprintf(cio, " Access statistics:\n");
 	fprintf(cio, "  Hits:                              %12"PRIu32"\n", shfs_cache_stat_get(hit));
 	fprintf(cio, "  Hits+Wait for I/O:                 %12"PRIu32"\n", shfs_cache_stat_get(hitwait));
+	fprintf(cio, "  Read-aheads:                       %12"PRIu32"\n", shfs_cache_stat_get(rdahead));
 	fprintf(cio, "  Misses:                            %12"PRIu32"\n", shfs_cache_stat_get(miss));
 	fprintf(cio, "  Blanks:                            %12"PRIu32"\n", shfs_cache_stat_get(blank));
 	fprintf(cio, "  Evicts:                            %12"PRIu32"\n", shfs_cache_stat_get(evict));

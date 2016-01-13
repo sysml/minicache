@@ -204,6 +204,7 @@ static inline void debug_print(void)
 #if SHFS_CACHE_STATS
     printk("shfs.cache.hit:      %"PRIu32"\n", shfs_cache_stat_get(hit));
     printk("shfs.cache.hit+wait: %"PRIu32"\n", shfs_cache_stat_get(hitwait));
+    printk("shfs.cache.rdahead:  %"PRIu32"\n", shfs_cache_stat_get(rdahead));
     printk("shfs.cache.miss:     %"PRIu32"\n", shfs_cache_stat_get(miss));
     printk("shfs.cache.blank:    %"PRIu32"\n", shfs_cache_stat_get(blank));
     printk("shfs.cache.evict:    %"PRIu32"\n", shfs_cache_stat_get(evict));

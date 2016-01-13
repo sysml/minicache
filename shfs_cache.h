@@ -86,6 +86,7 @@ struct shfs_cache {
 	struct {
 		uint32_t hit;
 		uint32_t hitwait;
+		uint32_t rdahead;
 		uint32_t miss;
 		uint32_t blank;
 		uint32_t evict;
