@@ -1065,10 +1065,16 @@ static inline void httpreq_finalize(struct http_req *hreq)
 	}
 }
 
-/* Resume reply with next enqueued reply.
- * If there is no reply in queue, close the http session or
- * wait for next request by client if keepalive is enabled */
-static inline err_t httpsess_eor(struct http_sess *hsess)
+/**
+ * Finalizes a request.
+ * Depending on the current session state, the function will load the next request
+ * from the request chain, resets the keepalive timeout (if keepalive is enabled
+ * in this session), or switches the session to closing.
+ *
+ * @param hsess HTTP session descriptor
+ * @return returns 1 when there was another request loaded from the queue, 0 otherwise
+ */
+static inline int httpsess_eor(struct http_sess *hsess)
 {
 	struct http_req *hreq = hsess->rqueue_head;
 
@@ -1079,7 +1085,7 @@ static inline err_t httpsess_eor(struct http_sess *hsess)
 		hsess->rqueue_head = hreq->next;
 		--hsess->rqueue_len;
 		httpreq_finalize(hreq);
-		return httpsess_respond(hsess);
+		return 1;
 	} else {
 		/* close connection/wait because of keepalive */
 		hsess->rqueue_head = NULL;
@@ -1091,7 +1097,6 @@ static inline err_t httpsess_eor(struct http_sess *hsess)
 			printd("start keep-alive timeout\n");
 			/* wait for next request */
 			httpsess_reset_keepalive(hsess);
-			return ERR_OK;
 		} else {
 			/* close connection */
 			printd("close session\n");
@@ -1099,7 +1104,7 @@ static inline err_t httpsess_eor(struct http_sess *hsess)
 		}
 	}
 
-	return ERR_OK;
+	return 0;
 }
 
 /* Send out http response
@@ -1110,10 +1115,14 @@ err_t httpsess_respond(struct http_sess *hsess)
 	err_t err = ERR_OK;
 
 	BUG_ON(hsess->state != HSS_ESTABLISHED);
-	BUG_ON(hsess->_in_respond >= 1); /* no function nesting: FIXME: Happens still in some cases -> backtrace */
+	BUG_ON(hsess->_in_respond >= 1); /* no function nesting allowed         *
+                                          * TODO: Does this still occur?        *
+                                          *       Is this check still required? */
 	BUG_ON(!hsess->rqueue_head);
 
 	hsess->_in_respond = 1;
+
+ next_req:
 	hreq = hsess->rqueue_head;
 	switch (hreq->state) {
 	case HRS_PREPARING_HDR: /* atomic -> direct state transition */
@@ -1224,10 +1233,9 @@ err_t httpsess_respond(struct http_sess *hsess)
 		if (unlikely(err != ERR_OK && err != ERR_MEM))
 			goto err_close; /* drop connection because of an unrecoverable error */
 		if (hsess->sent == _http_ftr_len) {
-			/* we are done */
-			err = httpsess_eor(hsess);
-			if (unlikely(err))
-				goto err_close;
+			/* are we done? */
+			if (httpsess_eor(hsess) != 0)
+				goto next_req;
 		}
 		break;
 
