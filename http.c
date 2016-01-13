@@ -1366,11 +1366,17 @@ static err_t httpsess_acknowledge(struct http_sess *hsess, size_t len)
 }
 
 #ifdef HTTP_INFO
+#ifdef HTTP_DEBUG_SESSIONSTATES
+#include <lwip/tcp_impl.h>
+#endif
+
 int shcmd_http_info(FILE *cio, int argc, char *argv[])
 {
 #ifdef HTTP_DEBUG_SESSIONSTATES
 	struct http_sess *hsess;
 	struct http_req *hreq;
+	uint32_t sum32;
+	struct tcp_seg *s;
 #endif
 	uint16_t nb_sess, max_nb_sess;
 	uint32_t nb_reqs, max_nb_reqs;
@@ -1435,12 +1441,31 @@ int shcmd_http_info(FILE *cio, int argc, char *argv[])
 #ifdef HTTP_DEBUG_SESSIONSTATES
 	for (hsess = hs->hsess_head; hsess != NULL; hsess = hsess->next) {
 		printk("hsess: 0x%p\n", hsess);
-		printk("   sent+acked:  %"PRIu64" B\n", (uint64_t) hsess->sent);
-		printk("   inflight:    %"PRIu64" B\n", (uint64_t) hsess->sent_infly);
-		printk("   sndbuf free: %"PRIu64" B (%"PRIu64"/%"PRIu64" pbufs)\n",
+		printk("   sent:                     %12"PRIu64" B\n", (uint64_t) hsess->sent);
+		printk("   sent+acked:               %12"PRIu64" B\n", (uint64_t) hsess->sent - (uint64_t) hsess->sent_infly);
+		printk("   inflight:                 %12"PRIu64" B\n", (uint64_t) hsess->sent_infly);
+		printk("   TCP sndbuf free:          %12"PRIu64" B (%"PRIu64"/%"PRIu64" pbufs)\n",
 		       (uint64_t) tcp_sndbuf(hsess->tpcb),
 		       (uint64_t) hsess->tpcb->snd_queuelen, (uint64_t) TCP_SND_QUEUELEN);
-		printk("   TCP state:   %c%c%c%c%c%c%c%c%c\n",
+#if LWIP_WND_SCALE
+		printk("   TCP snd_scale:            %12"PRIu8" (%"PRIu64" B)\n", hsess->tpcb->snd_scale, (uint64_t) hsess->tpcb->snd_wnd);
+		printk("   TCP rcv_scale:            %12"PRIu8" (%"PRIu64" B)\n", hsess->tpcb->rcv_scale, (uint64_t) hsess->tpcb->rcv_wnd);
+#endif
+		printk("   TCP effective snd window: %12"PRIu64" B = min(%12"PRIu64" B, %12"PRIu64" B)\n", LWIP_MIN(hsess->tpcb->snd_wnd, hsess->tpcb->cwnd), hsess->tpcb->snd_wnd, hsess->tpcb->cwnd);
+
+		sum32 = 0;
+		for (s = hsess->tpcb->unsent; s != NULL; s = s->next) {
+		  sum32 += s->len;
+		}
+		printk("   TCP unsend data:          %12"PRIu32" B\n", sum32);
+
+		sum32 = 0;
+		for (s = hsess->tpcb->unacked; s != NULL; s = s->next) {
+		  sum32 += s->len;
+		}
+		printk("   TCP unacked data:         %12"PRIu32" B\n", sum32);
+
+		printk("   TCP state:                   %c%c%c%c%c%c%c%c%c\n",
 		       (hsess->tpcb->flags & TF_ACK_DELAY)   ? 'D' : '-',
 		       (hsess->tpcb->flags & TF_ACK_NOW)     ? 'I' : '-',
 		       (hsess->tpcb->flags & TF_INFR)        ? 'R' : '-',
@@ -1455,20 +1480,16 @@ int shcmd_http_info(FILE *cio, int argc, char *argv[])
 #endif
 		       (hsess->tpcb->flags & TF_NAGLEMEMERR) ? 'E' : '-'
 		      );
-#if LWIP_WND_SCALE
-		printk("   TCP snd_scale: %"PRIu8"\n", hsess->tpcb->snd_scale);
-		printk("   TCP rcv_scale: %"PRIu8"\n", hsess->tpcb->rcv_scale);
-#endif
-		printk("\n");
+		printk("   HTTP request chain:\n");
 		for (hreq = hsess->rqueue_head; hreq != NULL; hreq = hreq->next) {
-			printk("   hreq:        0x%p (code %u)\n", hreq, hreq->response.code);
+			printk("    hreq: %p (HTTP code: %u)\n", hreq, hreq->response.code);
 		}
 		for (hreq = hsess->aqueue_head; hreq != NULL; hreq = hreq->next) {
-			printk("   hreq (ack):  0x%p (code %u)\n", hreq, hreq->response.code);
+			printk("    hreq (ack): %p (HTTP code: %u)\n", hreq, hreq->response.code);
 		}
 	}
 	fprintf(cio, " Session states dumped to system output\n");
-#endif
+#endif /* HTTP_DEBUG_SESSIONSTATES */
 	return 0;
 }
 #endif
