@@ -82,9 +82,42 @@ struct shfs_cache {
 	uint64_t nb_ref_entries;
 	uint64_t nb_entries;
 
+#ifdef SHFS_CACHE_STATS
+	struct {
+		uint32_t hit;
+		uint32_t hitwait;
+		uint32_t miss;
+		uint32_t blank;
+		uint32_t evict;
+		uint32_t memerr;
+		uint32_t iosuc;
+		uint32_t ioerr;
+	} stats;
+#endif /* SHFS_CACHE_STATS */
+
 	struct dlist_head alist; /* list of available (loaded) but unreferenced entries */
 	struct shfs_cache_htel htable[]; /* hash table (all loaded entries (incl. referenced)) */
 };
+
+#ifdef SHFS_CACHE_STATS
+#define shfs_cache_stat_inc(name) \
+  do { \
+      ++shfs_vol.chunkcache->stats.name; \
+  } while (0)
+#define shfs_cache_stat_get(name) \
+  (shfs_vol.chunkcache->stats.name)
+#define shfs_cache_stats_reset(name) \
+  do { \
+    memset(&(shfs_vol.chunkcache->stats), 0, sizeof(shfs_vol.chunkcache->stats)); \
+  } while (0)
+#else /* SHFS_CACHE_STATS */
+#define shfs_cache_stat_inc(name) \
+  do {} while (0)
+#define shfs_cache_stat_get(name) \
+  (0)
+#define shfs_cache_stats_reset(name) \
+  do {} while (0)
+#endif /* SHFS_CACHE_STATS */
 
 int shfs_alloc_cache(void);
 void shfs_flush_cache(void); /* releases unreferenced buffers */

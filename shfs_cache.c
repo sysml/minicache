@@ -146,6 +146,7 @@ int shfs_alloc_cache(void)
     cc->nb_ref_entries = 0;
 
     shfs_vol.chunkcache = cc;
+    shfs_cache_stats_reset();
     return 0;
 
  err_free_cc:
@@ -309,6 +310,11 @@ static void _cce_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
     cce->invalid = (ret < 0) ? 1 : 0;
     printd("Cache I/O at chunk %"PRIchk" returned: %d\n", cce->addr, ret);
 
+    if (cce->invalid)
+	shfs_cache_stat_inc(ioerr);
+    else
+	shfs_cache_stat_inc(iosuc);
+
     /* I/O failed and no references? (in case of read-ahead) */
     if (unlikely(cce->refcount == 0
 #ifndef SHFS_CACHE_DISABLE
@@ -363,6 +369,7 @@ static inline struct shfs_cache_entry *shfs_cache_add(chk_t addr)
 	return NULL;
 
     found:
+	shfs_cache_stat_inc(evict);
 	/* unlink from hash table */
 	i = shfs_cache_htindex(cce->addr);
 	dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
@@ -443,6 +450,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 #ifndef SHFS_CACHE_DISABLE
     cce = shfs_cache_find(addr);
     if (!cce) {
+        shfs_cache_stat_inc(miss);
 #endif /* SHFS_CACHE_DISABLE */
         /* no -> initiate a new I/O request */
         printd("Try to add chunk %"PRIchk" to cache\n", addr);
@@ -476,6 +484,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
         printd("Chunk %"PRIchk" found in cache and it is ready\n", addr);
         *t_out = NULL;
         *cce_out = cce;
+        shfs_cache_stat_inc(hit);
         return 0;
     }
 #endif /* SHFS_CACHE_DISABLE */
@@ -506,6 +515,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
 
     *t_out = t;
     *cce_out = cce;
+    shfs_cache_stat_inc(hitwait);
     return 1;
 
  err_dec_refcount:
@@ -521,6 +531,7 @@ int shfs_cache_aread(chk_t addr, shfs_aiocb_t *cb, void *cb_cookie, void *cb_arg
  err_out:
     *t_out = NULL;
     *cce_out = NULL;
+    shfs_cache_stat_inc(memerr);
     return ret;
 }
 
@@ -546,9 +557,12 @@ int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
 	}
 	/* we are out of buffers */
 	ret = -EAGAIN;
+	shfs_cache_stat_inc(memerr);
 	goto err_out;
 
     found:
+	shfs_cache_stat_inc(evict);
+
 	/* unlink from hash collision table and available list */
 	shfs_cache_unlink(cce);
     }
@@ -559,7 +573,7 @@ int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
 
     /* initialize fields */
     /* TODO: These fields let a blank cce buffer to be released (put_cce()),
-     *       becsue they are not part of any collision lists.
+     *       because they are not part of any collision lists.
      *       As optimization, such buffers could be prepended to the alist instead...,
      *       thus, such a released buffer would be prefered for new I/O requests */
     cce->t = NULL;
@@ -567,6 +581,7 @@ int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
     cce->invalid = 1;
 
     *cce_out = cce;
+    shfs_cache_stat_inc(blank);
     return 0;
 
  err_out:
@@ -725,6 +740,18 @@ int shcmd_shfs_cache_info(FILE *cio, int argc, char *argv[])
 #endif
 #else
 	fprintf(cio, " Dynamic buffer allocation:              disabled\n");
+#endif
+
+#if SHFS_CACHE_STATS
+	fprintf(cio, " Access statistics:\n");
+	fprintf(cio, "  Hits:                              %12"PRIu32"\n", shfs_cache_stat_get(hit));
+	fprintf(cio, "  Hits+Wait for I/O:                 %12"PRIu32"\n", shfs_cache_stat_get(hitwait));
+	fprintf(cio, "  Misses:                            %12"PRIu32"\n", shfs_cache_stat_get(miss));
+	fprintf(cio, "  Blanks:                            %12"PRIu32"\n", shfs_cache_stat_get(blank));
+	fprintf(cio, "  Evicts:                            %12"PRIu32"\n", shfs_cache_stat_get(evict));
+	fprintf(cio, "  Out of memory:                     %12"PRIu32"\n", shfs_cache_stat_get(memerr));
+	fprintf(cio, "  Successful I/O:                    %12"PRIu32"\n", shfs_cache_stat_get(iosuc));
+	fprintf(cio, "  Failed I/O:                        %12"PRIu32"\n", shfs_cache_stat_get(ioerr));
 #endif
 
 #ifdef SHFS_CACHE_DEBUG

@@ -200,6 +200,18 @@ static inline void debug_print(void)
     }
 #endif
 #endif /* LWIP_STATS_DISPLAY */
+
+#if SHFS_CACHE_STATS
+    printk("shfs.cache.hit:      %"PRIu32"\n", shfs_cache_stat_get(hit));
+    printk("shfs.cache.hit+wait: %"PRIu32"\n", shfs_cache_stat_get(hitwait));
+    printk("shfs.cache.miss:     %"PRIu32"\n", shfs_cache_stat_get(miss));
+    printk("shfs.cache.blank:    %"PRIu32"\n", shfs_cache_stat_get(blank));
+    printk("shfs.cache.evict:    %"PRIu32"\n", shfs_cache_stat_get(evict));
+    printk("shfs.cache.memerr:   %"PRIu32"\n", shfs_cache_stat_get(memerr));
+    printk("shfs.cache.iosuc:    %"PRIu32"\n", shfs_cache_stat_get(iosuc));
+    printk("shfs.cache.ioerr:    %"PRIu32"\n", shfs_cache_stat_get(ioerr));
+#endif /* SHFS_CACHE_STATS */
+
 #ifdef HTTP_INFO
     shcmd_http_info(sys_cio, 0, NULL);
 #endif
