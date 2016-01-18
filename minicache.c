@@ -143,7 +143,7 @@ static inline void minder_print(void)
 #endif /* CONFIG_MINDER_PRINT */
 
 #ifdef CONFIG_DEBUG_PRINT
-#define DEBUG_INTERVAL 500
+#define DEBUG_INTERVAL 1000
 
 #if LWIP_STATS_DISPLAY
 #include <lwip/stats.h>
