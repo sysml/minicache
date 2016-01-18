@@ -95,7 +95,7 @@ Please follow the build procedure as described in 'toolchain/README'.
 In principle it should be:
 
     cd toolchain
-    make cross-lwip-git
+    make; make cross-lwip-git
     cd ..
 
 For ARM it should be
