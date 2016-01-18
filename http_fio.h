@@ -11,7 +11,7 @@
 #include "http_defs.h"
 #include "http_hdr.h"
 
-#define httpreq_fio_nb_buffers(chunksize)  (max(2,(DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, (size_t) chunksize))))
+#define httpreq_fio_nb_buffers(chunksize)  (max(2,(DIV_ROUND_UP(HTTPREQ_SNDBUF, (size_t) chunksize))))
 
 void httpreq_fio_aiocb(SHFS_AIO_TOKEN *t, void *cookie, void *argp);
 

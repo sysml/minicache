@@ -44,26 +44,19 @@
 #define HTTPHDR_URL_MAXLEN        99 /* MAX: '/' + '?' + 512 bits hash + '\0' */
 #define HTTPURL_ARGS_INDICATOR   '?'
 
-#define HTTPREQ_TCP_MAXSNDBUF     ((size_t) TCP_SND_BUF)
+#define HTTPREQ_SNDBUF            ((size_t) TCP_SND_BUF)
 
-#if LWIP_WND_SCALE
-#if (((TCP_WND) << (TCP_RCV_SCALE)) > (TCP_SND_BUF))
-#warning "lwIP's TCP send buffer is smaller than the maximum TCP window: Bad TCP/IP performance is expected."
-#define HTTP_LOW_TCPSNDBUF
-#endif
-#else
 #if ((TCP_WND) > (TCP_SND_BUF))
 #warning "lwIP's TCP send buffer is smaller than the TCP window: Bad TCP/IP performance is expected."
-#define HTTP_LOW_TCPSNDBUF
-#endif
+#define HTTPREQ_LOW_SNDBUF
 #endif
 
 #ifndef SMAX
 #define SMAX(x, y) ((x) > (y) ? (x) : (y))
 #endif
 
-#define HTTPREQ_FIO_MAXNB_BUFFERS         (SMAX(2,(DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE))))
-#define HTTPREQ_LINK_MAXNB_BUFFERS        (SMAX(2,((DIV_ROUND_UP(HTTPREQ_TCP_MAXSNDBUF, SHFS_MIN_CHUNKSIZE)) << 1)))
+#define HTTPREQ_FIO_MAXNB_BUFFERS         (SMAX(2,(DIV_ROUND_UP(HTTPREQ_SNDBUF, SHFS_MIN_CHUNKSIZE))))
+#define HTTPREQ_LINK_MAXNB_BUFFERS        (SMAX(2,((DIV_ROUND_UP(HTTPREQ_SNDBUF, SHFS_MIN_CHUNKSIZE)) << 1)))
 
 #ifndef min
 #define min(a, b) \
