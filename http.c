@@ -1454,7 +1454,7 @@ int shcmd_http_info(FILE *cio, int argc, char *argv[])
 		fprintf(cio, " (cur: %5"PRIu64" KiB, max: %"PRIu64" chks)\n", (uint64_t) link_bffrlen / 1024, HTTPREQ_LINK_MAXNB_BUFFERS);
 	}
 	fprintf(cio, " Send buffer:                           %8"PRIu64" KiB", (uint64_t) HTTPREQ_SNDBUF / 1024);
-#ifdef HTTP_LOW_SNDBUF
+#ifdef HTTPREQ_LOW_SNDBUF
 	fprintf(cio, " (Warning: low buffer space!)");
 #endif
 	fprintf(cio, "\n");
