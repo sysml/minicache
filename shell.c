@@ -88,6 +88,11 @@ typedef int err_t;
        __a < __b ? __a : __b; })
 #endif
 
+#ifndef min3
+#define min3(a, b, c) \
+    min(min((a), (b)), (c))
+#endif
+
 struct shell {
     struct tcp_pcb *tpcb;
     struct timeval ts_start;
@@ -708,47 +713,66 @@ retry:
 #ifdef USE_FOPENCOOKIE
 static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
 #else
-static int shrsess_cio_write(void *argp, const char *buf, int len)
+static int shrsess_cio_write(void *argp, const char *buf, size_t len)
 #endif
 {
     struct shell_sess *sess = argp;
+    struct tcp_pcb *pcb = sess->tpcb;
+    register size_t l, s;
     err_t err = ERR_OK;
-    int i = 0;
-    uint16_t avail, sendlen;
+    u16_t slen;
 
-    printd("%s: Sending %d bytes to client...\n", sess->name, len);
-    while (i < len) {
-	    while((avail = tcp_sndbuf(sess->tpcb)) < 1) {
-		    if (sess->state == SSS_CLOSING ||
-		        sess->state == SSS_KILLING)
-			    return (ssize_t) len;
+    s = 0;
+    l = len;
+    err = ERR_OK;
 
-		    /* flush tcp buffer and retry it later */
-		    tcp_output(sess->tpcb);
-		    schedule();
+    if (sess->state == SSS_CLOSING ||
+	sess->state == SSS_KILLING)
+      return (ssize_t) len;
 
-		    if (sess->state == SSS_CLOSING ||
-		        sess->state == SSS_KILLING)
-			    return (ssize_t) len;
-	    }
+ try_next:
+    slen = (u16_t) min3(l, tcp_sndbuf(pcb), UINT16_MAX);
+    if (slen == 0)
+      goto out;
+    printd("%s: Sending %d bytes to client...\n", sess->name, slen);
 
-	    sendlen = min(avail, (uint16_t) (len - i));
-	    err = tcp_write(sess->tpcb, buf + i, sendlen, TCP_WRITE_FLAG_COPY);
-	    if (err == ERR_MEM) {
-		    /* retry later because of high memory pressure */
-		    schedule();
-
-		    if (sess->state == SSS_CLOSING ||
-		        sess->state == SSS_KILLING)
-			    return (ssize_t) len;
-		    continue;
-	    }
-	    i += sendlen;
-	    tcp_output(sess->tpcb);
+ try_again:
+    printd("tcp_write(buf=@%p, slen=%"PRIu16", left=%"PRIu64", sndbuf=%"PRIu32", sndqueuelen=%"PRIu16")\n",
+	   buf, slen, l, (u32_t) tcp_sndbuf(pcb), (u16_t) tcp_sndqueuelen(pcb));
+    err = tcp_write(pcb, buf, slen, TCP_WRITE_FLAG_COPY | (l > 0 ? TCP_WRITE_FLAG_MORE : 0x0));
+    if (unlikely(err == ERR_MEM)) {
+      if (slen <= 1 || !tcp_sndbuf(pcb) ||
+		    (tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN)) {
+	/* retry later because of high memory pressure */
+	goto out;
+      } else {
+	printd("tcp_write returned memory error, retry with half send length\n", err);
+	slen >>= 1; /* l /= 2 */
+	goto try_again;
+      }
     }
-    printd("%s: Sending done (%d bytes)\n", sess->name, len);
+    if (likely(err == ERR_OK)) {
+      s += slen;
+      l -= slen;
+      if (l > 0) {
+	buf = (const void *) ((uintptr_t) buf + slen);
+	goto try_next;
+      }
+    }
+ out:
+    if (s < len) {
+      printd("Sent %"PRIu64"/%"PRIu64" bytes, try again later\n", (uint64_t) s, (uint64_t) len);
+      schedule(); /* TODO: block & unblock */
 
-    return len;
+      if (sess->state == SSS_CLOSING ||
+	  sess->state == SSS_KILLING)
+	return (ssize_t) len;
+      goto try_next;
+    }
+
+    tcp_output(pcb);
+    printd("Sent %"PRIu64"/%"PRIu64" bytes\n", (uint64_t) s, (uint64_t) len);
+    return (ssize_t) s;
 }
 
 static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
