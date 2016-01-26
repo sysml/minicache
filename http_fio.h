@@ -245,7 +245,7 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 	/* Content range */
 	if (hreq->response.code == 206)
 		http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-				       "%s: %"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
+				       "%s%"PRIu64"-%"PRIu64"/%"PRIu64"\r\n",
 				       _http_dhdr[HTTP_DHDR_RANGE],
 				       hreq->f.rfirst, hreq->f.rlast, hreq->f.fsize);
 
