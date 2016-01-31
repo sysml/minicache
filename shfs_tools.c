@@ -544,6 +544,7 @@ int register_shfs_tools(void)
 #endif
 
 	/* shell commands (ignore errors) */
+#ifdef HAVE_SHELL
 #ifdef CAN_DETECT_BLKDEVS
 	shell_register_cmd("lsbd", shcmd_lsbd);
 #endif
@@ -560,6 +561,7 @@ int register_shfs_tools(void)
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
 #ifdef SHFS_CACHE_INFO
 	shell_register_cmd("cache-info", shcmd_shfs_cache_info);
+#endif
 #endif
 
 	return 0;
