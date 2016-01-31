@@ -1079,11 +1079,6 @@ static int actn_addlink(struct token *j)
 		eprintf("User infos are not supported in URL: %s\n", j->path);
 		goto err;
 	}
-	if ((u.field_set & (1 << UF_QUERY)) &&
-	    (u.field_data[UF_QUERY].len > 0)) {
-		eprintf("Query is not supported in URL: %s\n", j->path);
-		goto err;
-	}
 	if ((u.field_set & (1 << UF_MAX)) &&
 	    (u.field_data[UF_MAX].len > 0)) {
 		eprintf("Max is not supported in URL: %s\n", j->path);
@@ -1106,7 +1101,7 @@ static int actn_addlink(struct token *j)
 	dprintf(D_L1, "Going to add the following remote entry:\n");
 	dprintf(D_L1, " Host: %s\n", str_rhost);
 	dprintf(D_L1, " Port: %"PRIu16"\n", u.port);
-	if (u.field_data[UF_PATH].len > 1)
+	if (u.field_data[UF_PATH].len > 1 || u.field_data[UF_QUERY].len > 1)
 		dprintf(D_L1, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
 	else
 		dprintf(D_L1, " Path: /\n");
@@ -1179,8 +1174,10 @@ static int actn_addlink(struct token *j)
 		break;
 	}
 	memcpy(&hentry->l_attr.rhost, &rhost, sizeof(hentry->l_attr.rhost));
-	if (u.field_set & (1 << UF_PATH) &&
-	    u.field_data[UF_PATH].len > 1) {
+	if ((u.field_set & (1 << UF_PATH) &&
+	     u.field_data[UF_PATH].len > 1) ||
+	    (u.field_set & (1 << UF_QUERY) &&
+	     u.field_data[UF_QUERY].len > 1)){
 		strncpy(hentry->l_attr.rpath,
 			j->path + u.field_data[UF_PATH].off + 1,
 			sizeof(hentry->l_attr.rpath));
