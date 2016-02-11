@@ -10,7 +10,7 @@
 #define HTTP_RECVHDR_MAXNB_LINES   12
 #define HTTP_SENDHDR_MAXNB_SLINES  8
 #define HTTP_SENDHDR_MAXNB_DLINES  4
-#define HTTP_HDR_DLINE_MAXLEN      64
+#define HTTP_HDR_DLINE_MAXLEN      80
 
 #ifndef min
 #define min(a, b) \
