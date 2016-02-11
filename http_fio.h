@@ -228,6 +228,9 @@ static inline int httpreq_fio_build_hdr(struct http_req *hreq)
 		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
 				      HTTP_SHDR_200(hreq->request.http_major, hreq->request.http_minor));
 
+	/* Accept range */
+	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_ACC_BYTERANGE);
+
 	/* MIME (by element or default) */
 	shfs_fio_mime(hreq->fd, strsbuf, sizeof(strsbuf));
 	if (strsbuf[0] == '\0')

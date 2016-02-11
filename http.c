@@ -971,7 +971,6 @@ static inline void httpreq_finalize_hdr(struct http_req *hreq)
 
 	/* Default header lines */
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_SERVER);
-	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_ACC_BYTERANGE);
 
 	/* keepalive */
 	if (!hreq->request.keepalive || hreq->is_stream)
