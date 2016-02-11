@@ -256,6 +256,8 @@ static inline int httpreq_link_build_hdr(struct http_req *hreq)
 		hreq->response.code = 200;	/* 200 OK */
 		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
 				      HTTP_SHDR_200(hreq->request.http_major, hreq->request.http_minor));
+		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_NOCACHE);
+		http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_NOSTORE);
 		if (o->response.mime)
 			http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
 					       "%s: %s\r\n", _http_dhdr[HTTP_DHDR_MIME], o->response.mime);

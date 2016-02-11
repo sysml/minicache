@@ -43,6 +43,7 @@ static const char __http_shdr33[] = "Server: "HTTP_SERVER_AGENT"\r\n";
 static const char __http_shdr34[] = "Accept-ranges: bytes\r\n";
 static const char __http_shdr35[] = "Transfer-encoding: chunked\r\n";
 static const char __http_shdr36[] = "User-Agent: "HTTP_SERVER_AGENT"\r\n";
+static const char __http_shdr37[] = "Cache-control: no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0\r\n";
 
 static const char * const _http_shdr[] = {
 	__http_shdr00, __http_shdr01, __http_shdr02, __http_shdr03, __http_shdr04,
@@ -52,7 +53,7 @@ static const char * const _http_shdr[] = {
 	__http_shdr20, __http_shdr21, __http_shdr22, __http_shdr23, __http_shdr24,
 	__http_shdr25, __http_shdr26, __http_shdr27, __http_shdr28, __http_shdr29,
 	__http_shdr30, __http_shdr31, __http_shdr32, __http_shdr33, __http_shdr34,
-	__http_shdr35, __http_shdr36
+	__http_shdr35, __http_shdr36, __http_shdr37
 };
 static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr00) - 1, sizeof(__http_shdr01) - 1,
@@ -73,7 +74,7 @@ static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr30) - 1, sizeof(__http_shdr31) - 1,
 	sizeof(__http_shdr32) - 1, sizeof(__http_shdr33) - 1,
 	sizeof(__http_shdr34) - 1, sizeof(__http_shdr35) - 1,
-	sizeof(__http_shdr36) - 1
+	sizeof(__http_shdr36) - 1, sizeof(__http_shdr37) - 1
 };
 
 /* Indexes into _http_shdr */
@@ -114,6 +115,7 @@ static const size_t _http_shdr_len[] = {
 #define HTTP_SHDR_ACC_BYTERANGE  34 /* Accept-ranges: bytes */
 #define HTTP_SHDR_ENC_CHUNKED    35 /* Transfer-Encoding: chunked */
 #define HTTP_SHDR_USERAGENT      36 /* User agent */
+#define HTTP_SHDR_NOSTORE        37 /* No store */
 
 #define HTTP_SHDR_DEFAULT_TYPE   HTTP_SHDR_PLAIN
 
