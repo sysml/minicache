@@ -26,9 +26,6 @@
 #include "likely.h"
 #include "mempool.h"
 #include "http.h"
-#ifdef IPERF_SERVER
-#include "iperf.h"
-#endif
 #ifdef HAVE_SHELL
 #include "shell.h"
 #include "shell_extras.h"
@@ -816,10 +813,6 @@ int main(int argc, char *argv[])
     init_http(args.nb_http_sess,
               args.nb_http_sess << 1); /* nb reqs have to be at least double to
 					* ensure all connections can be used simultaneously */
-#ifdef IPERF_SERVER
-    printk("Starting IPERF server...\n");
-    register_iperfsrv();
-#endif
 
     /* add custom commands to the shell */
 #ifdef HAVE_SHELL
@@ -1020,10 +1013,6 @@ int main(int argc, char *argv[])
 	    printk("Closing stats device...\n");
 	    exit_shfs_stats_export();
     }
-#endif
-#ifdef IPERF_SERVER
-    printk("Stopping IPERF server...\n");
-    unregister_iperfsrv();
 #endif
     printk("Stopping HTTP server...\n");
     exit_http();

@@ -65,7 +65,6 @@ CONFIG_TESTSUITE		?= n
 ######################################
 ## Debugging options
 ######################################
-CONFIG_MINICACHE_IPERF_SERVER	?= n
 CONFIG_HTABLE_DEBUG		?= n
 CONFIG_MEMPOOL_DEBUG		?= n
 CONFIG_SHFS_DEBUG		?= n
