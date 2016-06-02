@@ -36,6 +36,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <limits.h>
+#include <inttypes.h>
 
 #define LWIP_TIMEVAL_PRIVATE 0
 
