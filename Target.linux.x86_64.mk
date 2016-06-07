@@ -119,11 +119,19 @@ CFLAGS+=$(common)
 CXXFLAGS+=-std=gnu++11 $(common)
 LDFLAGS+=$(autodepend)
 else
-CONFIG_PTH_THREADS=y
+CONFIG_PTH_THREADS?=n
+CONFIG_SHELL?=n
 
 CONFIG_SHFS_CACHE_READAHEAD		?= 8
 CONFIG_SHFS_CACHE_POOL_NB_BUFFERS	?= 8192
 CONFIG_SHFS_CACHE_GROW			= n
+endif
+
+ifeq ($(CONFIG_SHELL),y)
+ifneq ($(CONFIG_PTH_THREADS),y)
+$(warning "Shell is not available without threads support")
+CONFIG_SHELL:=n
+endif
 endif
 
 ###########################################################################
