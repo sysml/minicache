@@ -105,9 +105,17 @@
 
 #include <hexdump.h>
 
-#define NMNETIF_NPREFIX 'n'
+#define NMNETIF_NPREFIX 'e'
 #define NMNETIF_SPEED 0ul     /* 0 for unknown */
 #define NMNETIF_MTU 1500
+
+#define NMNETIF_GSO_TYPE_NONE  0x00
+#define NMNETIF_GSO_TYPE_UDPV4 0x03
+#define NMNETIF_GSO_TYPE_UDPV6 0x05
+#define NMNETIF_GSO_TYPE_TCPV4 0x04
+#define NMNETIF_GSO_TYPE_TCPV6 0x06
+
+#define NMNETIF_MEMCPY memcpy
 
 /**
  * Helper macros
@@ -131,9 +139,79 @@
 static err_t netmapif_output(struct netmapif *nmi, struct pbuf *p, int co_type, int push)
 {
   unsigned int slots;
-  slots = netmapif_count_pbuf_txslots(nmi, p);
+  struct netmap_slot *slot;
+  unsigned int cur;
+  uint16_t s_off, s_left;
+  void *s_buf;
+  uint16_t p_off, p_left;
+  unsigned int len;
 
-  printk("tx: %p (%zu bytes, gso=%d, %s%d slots)\n", p, p->tot_len, co_type, push ? "push, " : "", slots);
+  LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_output: %p (%zu bytes, gso=%d, %s%d slots)\n", p, p->tot_len, co_type, push ? "push, " : "", slots));
+
+#ifndef CONFIG_NETFRONT_GSO
+  slots = netmapif_count_pbuf_txslots(nmi, p);
+  if (unlikely(co_type != NMNETIF_GSO_TYPE_NONE)) {
+    printf("netmapif_output: FATAL: GSO is not supported");
+    return ERR_IF;
+  }
+#else
+  #error "GSO is not supported yet"
+#endif
+
+  /* do we have space? */
+  if (unlikely(nm_ring_space(nmi->_txring) < slots)) {
+    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_output: not enough slots left on tx ring\n"));
+    return ERR_MEM;
+  }
+
+  /* copy payload to netmap ring */
+  cur    = nmi->_txring->cur;
+  slot   = &nmi->_txring->slot[cur];
+  cur    = nm_ring_next(nmi->_txring, cur);
+  s_buf  = NETMAP_BUF(nmi->_txring, slot->buf_idx);;
+  s_off  = 0;
+  s_left = nmi->_txring->nr_buf_size;;
+  p_off  = 0;
+  p_left = p->len;
+  for (;;) {
+    len = min(s_left, p_left);
+    
+    printf("tx: make_txreqs: s@%12p, s_off: %4lu s_left: %4lu <-%4lu bytes-- p@%12p, p_off: %4lu, p_left: %4lu\n",
+	    s_buf, s_off, s_left, len, p->payload, p_off, p_left);
+    NMNETIF_MEMCPY((void *)(((uintptr_t) s_buf) + s_off),
+		   (void *)(((uintptr_t) p->payload) + p_off),
+		   len);
+    p_off     += len;
+    p_left    -= len;
+    s_off     += len;
+    s_left    -= len;
+
+    if (p_left == 0) {
+      if (!p->next)
+	break; /* we are done with processing this pbuf chain */
+      p = p->next;
+      p_off  = 0;
+      p_left = p->len;
+    }
+
+    if (s_left == 0) {
+      /* switch to next netmap slot */
+      slot->len   = s_off;
+      slot->flags = NS_MOREFRAG;
+      slot   = &nmi->_txring->slot[cur];
+      cur    = nm_ring_next(nmi->_txring, cur);
+      s_buf  = NETMAP_BUF(nmi->_txring, slot->buf_idx);
+      s_off  = 0;
+      s_left = nmi->_txring->nr_buf_size;
+    }
+  }
+  slot->len   = s_off;
+  slot->flags = NS_REPORT;
+
+  nmi->_txring->head = nmi->_txring->cur = cur;
+
+  if (push)
+    ioctl(nmi->_fd, NIOCTXSYNC, NULL);
   return ERR_OK;
 }
 
@@ -189,7 +267,7 @@ static err_t netmapif_transmit(struct netif *netif, struct pbuf *p)
 	goto xmit; /* IPv4 but not TCP */
       }
 #ifdef CONFIG_NETFRONT_GSO
-      tso = XEN_NETIF_GSO_TYPE_TCPV4; /* TCPv4 segmentation and checksum offloading */
+      tso = NMNETIF_GSO_TYPE_TCPV4; /* TCPv4 segmentation and checksum offloading */
 #endif /* CONFIG_NETFRONT_GSO */
 #ifdef CONFIG_LWIP_BATCHTX
       /* push only when FIN, RST, PSH, or URG flag is set */
@@ -203,7 +281,7 @@ static err_t netmapif_transmit(struct netif *netif, struct pbuf *p)
       if (IP6H_NEXTH((struct ip6_hdr *)((uintptr_t) p->payload + ip_hdr_offset)) != IP6_NEXTH_TCP)
 	goto xmit; /* IPv6 but not TCP */
 #ifdef CONFIG_NETFRONT_GSO
-      tso = XEN_NETIF_GSO_TYPE_TCPV6; /* TCPv6 segmentation and checksum offloading */
+      tso = NMNETIF_GSO_TYPE_TCPV6; /* TCPv6 segmentation and checksum offloading */
 #endif /* CONFIG_NETFRONT_GSO */
 #ifdef CONFIG_LWIP_BATCHTX
       /* push only when FIN, RST, PSH, or URG flag is set */
@@ -496,20 +574,25 @@ err_t netmapif_init(struct netif *netif)
     nmi->_txring = NETMAP_TXRING(nmi->_nifp, nmi->dev->first_tx_ring);
     LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %s: use tx ring %u\n", nmi->ifname, nmi->dev->first_tx_ring));
 
-    /* MAC address */
-    if (nmi->_hwaddr_is_private) {
-      if (_sys_get_hwaddr(nmi->dev->req.nr_name, &nmi->hwaddr) < 0) {
-	LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %s: failed to retrieve hardware address. Generating a random one\n", nmi->ifname));
-	_sys_gen_hwaddr(&nmi->hwaddr);
-      }
-    }
-    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %s: hardware address: %02x:%02x:%02x:%02x:%02x:%02x\n", nmi->ifname,
-		nmi->hwaddr.addr[0], nmi->hwaddr.addr[1], nmi->hwaddr.addr[2],
-		nmi->hwaddr.addr[3], nmi->hwaddr.addr[4], nmi->hwaddr.addr[5]));
     /* Interface identifier */
     netif->name[0] = NMNETIF_NPREFIX;
     netif->name[1] = '0' + netmapif_id;
     netmapif_id++;
+
+    /* MAC address */
+    if (nmi->_hwaddr_is_private) {
+      if (_sys_get_hwaddr(nmi->dev->req.nr_name, &nmi->hwaddr) < 0) {
+	LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %c%c: failed to retrieve hardware address. Generating a random one\n",
+				  netif->name[0], netif->name[1]));
+	_sys_gen_hwaddr(&nmi->hwaddr);
+      }
+    }
+    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %c%c: Hardware address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+			      netif->name[0], netif->name[1],
+			      nmi->hwaddr.addr[0], nmi->hwaddr.addr[1], nmi->hwaddr.addr[2],
+			      nmi->hwaddr.addr[3], nmi->hwaddr.addr[4], nmi->hwaddr.addr[5]));
+    SMEMCPY(&netif->hwaddr, &nmi->hwaddr, ETHARP_HWADDR_LEN);
+    netif->hwaddr_len = ETHARP_HWADDR_LEN;
 
     /* We directly use etharp_output() here to save a function call.
      * Instead, there could be function declared that calls etharp_output()
@@ -520,9 +603,6 @@ err_t netmapif_init(struct netif *netif)
     netif->remove_callback = netmapif_exit;
 #endif /* CONFIG_NETIF_REMOVE_CALLBACK */
 
-    /* No hardware address support */
-    netif->hwaddr_len = 0;
-
     /* Initialize the snmp variables and counters inside the struct netif.
      * The last argument is the link speed, in units of bits per second. */
     NETIF_INIT_SNMP(netif, snmp_ifType_ppp, NMNETIF_SPEED);
@@ -530,7 +610,7 @@ err_t netmapif_init(struct netif *netif)
 			      netif->name[0], netif->name[1], NMNETIF_SPEED));
 
     /* Device capabilities */
-    netif->flags = NETIF_FLAG_LINK_UP;
+    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
 
     /* Maximum transfer unit */
     netif->mtu = NMNETIF_MTU;
