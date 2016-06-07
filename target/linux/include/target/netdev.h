@@ -14,6 +14,13 @@
 #define target_netif_init \
   pcapif_init
 
+#elif defined CONFIG_NETMAP
+#include <netif/netmapif.h>
+#define target_netif_init \
+  netmapif_init
+#define target_netif_poll \
+  netmapif_poll
+
 #else
 #include <netif/tapif.h>
 #define target_netif_init \

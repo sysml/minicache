@@ -121,6 +121,7 @@ LDFLAGS+=$(autodepend)
 else
 CONFIG_PTH_THREADS?=n
 CONFIG_SHELL?=n
+CONFIG_NETMAP?=y
 
 CONFIG_SHFS_CACHE_READAHEAD		?= 8
 CONFIG_SHFS_CACHE_POOL_NB_BUFFERS	?= 8192
@@ -131,6 +132,12 @@ ifeq ($(CONFIG_SHELL),y)
 ifneq ($(CONFIG_PTH_THREADS),y)
 $(warning "Shell is not available without threads support")
 CONFIG_SHELL:=n
+endif
+endif
+
+ifeq ($(CONFIG_NETMAP),y)
+ifndef NETMAP_INCLUDES
+$(error "Please define NETMAP_INCLUDES")
 endif
 endif
 
@@ -276,8 +283,13 @@ ARCHFILES+=$(wildcard $(LWIPARCH)/netif/osv-net.c)
 ARCHFILESXX+=$(wildcard $(LWIPARCH)/netif/osv-net-io.cc)
 CFLAGS+=-DCONFIG_OSVNET
 else
+ifeq ($(CONFIG_NETMAP),y)
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/netmapif.c)
+CFLAGS+=-DCONFIG_NETMAP -I$(NETMAP_INCLUDES)
+else
 ARCHFILES+=$(wildcard $(LWIPARCH)/netif/tapif.c)
 CFLAGS+=-DCONFIG_TAPIF
+endif
 endif
 endif
 
