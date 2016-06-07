@@ -175,9 +175,9 @@ static err_t netmapif_output(struct netmapif *nmi, struct pbuf *p, int co_type, 
   p_left = p->len;
   for (;;) {
     len = min(s_left, p_left);
-    
-    printf("tx: make_txreqs: s@%12p, s_off: %4lu s_left: %4lu <-%4lu bytes-- p@%12p, p_off: %4lu, p_left: %4lu\n",
-	    s_buf, s_off, s_left, len, p->payload, p_off, p_left);
+
+    LWIP_DEBUGF(NETIF_DEBUG, ("tx: s@%12p, s_off: %4lu s_left: %4lu <-%4lu bytes-- p@%12p, p_off: %4lu, p_left: %4lu\n",
+			       s_buf, s_off, s_left, len, p->payload, p_off, p_left));
     NMNETIF_MEMCPY((void *)(((uintptr_t) s_buf) + s_off),
 		   (void *)(((uintptr_t) p->payload) + p_off),
 		   len);
@@ -381,12 +381,137 @@ static inline void netmapif_input(struct pbuf *p, struct netif *netif)
 }
 
 /*
+ * Returns number of bytes and segments of a received packet
+ */
+static inline uint16_t
+netmapif_get_rxlen(struct netmap_ring *rxring, unsigned int cur,
+		   unsigned int *next, unsigned int *out_nbslots)
+{
+	uint16_t nb_slots = 0;
+	uint16_t rxlen = 0;
+	struct netmap_slot *slot;
+
+	for (;;) {
+		slot   = &rxring->slot[cur];
+		rxlen += slot->len;
+		++nb_slots;
+		cur    = nm_ring_next(rxring, cur);
+	        if (!(slot->flags & NS_MOREFRAG))
+			break;
+	}
+	if (next)
+	  *next = cur;
+	if (out_nbslots)
+	  *out_nbslots = nb_slots;
+	return rxlen;
+}
+
+/* copies netmap slots into a pre-allocated pbuf chain */
+static inline void
+netmapif_receive(struct netmap_ring *rxring, unsigned int cur, struct pbuf *p)
+{
+	unsigned int slots;
+	struct netmap_slot *slot;
+	uint16_t s_off, s_left;
+	void *s_buf;
+	uint16_t p_off, p_left;
+	unsigned int len;
+
+	/* copy payload from netmap ring */
+	cur    = rxring->cur;
+	slot   = &rxring->slot[cur];
+	cur    = nm_ring_next(rxring, cur);
+	s_buf  = NETMAP_BUF(rxring, slot->buf_idx);;
+	s_off  = 0;
+	s_left = slot->len;
+	p_off  = 0;
+	p_left = p->len;
+	for (;;) {
+	  len = min(s_left, p_left);
+
+	  LWIP_DEBUGF(NETIF_DEBUG, ("rx: s@%12p, s_off: %4lu s_left: %4lu --%4lu bytes-> p@%12p, p_off: %4lu, p_left: %4lu\n",
+				    s_buf, s_off, s_left, len, p->payload, p_off, p_left));
+	  NMNETIF_MEMCPY((void *)(((uintptr_t) p->payload) + p_off),
+			 (void *)(((uintptr_t) s_buf) + s_off),
+			 len);
+	  p_off     += len;
+	  p_left    -= len;
+	  s_off     += len;
+	  s_left    -= len;
+
+	  if (s_left == 0) {
+	    if (!(slot->flags & NS_MOREFRAG))
+	      break; /* we are done */
+
+	    /* switch to next netmap slot */
+	    slot   = &rxring->slot[cur];
+	    cur    = nm_ring_next(rxring, cur);
+	    s_buf  = NETMAP_BUF(rxring, slot->buf_idx);
+	    s_off  = 0;
+	    s_left = slot->len;
+	  }
+
+	  if (p_left == 0) {
+	    p = p->next;
+	    BUG_ON(!p); /* only happens if pbuf is smaller than received data */
+	    p_off  = 0;
+	    p_left = p->len;
+	  }
+
+	}
+}
+/*
  * Receive packets from netmap ring and send them to
  * netmapif_input()
  */
 void netmapif_poll(struct netif *netif)
 {
-  
+  struct netmapif *nmi = netif->state;
+  unsigned int slots, tot_slots;
+  unsigned int cur, next, pkg_len;
+  struct pbuf *p;
+
+  /* call receive ioctl (TODO: expose filedescriptor to do rx select/poll outside of this function) */
+  ioctl(nmi->_fd, NIOCRXSYNC, NULL);
+
+  /* handle received packets */
+  tot_slots = nm_ring_space(nmi->_rxring);
+  cur = nmi->_rxring->cur;
+  while (tot_slots) {
+    pkg_len = netmapif_get_rxlen(nmi->_rxring, cur, &next, &slots);
+    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c: "
+			      "incoming data %u bytes, %u slots\n",
+			      netif->name[0], netif->name[1],
+			      pkg_len, slots));
+
+    if (unlikely((pkg_len) > 0xFFFF - ETH_PAD_SIZE))  {
+      LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c: "
+				"could not receive packet: too big!?\n",
+				netif->name[0], netif->name[1]));
+      p = NULL;
+    } else {
+      p = pbuf_alloc(PBUF_RAW, (u16_t) (pkg_len + ETH_PAD_SIZE), PBUF_POOL);
+      if (unlikely(!p)) {
+	LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c: "
+				  "could not allocate pbuf, dropping packet\n",
+				  netif->name[0], netif->name[1]));
+      } else {
+	/* copy received data into pbuf */
+#if ETH_PAD_SIZE
+	pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
+#endif /* ETH_PAD_SIZE */
+	netmapif_receive(nmi->_rxring, cur, p);
+#if ETH_PAD_SIZE
+	pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
+#endif /* ETH_PAD_SIZE */
+      }
+    }
+    netmapif_input(p, netif);
+    cur = next;
+    tot_slots -= slots;
+  }
+
+  nmi->_rxring->head = nmi->_rxring->cur = cur;
 }
 
 #ifndef CONFIG_LWIP_NOTHREADS
