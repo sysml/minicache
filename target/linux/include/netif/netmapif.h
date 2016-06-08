@@ -71,7 +71,6 @@ struct netmapif {
 
     /* the following fields are used internally */
     struct netmap_if *_nifp;
-    struct netmap_ring *_rxring;
     struct netmap_ring *_txring;
     int _fd;
 #ifndef CONFIG_LWIP_NOTHREADS

@@ -467,6 +467,8 @@ netmapif_receive(struct netmap_ring *rxring, unsigned int cur, struct pbuf *p)
 void netmapif_poll(struct netif *netif)
 {
   struct netmapif *nmi = netif->state;
+  unsigned int i;
+  struct netmap_ring *rxring;
   unsigned int slots, tot_slots;
   unsigned int cur, next, pkg_len;
   struct pbuf *p;
@@ -474,44 +476,48 @@ void netmapif_poll(struct netif *netif)
   /* call receive ioctl (TODO: expose filedescriptor to do rx select/poll outside of this function) */
   ioctl(nmi->_fd, NIOCRXSYNC, NULL);
 
-  /* handle received packets */
-  tot_slots = nm_ring_space(nmi->_rxring);
-  cur = nmi->_rxring->cur;
-  while (tot_slots) {
-    pkg_len = netmapif_get_rxlen(nmi->_rxring, cur, &next, &slots);
-    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c: "
-			      "incoming data %u bytes, %u slots\n",
-			      netif->name[0], netif->name[1],
-			      pkg_len, slots));
+  /* query all rx queues */
+  for (i = nmi->dev->first_rx_ring; i <= nmi->dev->last_rx_ring; ++i) {
+    rxring = NETMAP_RXRING(nmi->_nifp, i);
 
-    if (unlikely((pkg_len) > 0xFFFF - ETH_PAD_SIZE))  {
-      LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c: "
-				"could not receive packet: too big!?\n",
-				netif->name[0], netif->name[1]));
-      p = NULL;
-    } else {
-      p = pbuf_alloc(PBUF_RAW, (u16_t) (pkg_len + ETH_PAD_SIZE), PBUF_POOL);
-      if (unlikely(!p)) {
-	LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c: "
-				  "could not allocate pbuf, dropping packet\n",
-				  netif->name[0], netif->name[1]));
+    /* handle received packets */
+    tot_slots = nm_ring_space(rxring);
+    cur = rxring->cur;
+    while (tot_slots) {
+      pkg_len = netmapif_get_rxlen(rxring, cur, &next, &slots);
+      LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c.r%u: "
+				"incoming data %u bytes, %u slots\n",
+				netif->name[0], netif->name[1], i,
+				pkg_len, slots));
+
+      if (unlikely((pkg_len) > 0xFFFF - ETH_PAD_SIZE))  {
+	LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c.r%u: "
+				  "could not receive packet: too big!?\n",
+				  netif->name[0], netif->name[1], i));
+	p = NULL;
       } else {
-	/* copy received data into pbuf */
+	p = pbuf_alloc(PBUF_RAW, (u16_t) (pkg_len + ETH_PAD_SIZE), PBUF_POOL);
+	if (unlikely(!p)) {
+	  LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_poll: %c%c.r%u: "
+				    "could not allocate pbuf, dropping packet\n",
+				    netif->name[0], netif->name[1], i));
+	} else {
+	  /* copy received data into pbuf */
 #if ETH_PAD_SIZE
-	pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
+	  pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
 #endif /* ETH_PAD_SIZE */
-	netmapif_receive(nmi->_rxring, cur, p);
+	  netmapif_receive(rxring, cur, p);
 #if ETH_PAD_SIZE
-	pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
+	  pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
 #endif /* ETH_PAD_SIZE */
+	}
       }
+      netmapif_input(p, netif);
+      cur = next;
+      tot_slots -= slots;
     }
-    netmapif_input(p, netif);
-    cur = next;
-    tot_slots -= slots;
+    rxring->head = rxring->cur = cur;
   }
-
-  nmi->_rxring->head = nmi->_rxring->cur = cur;
 }
 
 #ifndef CONFIG_LWIP_NOTHREADS
@@ -694,8 +700,8 @@ err_t netmapif_init(struct netif *netif)
     }
 
     nmi->_fd   = NETMAP_FD(nmi->dev);
-    nmi->_rxring = NETMAP_RXRING(nmi->_nifp, nmi->dev->first_rx_ring);
-    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %s: use rx ring %u\n", nmi->ifname, nmi->dev->first_rx_ring));
+    LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %s: use rx rings %u-%u\n", nmi->ifname,
+			      nmi->dev->first_rx_ring, nmi->dev->last_rx_ring));
     nmi->_txring = NETMAP_TXRING(nmi->_nifp, nmi->dev->first_tx_ring);
     LWIP_DEBUGF(NETIF_DEBUG, ("netmapif_init: %s: use tx ring %u\n", nmi->ifname, nmi->dev->first_tx_ring));
 
