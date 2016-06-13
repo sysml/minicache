@@ -5,15 +5,19 @@
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 #include <target/sys.h>
+
+#ifndef __KERNEL__
 #include <stdint.h>
 #include <errno.h>
+#include "shfs_cache.h"
+#else
+int shfs_errno;
+#endif
 
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
 #include "shfs_btable.h"
-#include "shfs_tools.h"
-#include "shfs_cache.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
 #include "shfs_stats.h"
@@ -505,7 +509,9 @@ static int load_vol_htable(void)
 	return ret;
 }
 
+#ifndef __KERNEL__
 static void _aiotoken_pool_objinit(struct mempool_obj *, void *);
+#endif
 
 /**
  * Mount a SHFS volume
@@ -582,6 +588,8 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	printd("SHFS volume mounted\n");
 	return 0;
 
+	/* make compiller happy */
+	goto  err_free_chunkcache;
  err_free_chunkcache:
 	shfs_free_cache();
  err_free_remount_buffer:
@@ -823,6 +831,7 @@ int remount_shfs(void) {
  * of the interrupt context via blkdev_poll_req() and there is only the
  * cooperative scheduler...
  */
+#ifndef __KERNEL__
 static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 {
 	SHFS_AIO_TOKEN *t;
@@ -835,6 +844,7 @@ static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 	t->cb_argp = NULL;
 	t->cb_cookie = NULL;
 }
+#endif
 
 static void _shfs_aio_cb(int ret, void *argp) {
 	SHFS_AIO_TOKEN *t = argp;

@@ -7,13 +7,17 @@
 #ifndef _SHFS_H_
 #define _SHFS_H_
 
-#include <target/sys.h>
 #include <target/blkdev.h>
+#ifndef __KERNEL__
 #include <stdint.h>
-
-#include "mempool.h"
 #include "likely.h"
+#include "mempool.h"
+#else
+#include <asm-generic/fcntl.h>
+#include <target/stubs.h>
+#endif
 
+#include <target/sys.h>
 #include "shfs_defs.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"

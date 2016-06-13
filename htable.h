@@ -7,9 +7,15 @@
 #ifndef _HTABLE_H_
 #define _HTABLE_H_
 
+#ifndef __KERNEL__
 #include <stdint.h>
 #include <errno.h>
 #include "likely.h"
+#else
+extern int shfs_errno;
+#define errno shfs_errno
+#endif
+
 #include "hash.h"
 
 /*

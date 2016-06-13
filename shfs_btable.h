@@ -80,7 +80,7 @@ static inline struct shfs_bentry *shfs_btable_addentry(struct htable *bt, hash51
 	return NULL;
 }
 
-#ifndef __MINIOS__
+#if (!defined(__MINIOS__) && !defined(__KERNEL__))
 /**
  * Deletes an entry from table
  */
