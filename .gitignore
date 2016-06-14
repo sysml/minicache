@@ -9,7 +9,9 @@ build/*
 *.d
 *.so
 *~
-\#_*\#
+\#*\#
+.\#*
+*.swp
 minicache
 Capstanfile
 ,*
