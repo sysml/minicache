@@ -228,8 +228,12 @@ static inline struct shfs_cache_entry *shfs_cache_find(chk_t addr)
 
     i = shfs_cache_htindex(addr);
     dlist_foreach(cce, shfs_vol.chunkcache->htable[i].clist, clist) {
-        if (cce->addr == addr)
+        if (cce->addr == addr) {
+	    /* re-link element to the head of the list for faster successive lookups */
+	    dlist_relink_head(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+
             return cce;
+	}
     }
     return NULL; /* not found */
 }
