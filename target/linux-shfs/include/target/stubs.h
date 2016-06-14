@@ -3,13 +3,6 @@
 
 typedef int sem_t;
 
-struct blkdev;
-static inline void blkdev_poll_req(struct blkdev *bd)
-{ BUG(); }
-
-#define blkdev_async_io_submit(bd) do {} while(0)
-#define blkdev_async_io_wait_slot(bd) do {} while(0)
-
 
 struct mempool {
 	int a;
@@ -26,12 +19,6 @@ static inline void mempool_put(struct mempool_obj *obj)
 extern int shfs_errno;
 #define errno shfs_errno
 
-static inline struct blkdev *open_blkdev(blkdev_id_t id, int mode)
-{ BUG(); }
-
-#define blkdev_sync_read(bd, start, len, buffer) 0;
-static inline void close_blkdev(struct blkdev *bd)
-{ BUG(); }
 #define ENOTSUP ENOTSUPP
 
 #define init_SEMAPHORE(s, v)
@@ -53,13 +40,6 @@ static inline int mempool_free_count(struct mempool *a)
 }
 
 static inline int shfs_cache_ref_count(void)
-{
-	BUG();
-	return 0;
-}
-
-static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,
-                                  int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {
 	BUG();
 	return 0;

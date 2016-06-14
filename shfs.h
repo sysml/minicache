@@ -7,7 +7,7 @@
 #ifndef _SHFS_H_
 #define _SHFS_H_
 
-#include <target/blkdev.h>
+#include <target/sys.h>
 #ifndef __KERNEL__
 #include <stdint.h>
 #include "likely.h"
@@ -15,9 +15,10 @@
 #else
 #include <asm-generic/fcntl.h>
 #include <target/stubs.h>
+#include <target/linux_shfs.h>
 #endif
+#include <target/blkdev.h>
 
-#include <target/sys.h>
 #include "shfs_defs.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
@@ -281,5 +282,4 @@ static inline int shfs_io_chunk_nosched(chk_t start, chk_t len, int write, void 
 	shfs_io_chunk_nosched((start), (len), 0, (buffer))
 #define shfs_write_chunk_nosched(start, len, buffer) \
 	shfs_io_chunk_nosched((start), (len), 1, (buffer))
-
 #endif /* _SHFS_H_ */

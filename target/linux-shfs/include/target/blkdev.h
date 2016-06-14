@@ -1,36 +1,61 @@
-#ifndef _LINUX_SHFS_H_
-#define _LINUX_SHFS_H_
+#ifndef _LINUX_BLKDEV_H_
+#define _LINUX_BLKDEV_H_
 
-typedef char blkdev_id_t[PATH_MAX]; /* device id is a path */
+typedef struct shfs_sb_info blkdev_id_t[1];
+#define blkdev shfs_sb_info
+/* typedef struct shfs_sb_info blkdev; */
+/* struct blkdev { */
+  /* blkdev_id_t dev; */
+  /* int fd; */
+  /* int mode; */
+  /* struct stat fd_stat; */
+  /* sector_t size; */
+  /* uint32_t ssize; */
+  /* struct mempool *reqpool; */
+  /* struct _blkdev_req *reqq_head; */
+  /* struct _blkdev_req *reqq_tail; */
 
-struct blkdev {
-  blkdev_id_t dev;
-  int fd;
-  int mode;
-  struct stat fd_stat;
-  sector_t size;
-  uint32_t ssize;
-  struct mempool *reqpool;
-  struct _blkdev_req *reqq_head;
-  struct _blkdev_req *reqq_tail;
+  /* int exclusive; */
+  /* unsigned int refcount; */
 
-  int exclusive;
-  unsigned int refcount;
+  /* struct blkdev *_next; */
+  /* struct blkdev *_prev; */
+/* }; */
 
-  struct blkdev *_next;
-  struct blkdev *_prev;
-};
-
-#define blkdev_ssize(bd) ((uint32_t) (bd)->ssize)
-#define blkdev_size(bd) ((bd)->size * (sector_t) blkdev_ssize((bd)))
-#define blkdev_avail_req(bd) mempool_free_count((bd)->reqpool)
-
-#define blkdev_ioalign(bd) blkdev_ssize((bd))
+/* Hardcode for now */
+/* #define blkdev_ssize(bd) ((uint32_t) (bd)->ssize) */
+/* #define blkdev_size(bd) ((bd)->size * (sector_t) blkdev_ssize((bd))) */
+/* #define blkdev_avail_req(bd) mempool_free_count((bd)->reqpool) */
+/* #define blkdev_ioalign(bd) blkdev_ssize((bd)) */
+#define blkdev_ssize(bd) (4096)
+#define blkdev_size(bd) (bd->sb->s_bdev->bd_inode->i_size)
+#define blkdev_avail_req(bd) 100000
+#define blkdev_ioalign(bd) (4096)
 
 #define MAX_REQUESTS 1024
 #define DEFAULT_SSIZE 512 /* lower bound for opened files */
 
 typedef void (blkdev_aiocb_t)(int ret, void *argp);
+
+static inline struct blkdev *open_blkdev(blkdev_id_t id, int mode)
+{ BUG(); }
+
+#define blkdev_sync_read(bd, start, len, buffer) 0;
+static inline void close_blkdev(struct blkdev *bd)
+{ BUG(); }
+
+static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,
+                                  int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
+{
+	BUG();
+	return 0;
+}
+
+static inline void blkdev_poll_req(struct blkdev *bd)
+{ BUG(); }
+
+#define blkdev_async_io_submit(bd) do {} while(0)
+#define blkdev_async_io_wait_slot(bd) do {} while(0)
 
 /* ------------------------------------------------- */
 #if 0
