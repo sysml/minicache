@@ -713,7 +713,7 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	size_t url_offset = 0;
 	size_t nb_slines = 0;
 	size_t nb_dlines = 0;
-#ifdef HTTP_TESTFILE
+#ifdef HTTP_TESTFILES
 	hash512_t h;
 #endif
 #if defined SHFS_STATS && defined SHFS_STATS_HTTP && defined SHFS_STATS_HTTP_DPC
@@ -758,11 +758,11 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 		*(hreq->request.url_argp) = '\0';
 #endif
 
-#ifdef HTTP_TESTFILE
+#ifdef HTTP_TESTFILES
 	if ((hreq->request.url[url_offset] == HTTPURL_ARGS_INDICATOR) &&
 	    (hash_parse(&hreq->request.url[url_offset + 1], h, shfs_vol.hlen) == 0)) {
 		if (hash_is_zero(h, shfs_vol.hlen))
-			goto testfile_hdr0; /* fixed-size testfile */
+			goto testfile_hdr0; /* empty testfile */
 		if (hash_is_max(h, shfs_vol.hlen))
 			goto testfile_hdr1; /* infinite testfile */
 	}
@@ -827,27 +827,24 @@ static inline void httpreq_prepare_hdr(struct http_req *hreq)
 	/**
 	 * TESTFILE HEADER
 	 */
-#ifdef HTTP_TESTFILE
- testfile_hdr0: /* testfile with fixed length */
+#ifdef HTTP_TESTFILES
+ testfile_hdr0: /* testfile with zero length */
 	hreq->response.code = 200;
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
 			      HTTP_SHDR_200(hreq->request.http_major, hreq->request.http_minor));
-	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_PLAIN);
+	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_BINARY);
 
 	/* Content length */
 	http_sendhdr_add_dline(&hreq->response.hdr, &nb_dlines,
-			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE],
-			       _http_testfile_len);
-	hreq->rlen = _http_testfile_len;
-	hreq->type = HRT_SMSG;
-	hreq->smsg = _http_testfile;
+			       "%s: %"PRIu64"\r\n", _http_dhdr[HTTP_DHDR_SIZE], 0);
+	hreq->type = HRT_NOMSG;
 	goto err_out;
 
  testfile_hdr1: /* infinite testfile */
 	hreq->response.code = 200;
 	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines,
 			      HTTP_SHDR_200(hreq->request.http_major, hreq->request.http_minor));
-	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_PLAIN);
+	http_sendhdr_add_shdr(&hreq->response.hdr, &nb_slines, HTTP_SHDR_BINARY);
 
 	hreq->rlen = sizeof(_http_testfile) - 1;
 	hreq->type = HRT_SMSG_INF;
@@ -1181,7 +1178,7 @@ err_t httpsess_respond(struct http_sess *hsess)
 				goto case_HRS_RESPONDING_EOM; /* we are done */
 			break;
 
-#ifdef HTTP_TESTFILE
+#ifdef HTTP_TESTFILES
 		case HRT_SMSG_INF:
 			err = httpsess_write_sbuf_inf(hsess, &hsess->sent, hreq->smsg, hreq->rlen);
 			if (unlikely(err != ERR_OK && err != ERR_MEM))

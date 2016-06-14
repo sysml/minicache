@@ -172,8 +172,8 @@ enum http_req_state {
 enum http_req_type {
 	HRT_UNDEF = 0,
 	HRT_SMSG,      /* static message body */
-#ifdef HTTP_TESTFILE
-	HRT_SMSG_INF,  /* static message body, but infinite */
+#ifdef HTTP_TESTFILES
+	HRT_SMSG_INF,  /* static message body but infinite in length */
 #endif
 	HRT_FIOMSG,    /* dynamic message body (file from shfs) */
 	HRT_LINKMSG,   /* dynamic message body (uplink described by shfs) */
