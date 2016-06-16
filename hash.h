@@ -1,11 +1,11 @@
+#ifndef _HASH_H_
+#define _HASH_H_
 /*
  * Simple hash value implementation for MiniOS and POSIX
  *
- * Copyright(C) 2013-204 NEC Laboratories Europe. All rights reserved.
+ * Copyright(C) 2013-2016 NEC Laboratories Europe. All rights reserved.
  *                       Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#ifndef _HASH_H_
-#define _HASH_H_
 
 #include <string.h>
 
