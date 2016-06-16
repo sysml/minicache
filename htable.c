@@ -4,17 +4,22 @@
  * Copyright(C) 2013-204 NEC Laboratories Europe. All rights reserved.
  *                       Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#ifdef __MINIOS__
+#include <target/sys.h>
+#if defined(__MINIOS__)
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
+#elif defined(__KERNEL__)
+#include <linux/types.h>
+#include <target/stubs.h>
 #else
 #include <stdlib.h>
+#include <asm/bug.h>
 #include <string.h>
 #endif
 
 #ifndef MIN_ALIGN
-#define MIN_ALIGN 8
+#define MIN_ALIGN ((size_t) 8)
 #endif
 
 #include "htable.h"

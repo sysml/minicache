@@ -8,10 +8,16 @@ static struct super_operations shfs_sops = {
 	
 };
 
+static inline int mount_shfs_glue(struct shfs_sb_info *sbi)
+{
+	return mount_shfs((blkdev_id_t *) &sbi, 1);
+}
+
 static int shfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *root_inode;
 	struct shfs_sb_info *sbi;
+	int ret = 0;
 
 	if (!sb)
 		return -ENXIO;
@@ -29,10 +35,25 @@ static int shfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &shfs_sops;
 
 	root_inode = shfs_get_root_inode(sbi);
+	if (IS_ERR(root_inode))
+		goto err_out;
 	sb->s_root = d_make_root(root_inode);
+	if (IS_ERR(sb->s_root))
+		goto err_out;
 
 	sb->s_flags |= MS_RDONLY;
+
+	ret = mount_shfs_glue(sbi);
+	if (ret)
+		goto err_out;
+
+	/* shfs_test(sbi); */
 	return 0;
+
+err_out:
+	/* TODO: proper error path cleanup */
+	kfree(sbi);
+	return ret;
 }
 
 static struct dentry *shfs_linux_mount(struct file_system_type *fs_type, int flags,

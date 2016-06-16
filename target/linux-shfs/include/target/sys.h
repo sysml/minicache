@@ -11,7 +11,7 @@
 #define target_free(ptr) \
   kfree(ptr)
 
-#define ASSERT(x) BUG_ON((x))
+#define ASSERT(x) BUG_ON(!(x))
 
 /* shutdown */
 #define TARGET_SHTDN_POWEROFF 0
@@ -91,7 +91,6 @@ void app_shutdown(unsigned reason);
 #define target_exit() \
 	do {} while (0)
 #endif
- 
-#define UINT64_MAX ((uint64_t) (-1))
+
 
 #endif /* _SYS_H_ */

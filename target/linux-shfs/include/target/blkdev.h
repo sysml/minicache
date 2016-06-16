@@ -1,7 +1,7 @@
 #ifndef _LINUX_BLKDEV_H_
 #define _LINUX_BLKDEV_H_
 
-typedef struct shfs_sb_info blkdev_id_t[1];
+typedef struct shfs_sb_info *blkdev_id_t;
 #define blkdev shfs_sb_info
 /* typedef struct shfs_sb_info blkdev; */
 /* struct blkdev { */
@@ -38,25 +38,22 @@ typedef struct shfs_sb_info blkdev_id_t[1];
 typedef void (blkdev_aiocb_t)(int ret, void *argp);
 
 static inline struct blkdev *open_blkdev(blkdev_id_t id, int mode)
-{ BUG(); }
+{
+  return (struct shfs_sb_info *) id;
+}
 
-#define blkdev_sync_read(bd, start, len, buffer) 0;
 static inline void close_blkdev(struct blkdev *bd)
 { BUG(); }
 
-static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,
-                                  int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
-{
-	BUG();
-	return 0;
-}
+int blkdev_sync_read(struct shfs_sb_info *sbi, sector_t start, size_t len, char *buffer);
+int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,
+		    int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp);
 
 static inline void blkdev_poll_req(struct blkdev *bd)
 { BUG(); }
 
 #define blkdev_async_io_submit(bd) do {} while(0)
 #define blkdev_async_io_wait_slot(bd) do {} while(0)
-
 /* ------------------------------------------------- */
 #if 0
 #include <aio.h>

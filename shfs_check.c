@@ -4,6 +4,11 @@
  * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
+#ifdef __KERNEL__
+#include <target/stubs.h>
+#include <linux/types.h>
+#endif
+
 #include "shfs_check.h"
 #include "shfs_defs.h"
 
