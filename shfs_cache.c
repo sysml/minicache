@@ -612,7 +612,7 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
     --cce->refcount;
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
-#ifndef SHFS_CACHE_DISABLE
+#if !defined SHFS_CACHE_DISABLE && !defined SHFS_CACHE_IMMEDIATEDROP
 	if (likely(!cce->invalid)) {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	} else {
@@ -621,7 +621,7 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
 	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
 	        shfs_cache_unlink(cce);
 	    shfs_cache_put_cce(cce);
-#ifndef SHFS_CACHE_DISABLE
+#if !defined SHFS_CACHE_DISABLE && !defined SHFS_CACHE_IMMEDIATEDROP
 	}
 #endif /* SHFS_CACHE_DISABLE */
     }
@@ -661,7 +661,7 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
     if (cce->refcount == 0) {
 	--shfs_vol.chunkcache->nb_ref_entries;
 	if (shfs_aio_is_done(cce->t)
-#ifndef SHFS_CACHE_DISABLE
+#if !defined SHFS_CACHE_DISABLE && !defined SHFS_CACHE_IMMEDIATEDROP
 	    && cce->invalid) {
 #else /* SHFS_CACHE_DISABLE */
 	    ) {
