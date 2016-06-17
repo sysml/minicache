@@ -58,6 +58,12 @@ struct dlist_head {
 
 #define dlist_unlink(el, head, dlname) \
 	do { \
+		/* element part of this list? (brief check,
+		 * works only if element is at the beginning
+		 * or at the end of the list) */ \
+		BUG_ON(!(el)->dlname.prev && (head).first != (el)); \
+		BUG_ON(!(el)->dlname.next && (head).last != (el)); \
+		\
 		if ((el)->dlname.prev) { \
 			((typeof((el))) (el)->dlname.prev)->dlname.next = (el)->dlname.next; \
 		} else {  \
