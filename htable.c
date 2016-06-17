@@ -60,11 +60,7 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 	printf("ht_size  = %lu B\n", ht_size);
 #endif
 	/* allocate main htable struct */
-#ifdef __MINIOS__
-	ht = _xmalloc(ht_size, align);
-#else
-	ht = malloc(ht_size);
-#endif
+	ht = target_malloc(align, ht_size);
 	if (!ht) {
 		errno = ENOMEM;
 		goto err_out;
@@ -82,11 +78,7 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 
 	/* allocate buckets */
 	for (i = 0; i < nb_bkts; ++i) {
-#ifdef __MINIOS__
-		bkt = _xmalloc(bkt_size, align);
-#else
-		bkt = malloc(bkt_size);
-#endif
+		bkt = target_malloc(align, bkt_size);
 		if (!bkt) {
 			errno = ENOMEM;
 			goto err_free_bkts;
@@ -118,18 +110,10 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
  err_free_bkts:
 	for (i = 0; i < nb_bkts; ++i) {
 		if (ht->b[i]) {
-#ifdef __MINIOS__
-			xfree(ht->b[i]);
-#else
-			free(ht->b[i]);
-#endif
+			target_free(ht->b[i]);
 		}
 	}
-#ifdef __MINIOS__
-	xfree(ht);
-#else
-	free(ht);
-#endif
+	target_free(ht);
  err_out:
 	return NULL;
 }
@@ -140,16 +124,8 @@ void free_htable(struct htable *ht)
 
 	for (i = 0; i < ht->nb_bkts; ++i) {
 		if (ht->b[i]) {
-#ifdef __MINIOS__
-			xfree(ht->b[i]);
-#else
-			free(ht->b[i]);
-#endif
+			target_free(ht->b[i]);
 		}
 	}
-#ifdef __MINIOS__
-	xfree(ht);
-#else
-	free(ht);
-#endif
+	target_free(ht);
 }
