@@ -605,6 +605,10 @@ int shfs_cache_eblank(struct shfs_cache_entry **cce_out)
  */
 void shfs_cache_release(struct shfs_cache_entry *cce)
 {
+#ifndef SHFS_CACHE_DISABLE
+    register uint32_t i;
+#endif /* SHFS_CACHE_DISABLE */
+
     printd("Release cache of chunk %llu (refcount=%u, caller=%p)\n", cce->addr, cce->refcount, get_caller());
     BUG_ON(cce->refcount == 0);
     BUG_ON(!shfs_aio_is_done(cce->t));
@@ -616,10 +620,18 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
 	if (likely(!cce->invalid)) {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	} else {
-#endif /* SHFS_CACHE_DISABLE */
             printd("Destroy invalid cache of chunk %llu\n", cce->addr);
-	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
-	        shfs_cache_unlink(cce);
+#else
+            printd("Release unreferenced chunk %llu\n", cce->addr);
+#endif /* SHFS_CACHE_DISABLE */
+#ifndef SHFS_CACHE_DISABLE
+	    if (!cce->addr == 0) { /* note: blank buffers are not linked to any lists */
+		/* unlink element from hash table collision list
+		 * it is already unlinked from the available list (refcount was > 0 before) */
+		i = shfs_cache_htindex(cce->addr);
+		dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+	    }
+#endif /* SHFS_CACHE_DISABLE */
 	    shfs_cache_put_cce(cce);
 #if !defined SHFS_CACHE_DISABLE && !defined SHFS_CACHE_IMMEDIATEDROP
 	}
@@ -634,6 +646,10 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
  */
 void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 {
+#ifndef SHFS_CACHE_DISABLE
+    register uint32_t i;
+#endif /* SHFS_CACHE_DISABLE */
+
     printd("Release cache of chunk %llu (refcount=%u, caller=%p)\n", cce->addr, cce->refcount, get_caller());
     BUG_ON(cce->refcount == 0);
     BUG_ON(!shfs_aio_is_done(cce->t) && t == NULL);
@@ -663,12 +679,19 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 	if (shfs_aio_is_done(cce->t)
 #if !defined SHFS_CACHE_DISABLE && !defined SHFS_CACHE_IMMEDIATEDROP
 	    && cce->invalid) {
+	    printd("Destroy invalid cache of chunk %llu\n", cce->addr);
 #else /* SHFS_CACHE_DISABLE */
 	    ) {
+            printd("Release unreferenced chunk %llu\n", cce->addr);
 #endif /* SHFS_CACHE_DISABLE */
-	    printd("Destroy invalid cache of chunk %llu\n", cce->addr);
-	    if (!cce->addr == 0) /* note: blank buffers are not linked to any lists */
-	        shfs_cache_unlink(cce);
+#ifndef SHFS_CACHE_DISABLE
+	    if (!cce->addr == 0) { /* note: blank buffers are not linked to any lists */
+		/* unlink element from hash table collision list
+		 * it is already unlinked from the available list (refcount was > 0 before) */
+		i = shfs_cache_htindex(cce->addr);
+		dlist_unlink(cce, shfs_vol.chunkcache->htable[i].clist, clist);
+	    }
+#endif /* SHFS_CACHE_DISABLE */
 	    shfs_cache_put_cce(cce);
 	} else {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
