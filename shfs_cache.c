@@ -633,6 +633,9 @@ void shfs_cache_release(struct shfs_cache_entry *cce)
 	    }
 #endif /* SHFS_CACHE_DISABLE */
 	    shfs_cache_put_cce(cce);
+#ifdef SHFS_CACHE_IMMEDIATEDROP
+	    shfs_cache_stat_inc(evict);
+#endif /* SHFS_CACHE_IMMEDIATEDROP */
 #if !defined SHFS_CACHE_DISABLE && !defined SHFS_CACHE_IMMEDIATEDROP
 	}
 #endif /* SHFS_CACHE_DISABLE */
@@ -693,6 +696,9 @@ void shfs_cache_release_ioabort(struct shfs_cache_entry *cce, SHFS_AIO_TOKEN *t)
 	    }
 #endif /* SHFS_CACHE_DISABLE */
 	    shfs_cache_put_cce(cce);
+#ifdef SHFS_CACHE_IMMEDIATEDROP
+	    shfs_cache_stat_inc(evict);
+#endif /* SHFS_CACHE_IMMEDIATEDROP */
 	} else {
 	    dlist_append(cce, shfs_vol.chunkcache->alist, alist);
 	}
