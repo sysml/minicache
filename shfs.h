@@ -41,6 +41,8 @@
 #endif
 #define NB_AIOTOKEN 750 /* should be at least MAX_REQUESTS */
 
+#define LINUX_FIRST_INO_N 10
+
 struct shfs_cache;
 
 struct vol_member {

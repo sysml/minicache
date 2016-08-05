@@ -44,6 +44,7 @@ TT_DECLARE(shfs_tt_vbdopen);
 #define TT_END(var) while(0) {}
 #endif
 
+
 int shfs_mounted = 0;
 unsigned int shfs_nb_open = 0;
 sem_t shfs_mount_lock;
@@ -479,6 +480,9 @@ static int load_vol_htable(void)
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
 		bentry->refcount = 0;
 		bentry->update = 0;
+#ifdef __KERNEL__
+		bentry->ino = i + LINUX_FIRST_INO_N;
+#endif
 		init_SEMAPHORE(&bentry->updatelock, 1);
 #ifdef SHFS_STATS
 		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
