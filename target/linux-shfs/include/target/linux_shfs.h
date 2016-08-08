@@ -9,4 +9,6 @@ struct shfs_sb_info {
 
 struct inode *shfs_get_root_inode(struct shfs_sb_info *sbi);
 
+extern const struct file_operations shfs_dir_operations;
+extern const struct inode_operations shfs_dir_inode_operations;
 #endif
