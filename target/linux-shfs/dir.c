@@ -48,9 +48,7 @@ static inline int dir_emit_names(struct dir_context *ctx)
 			continue;
 
 		bentry = el->private;
-		hentry = (struct shfs_hentry *)
-			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
-			 + bentry->hentry_htoffset);
+		hentry = bentry->hentry;
 
 		pr_info("\t one shfs entry: ino=%d, name=%s\n",
 			bentry->ino, hentry->name);
