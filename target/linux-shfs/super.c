@@ -3,9 +3,35 @@
 #include <linux/fs.h>
 #include "shfs.h"
 
+static struct kmem_cache *shfs_inode_cachep;
+
+static struct inode *shfs_alloc_inode(struct super_block *sb)
+{
+	struct shfs_inode_info *inode;
+
+	inode = kmem_cache_alloc(shfs_inode_cachep, GFP_NOFS);
+	if (!inode)
+		return NULL;
+
+	return &inode->vfs_inode;
+}
+
+static void shfs_i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	struct shfs_inode_info *inode_info = SHFS_I(inode);
+
+	kmem_cache_free(shfs_inode_cachep, inode_info);
+}
+
+static void shfs_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, shfs_i_callback);
+}
 
 static struct super_operations shfs_sops = {
-	
+	.alloc_inode = shfs_alloc_inode,
+	.destroy_inode = shfs_destroy_inode,
 };
 
 static inline int mount_shfs_glue(struct shfs_sb_info *sbi)
@@ -70,10 +96,23 @@ static struct file_system_type shfs_fs_type = {
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
+static void shfs_init_inode_once(void *generic_inode)
+{
+	struct shfs_inode_info *inode = SHFS_I(generic_inode);
+	inode_init_once(&inode->vfs_inode);
+}
 
 static int __init shfs_init(void)
 {
 	int err = 0;
+
+	shfs_inode_cachep = kmem_cache_create("shfs_icache",
+					       sizeof(struct shfs_inode_info), 0,
+					       SLAB_HWCACHE_ALIGN, shfs_init_inode_once);
+	if (!shfs_inode_cachep) {
+		pr_err("failed to initialise inode cache\n");
+		return -ENOMEM;
+	}
 
 	err = register_filesystem(&shfs_fs_type);
 	if (err)
