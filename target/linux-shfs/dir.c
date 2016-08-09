@@ -3,6 +3,7 @@
 #include <linux/printk.h>
 #include <linux/fs.h>
 #include <linux/mount.h>
+#include <linux/namei.h>
 #include "shfs.h"
 #include "htable.h"
 #include "shfs_btable.h"
@@ -35,25 +36,56 @@ static inline bool dir_emit_rootdirs(struct dir_context *ctx)
 	return true;
 }
 
-static inline int dir_emit_names(struct dir_context *ctx)
+static inline char *hash2str(hash512_t hash, char *buf, int hash_len)
+{
+#define onechar(a) ((a) > 0x9 ? (a) + 'a' - 0xa : (a) + '0')
+#define lowchar(b) (onechar((uint8_t) b & 0x0f))
+#define highchar(c) (onechar((uint8_t) c >> 4))
+	int i;
+	for (i = 0; i < hash_len; i++) {
+		buf[i<<1] = highchar(hash[i]);
+		buf[(i<<1) + 1] = lowchar(hash[i]);
+	}
+	buf[hash_len << 1] = '\0';
+
+	return buf;
+}
+
+#define SHFS_MAX_HASH_STR_LEN (sizeof(hash512_t) * 2 + 1)
+static inline int dir_emit_names(struct dir_context *ctx, int emit_hashes)
 {
 	struct htable_el *el;
 	struct shfs_bentry *bentry;
 	struct shfs_hentry *hentry;
 	int cur_pos = 2;
+	BUILD_BUG_ON(sizeof(hash512_t) > 64);
 
 	foreach_htable_el(shfs_vol.bt, el) {
+		char *name;
 		int len;
+		unsigned type;
+		u64 ino;
+		char hash_name[SHFS_MAX_HASH_STR_LEN];
+
 		if (cur_pos++ != ctx->pos)
 			continue;
 
 		bentry = el->private;
 		hentry = bentry->hentry;
 
-		pr_info("\t one shfs entry: ino=%d, name=%s\n",
-			bentry->ino, hentry->name);
-		len = strnlen(hentry->name, sizeof(hentry->name));
-		if (!dir_emit(ctx, hentry->name, len, bentry->ino, DT_REG))
+		if (emit_hashes) {
+			name = hash2str(hentry->hash, hash_name, shfs_vol.hlen);
+			len = shfs_vol.hlen*2;
+			type = DT_REG;
+			ino = bentry->ino;
+		} else {
+			name = hentry->name;
+			len = strnlen(name, sizeof(hentry->name));
+			type = DT_LNK;
+			ino = SHFS_SIMLINK_INODE_N(bentry->ino);
+		}
+
+		if (!dir_emit(ctx, name, len, ino, type))
 			return 0;
 		ctx->pos++;
 	}
@@ -73,12 +105,43 @@ static int shfs_readdir(struct file *file, struct dir_context *ctx)
 			goto out;
 		}
 	} else if (file->f_path.dentry->d_inode->i_ino ==
-		   SHFS_NAMES_DIR_INO)
-		return dir_emit_names(ctx);
+		   SHFS_NAMES_DIR_INO) {
+		return dir_emit_names(ctx, 0);
+	} else if (file->f_path.dentry->d_inode->i_ino ==
+		   SHFS_HASHES_DIR_INO) {
+		return dir_emit_names(ctx, 1);
+	}
 
 out:
 	return 0;
 }
+
+#define SHFS_LINK_PREFIX ("../" SHFS_HASHES_DIR "/")
+#define SHFS_LINK_PATH_LEN (SHFS_MAX_HASH_STR_LEN + sizeof(SHFS_LINK_PREFIX))
+static void *shfs_follow_link(struct dentry *dentry, struct nameidata *nd)
+{
+	char *path = kmalloc(SHFS_LINK_PATH_LEN, GFP_NOFS);
+	if (!path)
+		return ERR_CAST(path);
+	memcpy(path, SHFS_LINK_PREFIX, sizeof(SHFS_LINK_PREFIX) - 1);
+	hash2str(SHFS_I(dentry->d_inode)->bentry->hentry->hash,
+		       path + sizeof(SHFS_LINK_PREFIX) - 1,
+		       shfs_vol.hlen);
+
+	nd_set_link(nd, path);
+	return path;
+}
+
+static void shfs_put_link(struct dentry *dentry, struct nameidata *nd, void *cookie)
+{
+	kfree(cookie);
+}
+
+static const struct inode_operations shfs_symlink_inode_operations = {
+	.readlink	= generic_readlink,
+	.follow_link	= shfs_follow_link,
+	.put_link	= shfs_put_link,
+};
 
 static struct dentry *shfs_lookup(struct inode * dir,
 				  struct dentry *dentry,
@@ -86,7 +149,8 @@ static struct dentry *shfs_lookup(struct inode * dir,
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode;
-	struct shfs_bentry *bentry;
+	struct shfs_bentry *bentry = NULL;
+	hash512_t hash;
 	int new_inode_n = 0;
 	umode_t new_inode_mode;
 
@@ -105,11 +169,19 @@ static struct dentry *shfs_lookup(struct inode * dir,
 		bentry = _shfs_lookup_bentry_by_name(dentry->d_name.name);
 		if (!bentry)
 			return ERR_PTR(-ENOENT);
-		new_inode_mode = S_IFREG + S_IRWXU + S_IRWXG + S_IRWXO;
-		new_inode_n = bentry->ino;
+		new_inode_mode = S_IFLNK + S_IRUSR + S_IRGRP + S_IROTH;
+		new_inode_n = SHFS_SIMLINK_INODE_N(bentry->ino);
 		break;
 	case SHFS_HASHES_DIR_INO:
-		return ERR_PTR(-ENOENT);
+		if (hash_parse(dentry->d_name.name, hash, shfs_vol.hlen)) {
+			pr_err("unable to parse hash\n");
+			return ERR_PTR(-ENOENT);
+		}
+		bentry = _shfs_lookup_bentry_by_hash(hash);
+		if (!bentry)
+			return ERR_PTR(-ENOENT);
+		new_inode_mode = S_IFREG + S_IRUSR + S_IRGRP + S_IROTH;
+		new_inode_n = bentry->ino;
 		break;
 	default:
 		BUG();
@@ -123,9 +195,13 @@ static struct dentry *shfs_lookup(struct inode * dir,
 
 	inode->i_mode = new_inode_mode;
 	inode->i_size = 1;
+	SHFS_I(inode)->bentry = bentry;
+
 	if (S_ISDIR(inode->i_mode)) {
 		inode->i_fop = &shfs_dir_operations;
 		inode->i_op = &shfs_dir_inode_operations;
+	} else if (S_ISLNK(inode->i_mode)) {
+		inode->i_op = &shfs_symlink_inode_operations;
 	}
 
 	unlock_new_inode(inode);

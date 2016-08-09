@@ -18,7 +18,7 @@ extern const struct inode_operations shfs_dir_inode_operations;
 
 struct shfs_inode_info {
 	struct inode	vfs_inode;
-	/* custom data here */
+	struct shfs_bentry *bentry;
 };
 
 static inline struct shfs_inode_info *SHFS_I(struct inode *inode)
