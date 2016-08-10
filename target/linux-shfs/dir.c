@@ -4,6 +4,7 @@
 #include <linux/fs.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
+#include <linux/pagemap.h>
 #include "shfs.h"
 #include "htable.h"
 #include "shfs_btable.h"
@@ -143,11 +144,21 @@ static const struct inode_operations shfs_symlink_inode_operations = {
 	.put_link	= shfs_put_link,
 };
 
+const struct file_operations shfs_file_operations = {
+	.llseek		= generic_file_llseek,
+	.read		= new_sync_read,
+	.read_iter	= generic_file_read_iter,
+	.mmap		= generic_file_mmap,
+	.open		= generic_file_open,
+	.splice_read	= generic_file_splice_read,
+};
+
 static struct dentry *shfs_lookup(struct inode * dir,
 				  struct dentry *dentry,
 				  unsigned int flags)
 {
 	struct super_block *sb = dir->i_sb;
+	struct shfs_sb_info *sbi = SHFS_SB(sb);
 	struct inode *inode;
 	struct shfs_bentry *bentry = NULL;
 	hash512_t hash;
@@ -197,7 +208,18 @@ static struct dentry *shfs_lookup(struct inode * dir,
 	inode->i_size = 1;
 	SHFS_I(inode)->bentry = bentry;
 
-	if (S_ISDIR(inode->i_mode)) {
+	if (S_ISREG(inode->i_mode)) {
+		off_t size_on_disk;
+
+		inode->i_fop = &shfs_file_operations;
+		inode->i_mapping->a_ops = &shfs_aops;
+		inode->i_size = bentry->hentry->f_attr.len;
+		size_on_disk = (inode->i_size + CHUNK_SIZE_MASK(sbi))
+			& ~CHUNK_SIZE_MASK(sbi);
+		inode->i_blocks = size_on_disk >> PAGE_CACHE_SHIFT;
+		SHFS_I(inode)->start_block = bentry->hentry->f_attr.chunk <<
+			(sbi->chunk_size_shift - PAGE_CACHE_SHIFT);
+	} else if (S_ISDIR(inode->i_mode)) {
 		inode->i_fop = &shfs_dir_operations;
 		inode->i_op = &shfs_dir_inode_operations;
 	} else if (S_ISLNK(inode->i_mode)) {

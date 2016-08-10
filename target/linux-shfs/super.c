@@ -1,6 +1,8 @@
 #include <linux/init.h>
 #include <linux/printk.h>
 #include <linux/fs.h>
+#include <linux/pagemap.h>
+#include <linux/log2.h>
 #include "shfs.h"
 
 static struct kmem_cache *shfs_inode_cachep;
@@ -72,6 +74,17 @@ static int shfs_fill_super(struct super_block *sb, void *data, int silent)
 	ret = mount_shfs_glue(sbi);
 	if (ret)
 		goto err_out;
+
+
+	sbi->chunk_size_shift = ilog2(shfs_vol.chunksize);
+	if (!is_power_of_2(shfs_vol.chunksize)) {
+		pr_err("Can't mount: chunk size is not power of 2\n");
+		goto err_out;
+	} else if (shfs_vol.chunksize < PAGE_CACHE_SIZE) {
+		pr_err("Can't mount: chunk size is smaller then %lu\n",
+		       PAGE_CACHE_SIZE);
+		goto err_out;
+	}
 
 	/* shfs_test(sbi); */
 	return 0;
