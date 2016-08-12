@@ -629,6 +629,7 @@ int umount_shfs(int force) {
 
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
+#ifndef __KERNEL__
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
 		    shfs_cache_ref_count()) {
@@ -654,6 +655,7 @@ int umount_shfs(int force) {
 			}
 		}
 		shfs_free_cache();
+#endif
 
 		shfs_mounted = 0;
 		target_free(shfs_vol.remount_chunk_buffer);

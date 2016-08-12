@@ -43,7 +43,7 @@ static inline struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 }
 
 static inline void close_blkdev(struct blkdev *bd)
-{ BUG(); }
+{ }
 
 int blkdev_sync_read(struct shfs_sb_info *sbi, sector_t start, size_t len, char *buffer);
 int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t len,

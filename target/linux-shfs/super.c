@@ -31,9 +31,17 @@ static void shfs_destroy_inode(struct inode *inode)
 	call_rcu(&inode->i_rcu, shfs_i_callback);
 }
 
+static void shfs_put_super (struct super_block * sb)
+{
+	umount_shfs(1);
+	kfree(SHFS_SB(sb));
+	memset(&shfs_vol, 0, sizeof(shfs_vol));
+}
+
 static struct super_operations shfs_sops = {
 	.alloc_inode = shfs_alloc_inode,
 	.destroy_inode = shfs_destroy_inode,
+	.put_super = shfs_put_super,
 };
 
 static inline int mount_shfs_glue(struct shfs_sb_info *sbi)
