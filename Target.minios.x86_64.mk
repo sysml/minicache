@@ -57,6 +57,8 @@ CONFIG_LWIP_NUM_TCPCON=512
 endif
 CFLAGS				+= -DCONFIG_LWIP_NUM_TCPCON=$(CONFIG_LWIP_NUM_TCPCON)
 
+CFLAGS += -DNETMAP_RXBUSYCOUNT=1000
+
 ######################################
 ## Debugging
 ######################################
