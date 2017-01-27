@@ -64,7 +64,6 @@ unsigned int detect_blkdevs(blkdev_id_t ids_out[], unsigned int max_nb)
   return found;
 }
 
-#ifndef __KERNEL__
 struct blkdev *open_blkdev(blkdev_id_t id, int mode)
 {
   struct blkdev *bd;
@@ -167,11 +166,6 @@ void close_blkdev(struct blkdev *bd)
     free_mempool(bd->reqpool);
     xfree(bd);
   }
-}
-#else
-struct blkdev *open_blkdev(blkdev_id_t id, int mode)
-{
-  return id;
 }
 
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret)
