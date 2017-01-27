@@ -4,18 +4,22 @@
  * Copyright(C) 2013-204 NEC Laboratories Europe. All rights reserved.
  *                       Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
-#include <target/sys.h>
 #if defined(__MINIOS__)
+#include <target/sys.h>
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
 #elif defined(__KERNEL__)
+#include <target/sys.h>
 #include <linux/types.h>
 #include <target/stubs.h>
+#include <asm/bug.h>
 #else
 #include <stdlib.h>
-#include <asm/bug.h>
 #include <string.h>
+
+#define target_free(p) free(p)
+#define target_malloc(a, l) malloc(l)
 #endif
 
 #ifndef MIN_ALIGN
