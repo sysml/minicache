@@ -66,7 +66,7 @@ chk_t shfs_alist_find_free(struct shfs_alist *al, chk_t len);
 /******* DEBUG ********/
 #include <stdio.h>
 
-static inline print_alist(struct shfs_alist *al)
+static inline void print_alist(struct shfs_alist *al)
 {
 	struct shfs_aentry *e;
 	unsigned int i = 0;
@@ -74,6 +74,5 @@ static inline print_alist(struct shfs_alist *al)
 	for (e = al->head; e != NULL; e = e->next)
 		printf("[entry%5u] %15"PRIchk" - %15"PRIchk" (len: %15"PRIchk")\n", i++, e->start, e->end, e->end - e->start);
 }
-
 
 #endif /* _SHFS_ALLOC_ */

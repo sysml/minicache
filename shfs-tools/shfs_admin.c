@@ -52,6 +52,7 @@
 #include "shfs_btable.h"
 #include "shfs_alloc.h"
 #include "http_parser.h"
+#include "shfs_check.h"
 
 #ifndef INET_ADDRLEN
 #define INET_ADDRLEN 4
