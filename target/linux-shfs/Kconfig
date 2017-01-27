@@ -1,0 +1,4 @@
+config SHFS_FS
+	bool "Simon's HashFS"
+	help
+	  If unsure, say N.

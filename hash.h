@@ -7,7 +7,9 @@
  *                       Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 
+#ifndef __KERNEL__
 #include <string.h>
+#endif
 
 typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 
@@ -165,9 +167,11 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 		case 'a' ... 'f':
 			nu = in[i] - 'a' + 10;
 			break;
+#ifndef SHFS_HASH_PARSE_CASE_SENSITIVE
 		case 'A' ... 'F':
 			nu = in[i] - 'A' + 10;
 			break;
+#endif
 		case '\0':
 		default:
 			return -1; /* unknown character or string ended unexpectedly */
@@ -182,10 +186,12 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 		case 'a' ... 'f':
 			nl = in[i] - 'a' + 10;
 			break;
+#ifndef SHFS_HASH_PARSE_CASE_SENSITIVE
 		case 'A' ... 'F':
 			nl = in[i] - 'A' + 10;
 			break;
 		case '\0':
+#endif
 		default:
 			return -1;
 		}

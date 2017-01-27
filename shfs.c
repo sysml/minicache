@@ -5,15 +5,19 @@
  *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
  */
 #include <target/sys.h>
+
+#ifndef __KERNEL__
 #include <stdint.h>
 #include <errno.h>
+#include "shfs_cache.h"
+#else
+int shfs_errno;
+#endif
 
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
 #include "shfs_btable.h"
-#include "shfs_tools.h"
-#include "shfs_cache.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
 #include "shfs_stats.h"
@@ -39,6 +43,7 @@ TT_DECLARE(shfs_tt_vbdopen);
 #define TT_START(var) while(0) {}
 #define TT_END(var) while(0) {}
 #endif
+
 
 int shfs_mounted = 0;
 unsigned int shfs_nb_open = 0;
@@ -475,6 +480,9 @@ static int load_vol_htable(void)
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
 		bentry->refcount = 0;
 		bentry->update = 0;
+#ifdef __KERNEL__
+		bentry->ino = i + LINUX_FIRST_INO_N;
+#endif
 		init_SEMAPHORE(&bentry->updatelock, 1);
 #ifdef SHFS_STATS
 		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
@@ -505,7 +513,9 @@ static int load_vol_htable(void)
 	return ret;
 }
 
+#ifndef __KERNEL__
 static void _aiotoken_pool_objinit(struct mempool_obj *, void *);
+#endif
 
 /**
  * Mount a SHFS volume
@@ -582,6 +592,8 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	printd("SHFS volume mounted\n");
 	return 0;
 
+	/* make compiller happy */
+	goto  err_free_chunkcache;
  err_free_chunkcache:
 	shfs_free_cache();
  err_free_remount_buffer:
@@ -617,6 +629,7 @@ int umount_shfs(int force) {
 
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
+#ifndef __KERNEL__
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
 		    shfs_cache_ref_count()) {
@@ -642,6 +655,7 @@ int umount_shfs(int force) {
 			}
 		}
 		shfs_free_cache();
+#endif
 
 		shfs_mounted = 0;
 		target_free(shfs_vol.remount_chunk_buffer);
@@ -823,6 +837,7 @@ int remount_shfs(void) {
  * of the interrupt context via blkdev_poll_req() and there is only the
  * cooperative scheduler...
  */
+#ifndef __KERNEL__
 static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 {
 	SHFS_AIO_TOKEN *t;
@@ -835,6 +850,7 @@ static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 	t->cb_argp = NULL;
 	t->cb_cookie = NULL;
 }
+#endif
 
 static void _shfs_aio_cb(int ret, void *argp) {
 	SHFS_AIO_TOKEN *t = argp;

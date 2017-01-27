@@ -13,63 +13,6 @@
 #include "shfs_stats.h"
 #endif
 
-static inline __attribute__((always_inline))
-struct shfs_bentry *_shfs_lookup_bentry_by_hash(hash512_t h)
-{
-	struct shfs_bentry *bentry;
-#ifdef SHFS_STATS
-	struct shfs_el_stats *estats;
-#endif
-
-	bentry = shfs_btable_lookup(shfs_vol.bt, h);
-#ifdef SHFS_STATS
-	if (unlikely(!bentry)) {
-		estats = shfs_stats_from_mstats(h);
-		if (likely(estats != NULL)) {
-			estats->laccess = gettimestamp_s();
-			++estats->m;
-		}
-	}
-#endif
-	return bentry;
-}
-
-#ifdef SHFS_OPENBYNAME
-/*
- * Unfortunately, opening by name ends up in an
- * expensive search algorithm: O(n^2)
- */
-static inline __attribute__((always_inline))
-struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
-{
-	struct htable_el *el;
-	struct shfs_bentry *bentry;
-	struct shfs_hentry *hentry;
-	size_t name_len;
-
-	name_len = strlen(name);
-	foreach_htable_el(shfs_vol.bt, el) {
-		bentry = el->private;
-		hentry = (struct shfs_hentry *)
-			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
-			 + bentry->hentry_htoffset);
-
-		if (name_len > sizeof(hentry->name))
-			continue;
-
-		if (strncmp(name, hentry->name, sizeof(hentry->name)) == 0) {
-			/* we found it - hooray! */
-			return bentry;
-		}
-	}
-
-#ifdef SHFS_STATS
-	++shfs_vol.mstats.i;
-#endif
-	return NULL;
-}
-#endif
-
 /*
  * Register open on bentry and return it on success
  */

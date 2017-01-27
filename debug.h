@@ -1,9 +1,11 @@
 #ifndef _DEBUG_H_
 #define _DEBUG_H_
 
+#ifndef __KERNEL__
 #include <target/sys.h>
 #include <sys/time.h>
 #include <inttypes.h>
+#endif
 
 extern struct timeval __debug_tsref;
 

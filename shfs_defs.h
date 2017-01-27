@@ -7,12 +7,14 @@
 #ifndef _SHFS_DEFS_H_
 #define _SHFS_DEFS_H_
 
+#ifndef __KERNEL__
 #include <sys/types.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
 #include <inttypes.h>
+#endif
 #include "hash.h"
 
 #ifdef __SHFS_TOOLS__
@@ -292,11 +294,13 @@ static inline void shfshost_copy(struct shfs_host *dst, const struct shfs_host *
 	}
 }
 
+#ifndef __KERNEL__
 static inline uint64_t gettimestamp_s(void)
 {
 	struct timeval now;
 	gettimeofday(&now, NULL);
 	return (uint64_t) now.tv_sec;
 }
+#endif
 
 #endif /* _SHFS_DEFS_H_ */

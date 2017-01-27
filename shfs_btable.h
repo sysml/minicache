@@ -48,6 +48,11 @@ struct shfs_bentry {
 #endif /* SHFS_STATS */
 
 	void *cookie; /* shfs_fio: upper layer software can attach cookies to open files */
+#ifdef __KERNEL__
+	/* Inode number allocated for this file */
+	int ino;
+#endif
+
 #endif
 };
 
@@ -80,7 +85,7 @@ static inline struct shfs_bentry *shfs_btable_addentry(struct htable *bt, hash51
 	return NULL;
 }
 
-#ifndef __MINIOS__
+#if (!defined(__MINIOS__) && !defined(__KERNEL__))
 /**
  * Deletes an entry from table
  */

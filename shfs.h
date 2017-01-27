@@ -8,11 +8,16 @@
 #define _SHFS_H_
 
 #include <target/sys.h>
-#include <target/blkdev.h>
+#ifndef __KERNEL__
 #include <stdint.h>
-
-#include "mempool.h"
 #include "likely.h"
+#include "mempool.h"
+#else
+#include <asm-generic/fcntl.h>
+#include <target/stubs.h>
+#include <target/linux_shfs.h>
+#endif
+#include <target/blkdev.h>
 
 #include "shfs_defs.h"
 #ifdef SHFS_STATS
@@ -29,8 +34,14 @@
   memcpy((dst), (src), (len))
 #endif
 
+#ifndef __KERNEL__
 #define MAX_NB_TRY_BLKDEVS 64
+#else
+#define MAX_NB_TRY_BLKDEVS 1
+#endif
 #define NB_AIOTOKEN 750 /* should be at least MAX_REQUESTS */
+
+#define LINUX_FIRST_INO_N 10
 
 struct shfs_cache;
 
@@ -164,11 +175,13 @@ SHFS_AIO_TOKEN *shfs_aio_chunk(chk_t start, chk_t len, int write, void *buffer,
 	shfs_aio_chunk((start), (len), 1, (buffer), (cb), (cb_cookie), (cb_argp))
 
 static inline void shfs_aio_submit(void) {
+#ifndef __KERNEL__
 	register unsigned int i;
 	register uint8_t m = shfs_blkdevs_count();
 
 	for(i = 0; i < m; ++i)
 		blkdev_async_io_submit(shfs_vol.member[i].bd);
+#endif
 }
 
 static inline void shfs_aio_wait_slot(void) {
@@ -182,6 +195,7 @@ static inline void shfs_aio_wait_slot(void) {
 /*
  * Internal AIO token management (do not use this functions directly!)
  */
+#ifndef __KERNEL__
 static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
 {
 	struct mempool_obj *t_obj;
@@ -192,6 +206,13 @@ static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
 }
 #define shfs_aio_put_token(t) \
 	mempool_put(t->p_obj)
+#else
+static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
+{
+	return kmalloc(sizeof(SHFS_AIO_TOKEN), GFP_KERNEL);
+}
+#define shfs_aio_put_token(t) kfree(t)
+#endif
 
 /*
  * Returns 1 if the I/O operation has finished, 0 otherwise
@@ -205,6 +226,7 @@ static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
  * Note: This function will end up in a deadlock when there is no
  * SHFS volume mounted
  */
+#ifndef __KERNEL__
 #define shfs_aio_wait(t) \
 	while (!shfs_aio_is_done((t))) { \
 		shfs_poll_blkdevs(); \
@@ -216,6 +238,16 @@ static inline SHFS_AIO_TOKEN *shfs_aio_pick_token(void)
 	while (!shfs_aio_is_done((t))) { \
 		shfs_poll_blkdevs(); \
 	}
+#else
+/* Plan is to use shfs_aio_chunk only to read initial metadata. So it
+ * is not critical to do only synchronous reads
+ */
+#define shfs_aio_wait_nosched(t) do { \
+	t->infly = 0; \
+	t->ret = 0; \
+} while (0)
+#define shfs_aio_wait(t) shfs_aio_wait_nosched(t)
+#endif
 
 /*
  * Destroys an asynchronous I/O token after the I/O completed
@@ -277,5 +309,4 @@ static inline int shfs_io_chunk_nosched(chk_t start, chk_t len, int write, void 
 	shfs_io_chunk_nosched((start), (len), 0, (buffer))
 #define shfs_write_chunk_nosched(start, len, buffer) \
 	shfs_io_chunk_nosched((start), (len), 1, (buffer))
-
 #endif /* _SHFS_H_ */
