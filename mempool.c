@@ -26,17 +26,6 @@
   #define POWER_OF_2(x)   ((0 != x) && (0 == (x & (x-1))))
 #endif
 
-static inline uint32_t log2(uint32_t v)
-{
-  uint32_t i = 0;
-
-  while (v) {
-	v >>= 1;
-	i++;
-  }
-  return (i - 1);
-}
-
 /* Return size, increased to alignment with align. Copied from xmalloc.c */
 static inline size_t align_up(size_t size, size_t align)
 {
