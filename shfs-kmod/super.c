@@ -1,3 +1,5 @@
+#include <linux/module.h>
+
 #include <linux/init.h>
 #include <linux/printk.h>
 #include <linux/fs.h>
@@ -110,7 +112,7 @@ static struct dentry *shfs_linux_mount(struct file_system_type *fs_type, int fla
 }
 
 static struct file_system_type shfs_fs_type = {
-	/* .owner		= THIS_MODULE, */
+	.owner		= THIS_MODULE,
 	.name		= "shfs",
 	.mount		= shfs_linux_mount,
 	.kill_sb	= kill_block_super,
@@ -142,4 +144,17 @@ static int __init shfs_init(void)
 out:
 	return err;
 }
-late_initcall(shfs_init);
+
+static void __exit shfs_exit(void)
+{
+	unregister_filesystem(&shfs_fs_type);
+
+	rcu_barrier();
+	kmem_cache_destroy(shfs_inode_cachep);
+}
+
+MODULE_AUTHOR("Simon Kuenzer, Yuri Volchkov");
+MODULE_DESCRIPTION("Simple Hash File System");
+MODULE_LICENSE("Dual BSD/GPL");
+module_init(shfs_init);
+module_exit(shfs_exit)
