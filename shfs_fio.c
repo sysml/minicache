@@ -45,6 +45,27 @@ static inline SHFS_FD _shfs_fio_open_bentry(struct shfs_bentry *bentry)
 	return (SHFS_FD) bentry;
 }
 
+static inline __attribute__((always_inline))
+struct shfs_bentry *_shfs_lookup_bentry_by_hash(hash512_t h)
+{
+	struct shfs_bentry *bentry;
+#ifdef SHFS_STATS
+	struct shfs_el_stats *estats;
+#endif
+
+	bentry = shfs_btable_lookup(shfs_vol.bt, h);
+#ifdef SHFS_STATS
+	if (unlikely(!bentry)) {
+		estats = shfs_stats_from_mstats(h);
+		if (likely(estats != NULL)) {
+			estats->laccess = gettimestamp_s();
+			++estats->m;
+		}
+	}
+#endif
+	return bentry;
+}
+
 /*
  * As long as we do not any operation that might call
  * schedule() (e.g., printf()), we do not need to
@@ -84,11 +105,12 @@ SHFS_FD shfs_fio_open(const char *path)
 #endif
 		} else {
 #ifdef SHFS_OPENBYNAME
-			bentry = _shfs_lookup_bentry_by_name(path);
+			bentry = shfs_btable_lookup_byname(shfs_vol.bt, shfs_vol.htable_chunk_cache, path);
 #else
 			bentry = NULL;
 #ifdef SHFS_STATS
-			++shfs_vol.mstats.i;
+			if (unlikely(!bentry))
+				++shfs_vol.mstats.i;
 #endif
 #endif
 		}

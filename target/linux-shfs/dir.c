@@ -177,7 +177,7 @@ static struct dentry *shfs_lookup(struct inode * dir,
 		new_inode_mode = S_IFDIR + S_IRWXU + S_IRWXG + S_IRWXO;
 		break;
 	case SHFS_NAMES_DIR_INO:
-		bentry = _shfs_lookup_bentry_by_name(dentry->d_name.name);
+		bentry = shfs_btable_lookup_byname(shfs_vol.bt, shfs_vol.htable_chunk_cache, dentry->d_name.name);
 		if (!bentry)
 			return ERR_PTR(-ENOENT);
 		new_inode_mode = S_IFLNK + S_IRUSR + S_IRGRP + S_IROTH;
@@ -188,7 +188,7 @@ static struct dentry *shfs_lookup(struct inode * dir,
 			pr_err("unable to parse hash\n");
 			return ERR_PTR(-ENOENT);
 		}
-		bentry = _shfs_lookup_bentry_by_hash(hash);
+		bentry = shfs_btable_lookup(shfs_vol.bt, hash);
 		if (!bentry)
 			return ERR_PTR(-ENOENT);
 		new_inode_mode = S_IFREG + S_IRUSR + S_IRGRP + S_IROTH;

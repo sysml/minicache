@@ -73,6 +73,39 @@ static inline struct shfs_bentry *shfs_btable_lookup(struct htable *bt, hash512_
 	return NULL;
 }
 
+#ifdef SHFS_OPENBYNAME
+/*
+ * Unfortunately, opening by name ends up in an
+ * expensive search algorithm: O(n^2)
+ */
+static inline struct shfs_bentry *shfs_btable_lookup_byname(struct htable *bt,
+							    void **htchunks,
+							    const char *name)
+{
+	struct htable_el *el;
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	size_t name_len;
+
+	name_len = strlen(name);
+	foreach_htable_el(bt, el) {
+		bentry = el->private;
+		hentry = (struct shfs_hentry *)
+			(((uint8_t *) (htchunks[bentry->hentry_htchunk]))
+			+ bentry->hentry_htoffset);
+
+		if (name_len > sizeof(hentry->name))
+			continue;
+
+		if (strncmp(name, hentry->name, sizeof(hentry->name)) == 0) {
+			/* we found it - hooray! */
+			return bentry;
+		}
+	}
+	return NULL;
+}
+#endif
+
 /**
  * Searches and allocates an according bucket entry for a given hash value
  */

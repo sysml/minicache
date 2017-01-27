@@ -116,64 +116,8 @@ static inline int shfs_fio_cache_aread(SHFS_FD f, chk_t offset, shfs_aiocb_t *cb
     addr = shfs_volchk_fchk(f, offset);
     return shfs_cache_aread(addr, cb, cb_cookie, cb_argp, cce_out, t_out);
 }
-#endif
+#endif /* __KERNEL__ */
 
 
-#ifdef SHFS_OPENBYNAME
-/*
- * Unfortunately, opening by name ends up in an
- * expensive search algorithm: O(n^2)
- */
-static inline __attribute__((always_inline))
- struct shfs_bentry *_shfs_lookup_bentry_by_name(const char *name)
-{
-	struct htable_el *el;
-	struct shfs_bentry *bentry;
-	struct shfs_hentry *hentry;
-	size_t name_len;
-
-	name_len = strlen(name);
-	foreach_htable_el(shfs_vol.bt, el) {
-		bentry = el->private;
-		hentry = (struct shfs_hentry *)
-			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
-			 + bentry->hentry_htoffset);
-
-		if (name_len > sizeof(hentry->name))
-			continue;
-
-		if (strncmp(name, hentry->name, sizeof(hentry->name)) == 0) {
-			/* we found it - hooray! */
-			return bentry;
-		}
-	}
-
-#ifdef SHFS_STATS
-	++shfs_vol.mstats.i;
-#endif
-	return NULL;
-}
-#endif
-
-static inline __attribute__((always_inline))
-struct shfs_bentry *_shfs_lookup_bentry_by_hash(hash512_t h)
-{
-	struct shfs_bentry *bentry;
-#ifdef SHFS_STATS
-	struct shfs_el_stats *estats;
-#endif
-
-	bentry = shfs_btable_lookup(shfs_vol.bt, h);
-#ifdef SHFS_STATS
-	if (unlikely(!bentry)) {
-		estats = shfs_stats_from_mstats(h);
-		if (likely(estats != NULL)) {
-			estats->laccess = gettimestamp_s();
-			++estats->m;
-		}
-	}
-#endif
-	return bentry;
-}
 
 #endif /* _SHFS_FIO_ */
