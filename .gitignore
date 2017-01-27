@@ -15,3 +15,8 @@ build/*
 minicache
 Capstanfile
 ,*
+.*
+shfs-kmod/Module.symvers
+shfs-kmod/kmod_shfs.ko
+shfs-kmod/kmod_shfs.mod.c
+shfs-kmod/modules.order
