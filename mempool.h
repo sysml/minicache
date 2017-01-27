@@ -9,8 +9,8 @@
 
 #include <stdint.h>
 #include <errno.h>
-#include <ring.h>
 
+#include "dlist.h"
 #include "likely.h"
 
 /*
@@ -52,6 +52,7 @@ struct mempool_obj {
   size_t lhr;            /* left headroom space */
   size_t ltr;            /* left tailroom space */
   size_t len;            /* length of data area */
+  dlist_el(flst);        /* element of mempool list for free objects */
 };
 
 /*
@@ -80,17 +81,16 @@ struct mempool_obj {
  *          v                      v
  */
 struct mempool {
-  struct ring *free_objs;
+  dlist_head(free_objs);
   void (*obj_pick_func)(struct mempool_obj *, void *);
   void *obj_pick_func_argp;
   size_t obj_size;
   size_t obj_headroom;
   size_t obj_tailroom;
-  //size_t obj_data_offset;
-  //size_t obj_private_len;
   void (*obj_put_func)(struct mempool_obj *, void *);
   void *obj_put_func_argp;
   uint32_t nb_objs;
+  uint32_t nb_free_objs;
   size_t pool_size;
   void *obj_data_area; /* points to data allocation when sep_obj_data = 1 */
 };
@@ -115,8 +115,9 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
 #define alloc_simple_mempool(nb_objs, obj_size) \
   alloc_enhanced_mempool((nb_objs), (obj_size), 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL)
 
-/* mempool allocation variant where final pool memory size can be specified (inclusive meta data and _estimation_ of mgmt ring size) is specified instead by number of objects
- * Note: the actual allocation size might still differ (+/-), it is _not_ a guarentee */
+/* mempool allocation variant where final pool memory size can be specified
+ * is specified instead by number of objects
+ * Note: the actual allocation size might still less or slightly more because of alignments */
 struct mempool *alloc_enhanced_mempool2(size_t pool_size,
   size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
   void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
@@ -136,6 +137,7 @@ void free_mempool(struct mempool *p);
     (obj)->lhr = _p->obj_headroom;					  \
     (obj)->ltr = _p->obj_tailroom;					  \
     (obj)->data = (void *) (((uintptr_t) (obj)->base) + _p->obj_headroom); \
+    dlist_init_el((obj), flst); \
   } while(0)
 
 /*
@@ -145,12 +147,19 @@ void free_mempool(struct mempool *p);
 static inline struct mempool_obj *mempool_pick(struct mempool *p)
 {
   struct mempool_obj *obj;
-  obj = ring_dequeue(p->free_objs);
-  if (unlikely(!obj))
+
+  if (p->nb_free_objs == 0)
 	return NULL;
+
+  /* get object from free list */
+  obj = dlist_first_el(p->free_objs, struct mempool_obj);
+  dlist_unlink(obj, p->free_objs, flst);
+  p->nb_free_objs--;
 
   /* initialize object */
   mempool_reset_obj(obj);
+
+  /* call user's callback */
   if (p->obj_pick_func)
 	p->obj_pick_func(obj, p->obj_pick_func_argp);
   return obj;
@@ -163,19 +172,27 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
 {
   uint32_t i;
 
-  if (unlikely(ring_dequeue_multiple(p->free_objs, (void **) objs, count) < 0))
+  if (p->nb_free_objs < count)
 	return -1;
+  p->nb_free_objs -= count;
 
   for (i=0; i<count; i++) {
+        /* get object from free list */
+        objs[i] = dlist_first_el(p->free_objs, struct mempool_obj);
+        dlist_unlink(objs[i], p->free_objs, flst);
+
 	/* initialize object */
 	mempool_reset_obj(objs[i]);
-	if (p->obj_pick_func)
-	  p->obj_pick_func(objs[i], p->obj_pick_func_argp);
   }
+
+  /* call user's callback */
+  if (p->obj_pick_func)
+	for (i=0; i<count; i++)
+	  p->obj_pick_func(objs[i], p->obj_pick_func_argp);
   return 0;
 }
 
-#define mempool_free_count(p) ring_count((p)->free_objs)
+#define mempool_free_count(p) ((p)->nb_free_objs)
 
 #define mempool_nb_objs(p) ((p)->nb_objs)
 
@@ -188,7 +205,11 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
 static inline void mempool_put(struct mempool_obj *obj)
 {
   struct mempool *p = obj->p_ref;
-  ring_enqueue(p->free_objs, obj); /* never fails on right usage because pool's ring can hold all of it's object references */
+
+  dlist_prepend(obj, p->free_objs, flst);
+  p->nb_free_objs++;
+
+  /* call user's callback */
   if (p->obj_put_func)
 	p->obj_put_func(obj, p->obj_put_func_argp);
 }
@@ -200,17 +221,23 @@ static inline void mempool_put(struct mempool_obj *obj)
 static inline void mempool_put_multiple(struct mempool_obj *objs[], uint32_t count)
 {
   struct mempool *p;
+  uint32_t i;
 
   if (unlikely(count == 0))
     return;
 
   p = objs[0]->p_ref;
-  ring_enqueue_multiple(p->free_objs, (void **) objs, count);
+
+  /* call user's callback */
   if (p->obj_put_func) {
-	uint32_t i;
 	for (i=0; i<count; i++)
 		p->obj_put_func(objs[i], p->obj_put_func_argp);
   }
+
+  for (i=0; i<count; i++)
+          dlist_prepend(objs[i], p->free_objs, flst);
+
+  p->nb_free_objs += count;
 }
 
 /*

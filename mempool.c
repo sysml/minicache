@@ -6,7 +6,8 @@
  */
 #include <target/sys.h>
 #include <errno.h>
-#include <mempool.h>
+
+#include "mempool.h"
 
 #ifdef MEMPOOL_DEBUG
 #define ENABLE_DEBUG
@@ -124,6 +125,7 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
 
   /* initialize pool management */
   p->nb_objs            = nb_objs;
+  p->nb_free_objs       = nb_objs;
   p->obj_size           = obj_size;
   p->pool_size          = pool_size + data_size;
   p->obj_headroom       = obj_headroom;
@@ -132,27 +134,22 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
   p->obj_pick_func_argp = obj_pick_func_argp;
   p->obj_put_func       = obj_put_func;
   p->obj_put_func_argp  = obj_put_func_argp;
-  p->free_objs = alloc_ring(1 << (log2(nb_objs) + 1));
-  if (!p->free_objs)
-	goto error_free_d;
+  dlist_init_head(p->free_objs);
 
   printd("pool @ %p, len: %"PRIu64":\n"
          "  nb_objs:             %"PRIu32"\n"
          "  obj_size:            %"PRIu64"\n"
          "  obj_headroom:        %"PRIu64"\n"
          "  obj_tailroom:        %"PRIu64"\n"
-         "  obj_data_area:       %p (len: %"PRIu64")\n"
-         "  free_objs_ring:      %p\n",
+         "  obj_data_area:       %p (len: %"PRIu64")\n",
          p, pool_size,
          p->nb_objs,
          p->obj_size,
          p->obj_headroom,
          p->obj_tailroom,
          p->obj_data_area,
-         data_size,
-         p->free_objs,
-         pool_size);
-  
+         data_size);
+
   /* initialize objects and add them to pool management */
   for (i = 0, obj = (struct mempool_obj *)(((uintptr_t) p) + h_size);
        i < nb_objs;
@@ -174,7 +171,7 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
     if (obj_init_func)
       obj_init_func(obj, obj_init_func_argp);
 
-    ring_enqueue(p->free_objs, obj); /* never fails because ring is big enough */
+    dlist_append(obj, p->free_objs, flst);
 
 #ifdef ENABLE_DEBUG
     if (i < 3) { /* in order to avoid flooding: print details only of first three objects */
@@ -195,14 +192,13 @@ struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
              (uint64_t) obj->len,
              (uint64_t) obj->ltr);
     }
+    if (i == 3)
+             printd("etc\n");
 #endif
   }
 
   return p;
 
- error_free_d:
-  if (p->obj_data_area)
-     target_free(p->obj_data_area);
  error_free_p:
   target_free(p);
  error:
@@ -223,11 +219,11 @@ struct mempool *alloc_enhanced_mempool2(size_t pool_size,
   m_size         = align_up(sizeof(struct mempool_obj), MIN_ALIGN);
   p_size         = m_size + obj_private_len; /* private length */
 
-  if (pool_size < h_size + (sizeof(struct ring))) {
+  if (pool_size < h_size) {
     errno = EINVAL;
     return NULL;
   }
-  pool_size   -= h_size + (sizeof(struct ring));
+  pool_size   -= h_size;
 
   /* calculate object sizes */
   if (sep_obj_data) {
@@ -253,8 +249,7 @@ struct mempool *alloc_enhanced_mempool2(size_t pool_size,
 void free_mempool(struct mempool *p)
 {
   if (p) {
-	BUG_ON(ring_count(p->free_objs) != p->nb_objs); /* some objects of this pool may be still in use */
-	free_ring(p->free_objs);
+	BUG_ON(p->nb_free_objs != p->nb_objs); /* some objects of this pool may be still in use */
 	if (p->obj_data_area)
 	  target_free(p->obj_data_area);
 	target_free(p);
