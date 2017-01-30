@@ -657,8 +657,6 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
  *  from a context that is different from the one of the main loop
  */
 int umount_shfs(int force) {
-	struct htable_el *el;
-	struct shfs_bentry *bentry;
 	unsigned int i;
 
 	down(&shfs_mount_lock);
@@ -667,6 +665,8 @@ int umount_shfs(int force) {
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
 		    shfs_cache_ref_count()) {
+			struct htable_el *el;
+
 			/* there are still open files and/or async I/O is happening */
 			printd("Could not umount: SHFS is busy:\n");
 			printd(" Open files:               %u\n",
@@ -683,7 +683,7 @@ int umount_shfs(int force) {
 
 			/* lock entries */
 			foreach_htable_el(shfs_vol.bt, el) {
-				bentry = el->private;
+				struct shfs_bentry *bentry = el->private;
 				bentry->update = 1; /* forbid further open() */
 				down(&bentry->updatelock); /* wait until file is closed */
 			}
