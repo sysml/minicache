@@ -45,9 +45,11 @@
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include <linux/log2.h>
+#include <linux/atomic.h>
 #include "shfs.h"
 
 static struct kmem_cache *shfs_inode_cachep;
+static atomic_t nr_shfs_mounts;
 
 static struct inode *shfs_alloc_inode(struct super_block *sb)
 {
@@ -78,6 +80,7 @@ static void shfs_put_super (struct super_block * sb)
 	umount_shfs(1);
 	kfree(SHFS_SB(sb));
 	memset(&shfs_vol, 0, sizeof(shfs_vol));
+	BUG_ON(!atomic_dec_and_test(&nr_shfs_mounts));
 }
 
 static struct super_operations shfs_sops = {
@@ -96,6 +99,20 @@ static int shfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct inode *root_inode;
 	struct shfs_sb_info *sbi;
 	int ret = 0;
+
+	if (atomic_add_return(1, &nr_shfs_mounts) > 1) {
+		/* Original SHFS code uses a number of global
+		 * variables. So it is not a good idea to have more
+		 * then one shfs volume mounted at a time.
+		 *
+		 * There is also a check if something is already
+		 * mounted, but it is not atomic. Anyways, better to
+		 * detect it earlier
+		 */
+		pr_err("SHFS does not support more then one mount at a time\n");
+		atomic_dec(&nr_shfs_mounts);
+		return -EALREADY;
+	}
 
 	if (!sb)
 		return -ENXIO;
@@ -168,6 +185,7 @@ static void shfs_init_inode_once(void *generic_inode)
 static int __init shfs_init(void)
 {
 	int err = 0;
+	atomic_set(&nr_shfs_mounts, 0);
 
 	shfs_inode_cachep = kmem_cache_create("shfs_icache",
 					       sizeof(struct shfs_inode_info), 0,
