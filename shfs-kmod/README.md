@@ -1,10 +1,11 @@
 # SHFS linux port
 
-This is a poqrt of the "Simple Hash File System" to linux kernel 3.16.
+This is a port of the "Simple Hash File System" to linux kernel 3.16.
 
 SHFS is experimental, so it is highly recommended to run it inside an
 isolated sandbox environment such as a virtual machine or dedicated
 test computer.
+For now, only a single volume can be mounted.
 
 To build the module run:
 ```
