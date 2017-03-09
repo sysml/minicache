@@ -119,11 +119,13 @@ remount
  Re-mounts the currently mounted SHFS volume.
 
 ```
-repeat [TIMES] [DELAY] [COMMAND] [[ARGS]]...
+repeat [TIMES] [DELAY] [CLEAR] [COMMAND] [[ARGS]]...
 ```
  Executes COMMAND TIMES-times. DELAY specifies a delay in ms between the
  executions. If a single COMMAND execution interation returns something less
  than 0, repeat exists immediately by returning this error code.
+ CLEAR specifies after how many command execution the screen shall be cleared.
+ A CLEAR value of 0 let never clear the screen.
 
 ```
 shfs-info

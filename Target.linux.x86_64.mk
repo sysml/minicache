@@ -1,48 +1,10 @@
-#
-# MiniCache Linux Target: Makefile
-#
-#   file: Target.linux.x86_64.mk
-#
-###########################################################################
-#
-#          NEC Europe Ltd. PROPRIETARY INFORMATION
-#
-# This software is supplied under the terms of a license agreement
-# or nondisclosure agreement with NEC Europe Ltd. and may not be
-# copied or disclosed except in accordance with the terms of that
-# agreement. The software and its source code contain valuable trade
-# secrets and confidential information which have to be maintained in
-# confidence.
-# Any unauthorized publication, transfer to third parties or duplication
-# of the object or source code - either totally or in part – is
-# prohibited.
-#
-#      Copyright (c) 2015 NEC Europe Ltd. All Rights Reserved.
-#
-# Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
-#
-# NEC Europe Ltd. DISCLAIMS ALL WARRANTIES, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY
-# AND FITNESS FOR A PARTICULAR PURPOSE AND THE WARRANTY AGAINST LATENT
-# DEFECTS, WITH RESPECT TO THE PROGRAM AND THE ACCOMPANYING
-# DOCUMENTATION.
-#
-# No Liability For Consequential Damages IN NO EVENT SHALL NEC Europe
-# Ltd., NEC Corporation OR ANY OF ITS SUBSIDIARIES BE LIABLE FOR ANY
-# DAMAGES WHATSOEVER (INCLUDING, WITHOUT LIMITATION, DAMAGES FOR LOSS
-# OF BUSINESS PROFITS, BUSINESS INTERRUPTION, LOSS OF INFORMATION, OR
-# OTHER PECUNIARY LOSS AND INDIRECT, CONSEQUENTIAL, INCIDENTAL,
-# ECONOMIC OR PUNITIVE DAMAGES) ARISING OUT OF THE USE OF OR INABILITY
-# TO USE THIS PROGRAM, EVEN IF NEC Europe Ltd. HAS BEEN ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGES.
-#
-#     THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
-#
 ###########################################################################
 #
 # Copyright (c) 2001, 2002 Swedish Institute of Computer Science.
 # All rights reserved. 
-# 
+# Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation.
+# All rights reserved. 
+#
 # Redistribution and use in source and binary forms, with or without modification, 
 # are permitted provided that the following conditions are met:
 #
@@ -68,6 +30,7 @@
 # This file is part of the lwIP TCP/IP stack.
 # 
 # Author: Adam Dunkels <adam@sics.se>
+#         Simon Kuenzer <simon.kuenzer@neclab.eu>
 #
 ###########################################################################
 
@@ -83,6 +46,7 @@ endif
 BUILDSO=y
 CONFIG_OSVNET=y
 CONFIG_OSVBLK=y
+CONFIG_PTH_THREADS=n
 CINCLUDES+=-I$(OSV_ROOT)/arch/x64 -I$(OSV_ROOT) -I$(OSV_ROOT)/include
 CINCLUDES+=-isystem $(OSV_ROOT)/include/glibc-compat
 glibcbase     = $(OSV_ROOT)/external/x64/glibc.bin
@@ -101,7 +65,7 @@ CINCLUDES+=-isystem $(OSV_ROOT)/external/x64/acpica/source/include \
 CINCLUDES+=-isystem $(gcc-inc-base2) \
            -isystem gen/include \
            $(post-includes-bsd)
-OSV_BUILD_MODE=release
+OSV_BUILD_MODE=${mode}
 CINCLUDES+=-I$(OSV_ROOT)/build/$(OSV_BUILD_MODE)/gen/include/
 
 post-includes-bsd += -isystem $(OSV_ROOT)/bsd/sys
@@ -110,13 +74,40 @@ post-includes-bsd += -isystem $(OSV_ROOT)/bsd/
 post-includes-bsd += -isystem $(OSV_ROOT)/bsd/x64
 #autodepend = -MD -MT $@ -MP
 
-common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL \
+common+=-nostdinc -D__BSD_VISIBLE=1 -D_KERNEL -g \
 	-include $(OSV_ROOT)/compiler/include/intrinsics.hh -Wformat=0 \
-	-Wno-format-security -O3 -DNDEBUG -DCONF_debug_memory=0 \
+	-Wno-format-security-DNDEBUG -DCONF_debug_memory=0 \
 	-D__OSV__
+ifndef CONFIG_BUILD_OPTIMISATION
+common +=  -O3
+else
+common += $(CONFIG_BUILD_OPTIMISATION)
+endif
+
 CFLAGS+=$(common)
 CXXFLAGS+=-std=gnu++11 $(common)
 LDFLAGS+=$(autodepend)
+else
+CONFIG_PTH_THREADS?=n
+CONFIG_SHELL?=n
+CONFIG_NETMAP?=y
+
+CONFIG_SHFS_CACHE_READAHEAD		?= 8
+CONFIG_SHFS_CACHE_POOL_NB_BUFFERS	?= 8192
+CONFIG_SHFS_CACHE_GROW			= n
+endif
+
+ifeq ($(CONFIG_SHELL),y)
+ifneq ($(CONFIG_PTH_THREADS),y)
+$(warning "Shell is not available without threads support")
+CONFIG_SHELL:=n
+endif
+endif
+
+ifeq ($(CONFIG_NETMAP),y)
+ifndef NETMAP_INCLUDES
+$(error "Please define NETMAP_INCLUDES")
+endif
 endif
 
 ###########################################################################
@@ -126,6 +117,25 @@ CONFIG_SHFS_STATS = n # no stats
 CONFIG_TESTSUITE = n # no testuite
 
 CONFIG_MINICACHE_MINDER_PRINT ?= n
+
+CONFIG_LWIP_CHECKSUM_NOCHECK ?= y
+CONFIG_LWIP_CHECKSUM_NOGEN ?= n
+
+ifeq ($(CONFIG_LWIP_NUM_TCPCON),)
+CONFIG_LWIP_NUM_TCPCON=512
+endif
+CFLAGS+= -DCONFIG_LWIP_NUM_TCPCON=$(CONFIG_LWIP_NUM_TCPCON)
+CFLAGS-$(CONFIG_LWIP_CHECKSUM_NOCHECK)+=-DCONFIG_LWIP_CHECKSUM_NOCHECK
+CFLAGS-$(CONFIG_LWIP_CHECKSUM_NOGEN)+=-DCONFIG_LWIP_CHECKSUM_NOGEN
+CFLAGS-$(CONFIG_DEBUG_LWIP)+=-DCONFIG_DEBUG_LWIP
+CFLAGS-$(CONFIG_DEBUG_LWIP_MAINLOOP)+=-DLWIP_MAINLOOP_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_IF)+=-DLWIP_IF_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_IP)+=-DLWIP_IP_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_UDP)+=-DLWIP_UDP_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_TCP)+=-DLWIP_TCP_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_SYS)+=-DLWIP_SYS_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_API)+=-DLWIP_API_DEBUG
+CFLAGS-$(CONFIG_DEBUG_LWIP_SERVICE)+=-DLWIP_SERVICE_DEBUG
 CFLAGS+= -DCONFIG_LWIP_NOTHREADS
 CFLAGS+= -DHAVE_LWIP
 
@@ -158,8 +168,13 @@ CFLAGS+=-g -D$(TARGET) $(MCCFLAGS) \
 # -Wunreachable-code
 # -ansi
 # -std=c89
-LDFLAGS+=-pthread -lrt -lpth #-lutil
+LDFLAGS+=-pthread #-lutil
 ARFLAGS=rs
+
+ifeq ($(CONFIG_PTH_THREADS),y)
+LDFLAGS+=-lpth
+CFLAGS+=-DCONFIG_PTH_THREADS
+endif
 
 ifeq ($(BUILDSO),y)
 CFLAGS+=-fPIC -DLWIP_DNS_API_DECLARE_H_ERRNO=0
@@ -237,15 +252,30 @@ ARCHFILES+=$(wildcard $(LWIPARCH)/netif/osv-net.c)
 ARCHFILESXX+=$(wildcard $(LWIPARCH)/netif/osv-net-io.cc)
 CFLAGS+=-DCONFIG_OSVNET
 else
+ifeq ($(CONFIG_NETMAP),y)
+ARCHFILES+=$(wildcard $(LWIPARCH)/netif/netmapif.c)
+CFLAGS+=-DCONFIG_NETMAP -I$(NETMAP_INCLUDES)
+else
 ARCHFILES+=$(wildcard $(LWIPARCH)/netif/tapif.c)
 CFLAGS+=-DCONFIG_TAPIF
 endif
 endif
+endif
+
+APPDIRS=target/$(TARGET)/blkdev
+ifeq ($(CONFIG_OSVBLK),y)
+APPFILES+=target/$(TARGET)/blkdev/osv-blk.c
+APPFILESXX+=target/$(TARGET)/blkdev/osv-blk-bio.cc
+CFLAGS+=-DCONFIG_OSVBLK
+else
+APPFILES+=target/$(TARGET)/blkdev/paio-blk.c
+LDFLAGS+=-lrt
+endif
 
 # APPFILES: Applications.
-APPDIRS=.:target/$(TARGET)
-APPFILES  =$(MCOBJS)
-APPFILESXX=$(MCOBJSXX)
+APPDIRS+=:.:target/$(TARGET)
+APPFILES+=$(MCOBJS)
+APPFILESXX+=$(MCOBJSXX)
 APPFILESW  =$(addprefix $(BUILDDIR)/,$(notdir $(APPFILES)))
 APPFILESWXX=$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESXX)))
 APPOBJS =$(addprefix $(BUILDDIR)/,$(notdir $(APPFILESW:.c=.o)))
@@ -265,6 +295,8 @@ APPLIB=$(BUILDDIR)/minicache.a
 else
 LWIPLIB=$(BUILDDIR)/liblwip.so
 endif
+
+CFLAGS+=$(CFLAGS-y)
 
 # set source search path
 VPATH=$(BUILDDIR):$(LWIPARCH):$(COREDIRS):$(CORE4DIRS):$(CORE6DIRS):$(SNMPDIRS):$(APIDIRS):$(NETIFDIRS):$(ARCHDIRS):$(APPDIRS)

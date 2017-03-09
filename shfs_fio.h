@@ -1,9 +1,46 @@
+/*
+ * Simple hash filesystem (SHFS)
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ */
 #ifndef _SHFS_FIO_
 #define _SHFS_FIO_
 
 #include "shfs_defs.h"
 #include "shfs.h"
 #include "shfs_btable.h"
+
+#ifndef __KERNEL__
 #include "shfs_cache.h"
 #include "likely.h"
 
@@ -12,13 +49,24 @@
 typedef struct shfs_bentry *SHFS_FD;
 
 /**
- * Opens a file/object via hash or name depending on
+ * Opens a file/object via hash string or name depending on
  * the first character of path:
  *
  * Hash: "?024a5bec"
  * Name: "index.html"
  */
 SHFS_FD shfs_fio_open(const char *path);
+/**
+ * Opens a file/object via a hash digest
+ */
+SHFS_FD shfs_fio_openh(hash512_t h);
+/**
+ * Creates a file descriptor clone
+ */
+SHFS_FD shfs_fio_openf(SHFS_FD f);
+/**
+ * Closes a file descriptor
+ */
 void shfs_fio_close(SHFS_FD f);
 
 void shfs_fio_name(SHFS_FD f, char *out, size_t outlen); /* null-termination is ensured */
@@ -66,14 +114,30 @@ void shfs_fio_mime(SHFS_FD f, char *out, size_t outlen); /* null-termination is 
 #define shfs_is_foff_in_bound(f, foff) \
 	((f)->hentry->f_attr.len > (foff))
 
+/**
+ * File cookies
+ */
+#define shfs_fio_get_cookie(f) \
+	((f)->cookie)
+static inline int shfs_fio_set_cookie(SHFS_FD f, void *cookie) {
+  if (f->cookie)
+    return -EBUSY;
+  f->cookie = cookie;
+  return 0;
+}
+#define shfs_fio_clear_cookie(f) \
+  do { (f)->cookie = NULL; } while (0)
+
 /*
  * Simple but synchronous file read
  * Note: Busy-waiting is used
  */
 /* direct read */
 int shfs_fio_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
+int shfs_fio_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
 /* read is using cache */
 int shfs_fio_cache_read(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
+int shfs_fio_cache_read_nosched(SHFS_FD f, uint64_t offset, void *buf, uint64_t len);
 
 /*
  * Async file read
@@ -82,10 +146,13 @@ static inline int shfs_fio_cache_aread(SHFS_FD f, chk_t offset, shfs_aiocb_t *cb
 {
     register chk_t addr;
 
-    if (!(shfs_is_fchk_in_bound(f, offset)))
+    if (unlikely(!(shfs_is_fchk_in_bound(f, offset))))
 	return -EINVAL;
     addr = shfs_volchk_fchk(f, offset);
     return shfs_cache_aread(addr, cb, cb_cookie, cb_argp, cce_out, t_out);
 }
+#endif /* __KERNEL__ */
+
+
 
 #endif /* _SHFS_FIO_ */

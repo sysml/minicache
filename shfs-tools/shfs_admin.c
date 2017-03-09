@@ -1,3 +1,38 @@
+/*
+ * Simple hash filesystem (SHFS) tools
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -17,6 +52,7 @@
 #include "shfs_btable.h"
 #include "shfs_alloc.h"
 #include "http_parser.h"
+#include "shfs_check.h"
 
 #ifndef INET_ADDRLEN
 #define INET_ADDRLEN 4
@@ -83,7 +119,8 @@ static void print_usage(char *argv0)
 	printf("    -m, --mime [MIME]          sets the MIME type for the object\n");
 	//printf("    -e, --encoding [ENCODING]  sets encoding type for preencoded content\n");
 	printf("  For each add-lnk token:\n");
-	printf("    -t, --type [TYPE]          sets the type for a linked object\n");
+	printf("    -t, --type [TYPE]          sets the TYPE for a linked object\n");
+	printf("                               TYPE can be: redirect, raw, auto\n");
 	printf("  -r, --rm-obj [HASH]          removes an object from the volume\n");
 	printf("  -c, --cat-obj [HASH]         exports an object to stdout\n");
 	printf("  -d, --set-default [HASH]     sets the object with HASH as default\n");
@@ -147,8 +184,12 @@ static inline int parse_args_set_ltype(enum ltype *out, const char *arg)
 		*out = LREDIRECT;
 		return 0;
 	}
-	if (strcasecmp("mpeg", arg) == 0) {
-		*out = LMPEG;
+	if (strcasecmp("raw", arg) == 0) {
+		*out = LRAW;
+		return 0;
+	}
+	if (strcasecmp("auto", arg) == 0) {
+		*out = LAUTO;
 		return 0;
 	}
 	return -EINVAL;
@@ -1074,11 +1115,6 @@ static int actn_addlink(struct token *j)
 		eprintf("User infos are not supported in URL: %s\n", j->path);
 		goto err;
 	}
-	if ((u.field_set & (1 << UF_QUERY)) &&
-	    (u.field_data[UF_QUERY].len > 0)) {
-		eprintf("Query is not supported in URL: %s\n", j->path);
-		goto err;
-	}
 	if ((u.field_set & (1 << UF_MAX)) &&
 	    (u.field_data[UF_MAX].len > 0)) {
 		eprintf("Max is not supported in URL: %s\n", j->path);
@@ -1101,11 +1137,11 @@ static int actn_addlink(struct token *j)
 	dprintf(D_L1, "Going to add the following remote entry:\n");
 	dprintf(D_L1, " Host: %s\n", str_rhost);
 	dprintf(D_L1, " Port: %"PRIu16"\n", u.port);
-	if (u.field_data[UF_PATH].len > 1)
+	if (u.field_data[UF_PATH].len > 1 || u.field_data[UF_QUERY].len > 1)
 		dprintf(D_L1, " Path: /%s\n", j->path + u.field_data[UF_PATH].off + 1);
 	else
 		dprintf(D_L1, " Path: /\n");
-	dprintf(D_L1, " Type: %s\n", j->optltype == LMPEG ? "Relative clone (MPEG)" : "Redirect");
+	dprintf(D_L1, " Type: %s\n", j->optltype == LRAW ? "Relative clone (raw)" : (j->optltype == LAUTO ? "Relative clone (autodetect)" : "Redirect"));
 
 	/* calculate hash */
 	if (shfs_vol.hfunc != SHFUNC_MANUAL) {
@@ -1163,18 +1199,23 @@ static int actn_addlink(struct token *j)
 	hentry->flags = SHFS_EFLAG_LINK;
 	hentry->l_attr.rport = u.port;
 	switch(j->optltype) {
-	case LMPEG:
-		hentry->l_attr.type = SHFS_LTYPE_RELACLONE_MPEG;
+	case LRAW:
+		hentry->l_attr.type = SHFS_LTYPE_RAW;
+		break;
+	case LAUTO:
+		hentry->l_attr.type = SHFS_LTYPE_AUTO;
 		break;
 	default:
 		hentry->l_attr.type = SHFS_LTYPE_REDIRECT;
 		break;
 	}
 	memcpy(&hentry->l_attr.rhost, &rhost, sizeof(hentry->l_attr.rhost));
-	if (u.field_set & (1 << UF_PATH) &&
-	    u.field_data[UF_PATH].len > 1) {
+	if ((u.field_set & (1 << UF_PATH) &&
+	     u.field_data[UF_PATH].len > 1) ||
+	    (u.field_set & (1 << UF_QUERY) &&
+	     u.field_data[UF_QUERY].len > 1)){
 		strncpy(hentry->l_attr.rpath,
-			j->path + u.field_data[1 << UF_PATH].off + 1,
+			j->path + u.field_data[UF_PATH].off + 1,
 			sizeof(hentry->l_attr.rpath));
 	} else {
 		hentry->l_attr.rpath[0] = '\0';
@@ -1447,11 +1488,11 @@ static int actn_ls(struct token *token)
 		/* ltype, mime */
 		if (SHFS_HENTRY_ISLINK(hentry)) {
 			switch (hentry->l_attr.type) {
-			case SHFS_LTYPE_RELACLONE_MPEG:
-				printf("%5s ", "rlmpg");
+			case SHFS_LTYPE_RAW:
+				printf("%5s ", "raw");
 				break;
-			case SHFS_LTYPE_ABSCLONE:
-				printf("%5s ", "abscl");
+			case SHFS_LTYPE_AUTO:
+				printf("%5s ", "auto");
 				break;
 			default: /* SHFS_LTYPE_REDIRECT */
 				printf("%5s ", "redir");

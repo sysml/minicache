@@ -1,3 +1,38 @@
+/*
+ * Block device wrapper for MiniOS
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ */
 #ifndef _BLKDEV_H_
 #define _BLKDEV_H_
 
@@ -81,11 +116,15 @@ static inline sector_t blkdev_sectors(struct blkdev *bd)
  */
 void _blkdev_async_io_cb(struct blkfront_aiocb *aiocb, int ret);
 
+#define blkdev_async_io_submit(bd) blkfront_aio_submit((bd)->dev)
+#define blkdev_async_io_wait_slot(bd) blkfront_wait_slot((bd)->dev)
+
 static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sector_t len,
                                           int write, void *buffer, blkdev_aiocb_t *cb, void *cb_argp)
 {
   struct mempool_obj *robj;
   struct _blkdev_req *req;
+  int ret;
 
   robj = mempool_pick(bd->reqpool);
   if (unlikely(!robj))
@@ -107,8 +146,14 @@ static inline int blkdev_async_io_nocheck(struct blkdev *bd, sector_t start, sec
   req->cb = cb;
   req->cb_argp = cb_argp;
 
-  blkfront_aio(&(req->aiocb), write);
-  return 0;
+ retry:
+  ret = blkfront_aio_enqueue(&(req->aiocb), write);
+  if (unlikely(ret == -EBUSY)) {
+	blkdev_async_io_submit(bd);
+	blkdev_async_io_wait_slot(bd); /* yields CPU */
+	goto retry;
+  }
+  return ret;
 }
 #define blkdev_async_write_nocheck(bd, start, len, buffer, cb, cb_argp) \
 	blkdev_async_io_nocheck((bd), (start), (len), 1, (buffer), (cb), (cb_argp))
@@ -124,7 +169,7 @@ static inline int blkdev_async_io(struct blkdev *bd, sector_t start, sector_t le
 	}
 
 	if (unlikely((len * blkdev_ssize(bd)) / PAGE_SIZE > BLKIF_MAX_SEGMENTS_PER_REQUEST)) {
-		/* request too big -> blockfront cannot handle it with a single request */
+		/* request too big -> cannot be handled with a single request */
 		return -ENXIO;
 	}
 
@@ -165,23 +210,27 @@ static inline int blkdev_sync_io_nocheck(struct blkdev *bd, sector_t start, sect
 	int ret;
 
 	init_SEMAPHORE(&iosync.sem, 0);
+ retry:
 	ret = blkdev_async_io_nocheck(bd, start, len, write, target,
 	                              _blkdev_sync_io_cb, &iosync);
-	while (ret == -EAGAIN) {
+	blkdev_async_io_submit(bd);
+	if (unlikely(ret == -EAGAIN)) {
 		/* try again, queue was full */
 		blkdev_poll_req(bd);
 		schedule();
-		ret = blkdev_async_io_nocheck(bd, start, len, write, target,
-		                              _blkdev_sync_io_cb, &iosync);
+		goto retry;
 	}
-	if (ret < 0)
+	if (unlikely(ret == -EBUSY)) {
+		blkdev_async_io_wait_slot(bd); /* yields CPU */
+		goto retry;
+	}
+	if (unlikely(ret < 0))
 		return ret;
 
 	/* wait for I/O completion */
-	blkdev_poll_req(bd);
 	while (trydown(&iosync.sem) == 0) {
-		schedule(); /* yield CPU */
 		blkdev_poll_req(bd);
+		schedule(); /* yield CPU */
 	}
 
 	return iosync.ret;
@@ -194,30 +243,22 @@ static inline int blkdev_sync_io_nocheck(struct blkdev *bd, sector_t start, sect
 static inline int blkdev_sync_io(struct blkdev *bd, sector_t start, sector_t len,
                                  int write, void *target)
 {
-	struct _blkdev_sync_io_sync iosync;
-	int ret;
-
-	init_SEMAPHORE(&iosync.sem, 0);
-	ret = blkdev_async_io(bd, start, len, write, target,
-	                      _blkdev_sync_io_cb, &iosync);
-	while (ret == -EAGAIN) {
-		/* try again, queue was full */
-		blkdev_poll_req(bd);
-		schedule();
-		ret = blkdev_async_io(bd, start, len, write, target,
-		                      _blkdev_sync_io_cb, &iosync);
-	}
-	if (ret < 0)
-		return ret;
-
-	/* wait for I/O completion */
-	blkdev_poll_req(bd);
-	while (trydown(&iosync.sem) == 0) {
-		schedule(); /* yield CPU */
-		blkdev_poll_req(bd);
+	if (unlikely(write && !(bd->info.mode & (O_WRONLY | O_RDWR)))) {
+		/* write access on non-writable device or read access on non-readable device */
+		return -EACCES;
 	}
 
-	return iosync.ret;
+	if (unlikely((len * blkdev_ssize(bd)) / PAGE_SIZE > BLKIF_MAX_SEGMENTS_PER_REQUEST)) {
+		/* request too big -> cannot be handled with a single request */
+		return -ENXIO;
+	}
+
+	if (unlikely(((uintptr_t) target) & ((uintptr_t) blkdev_ssize(bd) - 1))) {
+		/* buffer is not aligned to device sector size */
+		return -EINVAL;
+	}
+
+	return blkdev_sync_io_nocheck(bd, start, len, write, target);
 }
 #define blkdev_sync_write(bd, start, len, buffer)	  \
 	blkdev_sync_io((bd), (start), (len), 1, (buffer))

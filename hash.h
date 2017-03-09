@@ -1,13 +1,44 @@
 /*
- * Simple hash value implementation for MiniOS and POSIX
+ * Simple hash number data type and handler functions
  *
- * Copyright(C) 2013-204 NEC Laboratories Europe. All rights reserved.
- *                       Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 #ifndef _HASH_H_
 #define _HASH_H_
 
+#ifndef __KERNEL__
 #include <string.h>
+#endif
 
 typedef uint8_t hash512_t[64] __attribute__((aligned(8)));
 
@@ -103,6 +134,39 @@ static inline int hash_is_zero(const hash512_t h, uint8_t hlen)
 #endif
 }
 
+static inline int hash_is_max(const hash512_t h, uint8_t hlen)
+{
+#ifdef __x86_64
+	register uint8_t nbleft = hlen & 0x07; /* = mod by 8 */
+	register uint64_t mask64;
+	register uint64_t *p64;
+	register uint8_t i;
+
+	hlen -= nbleft;
+	i = 0;
+	for (; i < hlen; i += 8) {
+		p64 = (uint64_t *) &h[i];
+		if (*p64 != UINT64_MAX)
+			return 0;
+	}
+	if (nbleft) {
+		mask64 = ((uint64_t) 1 << (nbleft << 3)) - 1;
+		p64 = (uint64_t *) &h[i];
+		if ((*p64 & mask64) != mask64)
+			return 0;
+	}
+
+	return 1;
+#else
+	uint8_t i;
+
+	for (i = 0; i < hlen; ++i)
+		if (h[i] != 0xFF)
+			return 0;
+	return 1;
+#endif
+}
+
 static inline void hash_clear(hash512_t h, uint8_t hlen)
 {
 #ifdef __x86_64
@@ -132,9 +196,11 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 		case 'a' ... 'f':
 			nu = in[i] - 'a' + 10;
 			break;
+#ifndef SHFS_HASH_PARSE_CASE_SENSITIVE
 		case 'A' ... 'F':
 			nu = in[i] - 'A' + 10;
 			break;
+#endif
 		case '\0':
 		default:
 			return -1; /* unknown character or string ended unexpectedly */
@@ -149,10 +215,12 @@ static inline int hash_parse(const char *in, hash512_t h, uint8_t hlen)
 		case 'a' ... 'f':
 			nl = in[i] - 'a' + 10;
 			break;
+#ifndef SHFS_HASH_PARSE_CASE_SENSITIVE
 		case 'A' ... 'F':
 			nl = in[i] - 'A' + 10;
 			break;
 		case '\0':
+#endif
 		default:
 			return -1;
 		}

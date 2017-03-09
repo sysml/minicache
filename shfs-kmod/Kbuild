@@ -1,0 +1,6 @@
+ccflags-y := -I$(src)/include
+ccflags-y += -I$(realpath $(src)/../)
+ccflags-y += -DSHFS_HASH_PARSE_CASE_SENSITIVE
+
+obj-m := kmod_shfs.o
+kmod_shfs-y := super.o dir.o blkdev.o inode.o shfs.o shfs_check.o htable.o

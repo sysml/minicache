@@ -1,19 +1,57 @@
 /*
- * Simon's HashFS (SHFS) for Mini-OS
+ * Simple hash filesystem (SHFS)
  *
- * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
- *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved
+ *
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, or the BSD license below:
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
+
 #include <target/sys.h>
+
+#ifndef __KERNEL__
 #include <stdint.h>
 #include <errno.h>
+#include "shfs_cache.h"
+#else
+int shfs_errno;
+#endif
 
 #include "shfs.h"
 #include "shfs_check.h"
 #include "shfs_defs.h"
 #include "shfs_btable.h"
-#include "shfs_tools.h"
-#include "shfs_cache.h"
 #ifdef SHFS_STATS
 #include "shfs_stats_data.h"
 #include "shfs_stats.h"
@@ -27,6 +65,19 @@
 #ifndef CACHELINE_SIZE
 #define CACHELINE_SIZE 64
 #endif
+
+#if defined TRACE_BOOTTIME && CONFIG_AUTOMOUNT
+#define TT_DECLARE(var) uint64_t (var) = 0
+#define TT_START(var) do { (var) = target_now_ns(); } while(0)
+#define TT_END(var) do { (var) = (target_now_ns() - (var)); } while(0)
+
+TT_DECLARE(shfs_tt_vbdopen);
+#else /* TRACE_BOOTTIME */
+#define TT_DECLARE(var) while(0) {}
+#define TT_START(var) while(0) {}
+#define TT_END(var) while(0) {}
+#endif
+
 
 int shfs_mounted = 0;
 unsigned int shfs_nb_open = 0;
@@ -51,7 +102,7 @@ void exit_shfs(void) {
  *
  * Note: chk0 has to be a buffer of 4096 bytes and be aligned to 4096 bytes
  */
-static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
+static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0, int mode)
 {
 	struct blkdev *bd;
 #ifdef SHFS_DEBUG
@@ -59,13 +110,21 @@ static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
 #endif
 	sector_t rlen;
 	int ret;
+	TT_DECLARE(_tt_vbdopen);
 
-	bd = open_blkdev(bd_id, O_RDWR);
-	if (!bd)
-		goto err_out;
 #ifdef SHFS_DEBUG
 	blkdev_id_unparse(bd_id, str_id, sizeof(str_id));
 #endif
+	TT_START(_tt_vbdopen);
+	bd = open_blkdev(bd_id, mode);
+	TT_END(_tt_vbdopen);
+#if defined TRACE_BOOTTIME && CONFIG_AUTOMOUNT
+	shfs_tt_vbdopen += _tt_vbdopen;
+#endif
+	if (!bd) {
+		printd("Could not open %s: %s\n", str_id, strerror(errno));
+		goto err_out;
+	}
 
 	if (blkdev_ssize(bd) > 4096 || blkdev_ssize(bd) < 512 ||
 	    !POWER_OF_2(blkdev_ssize(bd))) {
@@ -74,9 +133,9 @@ static struct blkdev *shfs_checkopen_blkdev(blkdev_id_t bd_id, void *chk0)
 		goto err_close_bd;
 	}
 
-	/* read first chunk (considered as 4K) */
+	/* read first chunk (chunksize considered as 4K) */
 	rlen = 4096 / blkdev_ssize(bd);
-	ret = blkdev_sync_read(bd, 0, rlen, chk0);
+	ret = blkdev_sync_read(bd, 0, rlen, chk0); /* FIXME: Use version that does not call schedule() */
 	if (ret < 0) {
 		printd("Could not read from block device %s: %d\n", str_id, ret);
 		errno = -ret;
@@ -134,13 +193,16 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 	/* Iterate over block devices and try to find those with a valid SHFS disk label */
 	nb_detected_members = 0;
 	for (i = 0; i < count; i++) {
-		bd = shfs_checkopen_blkdev(bd_id[i], chk0);
+#ifdef SHFS_DEBUG
+		blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
+		printd("Search for SHFS label on device %s...\n", str_id);
+#endif
+		bd = shfs_checkopen_blkdev(bd_id[i], chk0, O_RDONLY);
 		if (!bd) {
 			continue; /* try next device */
 		}
 #ifdef SHFS_DEBUG
-		blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
-		printd("SHFSv1 label on block device %s detected\n", str_id);
+		printd("Supported SHFS label detected on %s\n", str_id);
 #endif
 
 		/* chk0 now contains the first chunk read from disk */
@@ -155,6 +217,10 @@ static int load_vol_cconf(blkdev_id_t bd_id[], unsigned int count)
 	}
 
 	/* Load label from first detected member */
+#ifdef SHFS_DEBUG
+	blkdev_id_unparse(bd_id[i], str_id, sizeof(str_id));
+	printd("Load SHFS label from %s...\n", str_id);
+#endif
 	rlen = 4096 / blkdev_ssize(detected_member[0].bd);
 	ret = blkdev_sync_read(detected_member[0].bd, 0, rlen, chk0);
 	if (ret < 0)
@@ -302,7 +368,7 @@ static int load_vol_hconf(void)
 	}
 
 	printd("Loading SHFS configuration chunk...\n");
-	ret = shfs_read_chunk(1, 1, chk1);
+	ret = shfs_read_chunk_nosched(1, 1, chk1);
 	if (ret < 0)
 		goto out_free_chk1;
 
@@ -335,7 +401,7 @@ static int load_vol_hconf(void)
  * Note: load_vol_hconf() and local_vol_cconf() has to called before
  */
 struct _load_vol_htable_aiot {
-	sem_t done;
+	int done;
 	chk_t left;
 	int ret;
 };
@@ -355,7 +421,7 @@ static void _load_vol_htable_cb(SHFS_AIO_TOKEN *t, void *cookie, void *argp)
 		aiot->ret = ioret;
 	--aiot->left;
 	if (unlikely(aiot->left == 0))
-		up(&aiot->done);
+		aiot->done = 1;
 }
 
 static int load_vol_htable(void)
@@ -379,7 +445,7 @@ static int load_vol_htable(void)
 	memset(shfs_vol.htable_chunk_cache, 0, sizeof(void *) * shfs_vol.htable_len);
 
 	/* read hash table from device */
-	init_SEMAPHORE(&aiot.done, 0);
+	aiot.done = 0;
 	aiot.left = shfs_vol.htable_len;
 	aiot.ret = 0;
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
@@ -398,8 +464,9 @@ static int load_vol_htable(void)
 		printd("Setup async read for chunk %"PRIchk"\n", c);
 		aioret = shfs_aread_chunk(shfs_vol.htable_ref + c, 1, chk_buf,
 		                          _load_vol_htable_cb, &aiot, NULL);
-		if (!aioret && errno == EAGAIN) {
+		if (!aioret && (errno == EAGAIN || errno == EBUSY)) {
 			printd("Device is busy: Retrying...\n");
+			shfs_aio_submit();
 			shfs_poll_blkdevs();
 			goto repeat_aio;
 		}
@@ -409,6 +476,7 @@ static int load_vol_htable(void)
 			goto err_cancel_aio;
 		}
 	}
+	shfs_aio_submit();
 
 	/* allocate bucket table */
 	printd("Allocating btable...\n");
@@ -422,7 +490,7 @@ static int load_vol_htable(void)
 
 	/* wait for I/O completion */
 	printd("Waiting for I/O completion...\n");
-	while (!trydown(&aiot.done))
+	while (!aiot.done)
 		shfs_poll_blkdevs();
 	if (aiot.ret < 0) {
 		printd("There was an I/O error: Aborting...\n");
@@ -446,6 +514,9 @@ static int load_vol_htable(void)
 		bentry->hentry_htoffset = SHFS_HTABLE_ENTRY_OFFSET(i, shfs_vol.htable_nb_entries_per_chunk);
 		bentry->refcount = 0;
 		bentry->update = 0;
+#ifdef __KERNEL__
+		bentry->ino = i + LINUX_FIRST_INO_N;
+#endif
 		init_SEMAPHORE(&bentry->updatelock, 1);
 #ifdef SHFS_STATS
 		memset(&bentry->hstats, 0, sizeof(bentry->hstats));
@@ -476,7 +547,9 @@ static int load_vol_htable(void)
 	return ret;
 }
 
+#ifndef __KERNEL__
 static void _aiotoken_pool_objinit(struct mempool_obj *, void *);
+#endif
 
 /**
  * Mount a SHFS volume
@@ -500,6 +573,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	shfs_mounted = 0;
 
 	/* load common volume information and open devices */
+	printd("Loading common volume information...\n");
 	ret = load_vol_cconf(bd_id, count);
 	if (ret < 0)
 		goto err_out;
@@ -512,6 +586,7 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	shfs_mounted = 1; /* required by next function calls */
 
 	/* load hash conf (uses shfs_sync_read_chunk) */
+	printd("Loading volume configuration...\n");
 	ret = load_vol_hconf();
 	if (ret < 0)
 		goto err_free_aiotoken_pool;
@@ -519,20 +594,24 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 	/* load htable (uses shfs_sync_read_chunk)
 	 * This function also allocates htable_chunk_cache,
 	 * htable_chunk_cache_state and btable */
+	printd("Loading volume hash table...\n");
 	ret = load_vol_htable();
 	if (ret < 0)
 		goto err_close_members;
 
+	printd("Allocating remount chunk buffer...\n");
 	shfs_vol.remount_chunk_buffer = target_malloc(shfs_vol.ioalign, shfs_vol.chunksize);
 	if (!shfs_vol.remount_chunk_buffer)
 		goto err_free_htable;
 
 	/* chunk buffer cache for I/O */
+	printd("Allocating chunk cache...\n");
 	ret = shfs_alloc_cache();
 	if (ret < 0)
 		goto err_free_remount_buffer;
 
 #ifdef SHFS_STATS
+	printd("Initializing statistics...\n");
 	ret = shfs_init_mstats(shfs_vol.htable_nb_buckets,
 	                       shfs_vol.htable_nb_entries_per_bucket,
 	                       shfs_vol.hlen);
@@ -544,8 +623,11 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
 
 	shfs_nb_open = 0;
 	up(&shfs_mount_lock);
+	printd("SHFS volume mounted\n");
 	return 0;
 
+	/* make compiller happy */
+	goto  err_free_chunkcache;
  err_free_chunkcache:
 	shfs_free_cache();
  err_free_remount_buffer:
@@ -575,15 +657,16 @@ int mount_shfs(blkdev_id_t bd_id[], unsigned int count)
  *  from a context that is different from the one of the main loop
  */
 int umount_shfs(int force) {
-	struct htable_el *el;
-	struct shfs_bentry *bentry;
 	unsigned int i;
 
 	down(&shfs_mount_lock);
 	if (shfs_mounted) {
+#ifndef __KERNEL__
 		if (shfs_nb_open ||
 		    mempool_free_count(shfs_vol.aiotoken_pool) < MAX_REQUESTS ||
 		    shfs_cache_ref_count()) {
+			struct htable_el *el;
+
 			/* there are still open files and/or async I/O is happening */
 			printd("Could not umount: SHFS is busy:\n");
 			printd(" Open files:               %u\n",
@@ -600,12 +683,13 @@ int umount_shfs(int force) {
 
 			/* lock entries */
 			foreach_htable_el(shfs_vol.bt, el) {
-				bentry = el->private;
+				struct shfs_bentry *bentry = el->private;
 				bentry->update = 1; /* forbid further open() */
 				down(&bentry->updatelock); /* wait until file is closed */
 			}
 		}
 		shfs_free_cache();
+#endif
 
 		shfs_mounted = 0;
 		target_free(shfs_vol.remount_chunk_buffer);
@@ -650,7 +734,7 @@ static int reload_vol_htable(void) {
 	printd("Re-reading hash table...\n");
 	for (c = 0; c < shfs_vol.htable_len; ++c) {
 		/* read chunk from disk */
-		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf);
+		ret = shfs_read_chunk(shfs_vol.htable_ref + c, 1, nchk_buf); /* calls schedule() */
 		if (ret < 0) {
 			ret = -EIO;
 			goto out;
@@ -787,6 +871,7 @@ int remount_shfs(void) {
  * of the interrupt context via blkdev_poll_req() and there is only the
  * cooperative scheduler...
  */
+#ifndef __KERNEL__
 static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 {
 	SHFS_AIO_TOKEN *t;
@@ -799,6 +884,7 @@ static void _aiotoken_pool_objinit(struct mempool_obj *t_obj, void *argp)
 	t->cb_argp = NULL;
 	t->cb_cookie = NULL;
 }
+#endif
 
 static void _shfs_aio_cb(int ret, void *argp) {
 	SHFS_AIO_TOKEN *t = argp;

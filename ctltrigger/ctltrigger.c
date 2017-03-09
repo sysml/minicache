@@ -1,3 +1,38 @@
+/*
+ * Control Trigger Interface client for XenStore
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -45,7 +80,7 @@ static void print_usage(char *argv0)
 	eprintf("  -v, --verbose              increases verbosity level (max. %d times)\n", D_MAX);
 	eprintf("  -n, --no-wait              do not wait for ctldir lock\n");
 	eprintf("\n");
-	eprintf("Example (mount 51760 on DomU 16):\n");
+	eprintf("Example (mount 51760 on MiniCache DomU 16):\n");
 	eprintf(" %s 16 minicache -- mount 51760\n", argv0);
 
 }
@@ -170,7 +205,8 @@ static void sigint_handler(int signum) {
  * MAIN                                                                       *
  ******************************************************************************/
 #define XSBASE "/local/domain"
-#define XSTOKEN "ctltrigger-token"
+#define XSLOCKTOKEN "ctltrigger-client-lock-token"
+#define XSTRIGGERTOKEN "ctltrigger-client-trigger-token"
 
 static inline int ctldir_reserve_lock(struct xs_handle *xs, const char *lpath)
 {
@@ -237,17 +273,18 @@ static inline int ctldir_lock(struct xs_handle *xs, unsigned int domid, const ch
 {
 	char path[256];
 	int lock = 0;
+	int cmp0, cmp1;
 	int ret = 0;
-	char **wret;
-	unsigned int wnum;
-	int ignore = 1; /* ignore first watch fire that happens on watch creation */
+	char **vec;
+	unsigned int veclen;
+	unsigned int ignore = 1;
 
-	snprintf(path, sizeof(path), "%s/%u/%s/lock", XSBASE, domid, scope);
+	snprintf(path, sizeof(path), "%s/%u/data/%s/lock", XSBASE, domid, scope);
 	if (nowait) {
 		ret = ctldir_reserve_lock(xs, path);
 	} else {
 		dprintf(D_L1, "Watch %s\n", path);
-		if (!xs_watch(xs, path, XSTOKEN)) {
+		if (!xs_watch(xs, path, XSLOCKTOKEN)) {
 			eprintf("Could not setup watch on %s\n", path);
 			goto err_out;
 		}
@@ -257,10 +294,8 @@ static inline int ctldir_lock(struct xs_handle *xs, unsigned int domid, const ch
 			goto err_unwatch;
 		while (!lock) {
 			dprintf(D_L1, "Wait for XenStore event on %s\n", path);
-			wret = xs_read_watch(xs, &wnum);
-			if (!wnum) {
-				if (wret)
-					free(wret);
+			vec = xs_read_watch(xs, &veclen);
+			if (!vec) {
 				if (errno == EAGAIN)
 					continue;
 				if (errno == EINTR) { /* usually signals */
@@ -273,13 +308,22 @@ static inline int ctldir_lock(struct xs_handle *xs, unsigned int domid, const ch
 				eprintf("Error while watching %s: %s\n", path, strerror(errno));
 				goto err_unwatch;
 			}
-			free(wret);
 
-			if (ignore) {
-				--ignore;
+			dprintf(D_L1, " Event arrived: %s | %s\n",
+				  vec[XS_WATCH_PATH], vec[XS_WATCH_TOKEN]);
+			cmp0 = strcmp(vec[XS_WATCH_TOKEN], XSLOCKTOKEN);
+			cmp1 = strcmp(vec[XS_WATCH_PATH], path);
+			free(vec);
+			if (cmp0 != 0 || cmp1 != 0) {
+				/* some other event arrived */
+				dprintf(D_L1, " Uninteresting event ignored\n");
 				continue;
 			}
-
+			if (ignore) {
+				--ignore;
+				dprintf(D_L1, " Event ignored\n");
+				continue;
+			}
 			dprintf(D_L0, "Event observed: Retry to get lock %s\n", path);
 			lock = ctldir_reserve_lock(xs, path);
 			if (lock < 0)
@@ -289,13 +333,13 @@ static inline int ctldir_lock(struct xs_handle *xs, unsigned int domid, const ch
 		if (lock)
 			ret = 1;
 		dprintf(D_L1, "Unwatch %s\n", path);
-		xs_unwatch(xs, path, XSTOKEN); /* ignore failures */
+		xs_unwatch(xs, path, XSLOCKTOKEN); /* ignore failures */
 	}
 	return ret;
 
  err_unwatch:
 	dprintf(D_L1, "Unwatch %s\n", path);
-	xs_unwatch(xs, path, XSTOKEN); /* ignore failures */
+	xs_unwatch(xs, path, XSLOCKTOKEN); /* ignore failures */
  err_out:
 	return -1;
 }
@@ -314,7 +358,7 @@ static inline int ctldir_unlock(struct xs_handle *xs, unsigned int domid, const 
 		goto err_out;
 	}
 
-	snprintf(path, sizeof(path), "%s/%u/%s/lock", XSBASE, domid, scope);
+	snprintf(path, sizeof(path), "%s/%u/data/%s/lock", XSBASE, domid, scope);
 	dprintf(D_L0, "Release lock %s\n", path);
 	if (!xs_write(xs, xts, path, "0", 1)) {
 		eprintf("Could not write to XenStore entry %s: %s\n", path, strerror(errno));
@@ -348,7 +392,7 @@ static inline int ctldir_has_trigger(struct xs_handle *xs, unsigned int domid, c
 	int ival;
 	char *reply;
 
-	snprintf(path, sizeof(path), "%s/%u/%s/feature-%s", XSBASE, domid, scope, trigger);
+	snprintf(path, sizeof(path), "%s/%u/data/%s/feature-%s", XSBASE, domid, scope, trigger);
 	dprintf(D_L1, "Check %s\n", path);
 	reply = (char *) xs_read(xs, XBT_NULL, path, &len);
 	if (!reply || len == 0) {
@@ -362,13 +406,13 @@ static inline int ctldir_has_trigger(struct xs_handle *xs, unsigned int domid, c
 	free(reply);
 
 	dprintf(D_L0, "Trigger %s is available\n", trigger);
-	return 1;
+	return 0;
 
  err_free_reply:
 	free(reply);
  err_out:
 	eprintf("Trigger %s is not available or unsupported\n", trigger);
-	return 0;
+	return -EINVAL;
 }
 
 static inline char *ctldir_trigger(struct xs_handle *xs, unsigned int domid, const char *scope, const char *trigger, const char *args)
@@ -377,76 +421,122 @@ static inline char *ctldir_trigger(struct xs_handle *xs, unsigned int domid, con
 	char ipath[256];
 	char opath[256];
 	unsigned int len;
+	int cmp0, cmp1;
 	char *reply;
-	char **wret;
-	unsigned int wnum;
-	int ignores = 1;
+	char **vec;
+	unsigned int veclen;
+	unsigned int ignore = 1;
+	xs_transaction_t xts;
 
-	snprintf(ipath, sizeof(ipath), "%s/%u/%s/%s-in", XSBASE, domid, scope, trigger);
-	snprintf(opath, sizeof(opath), "%s/%u/%s/%s-out", XSBASE, domid, scope, trigger);
+	snprintf(ipath, sizeof(ipath), "%s/%u/data/%s/%s-in", XSBASE, domid, scope, trigger);
+	snprintf(opath, sizeof(opath), "%s/%u/data/%s/%s-out", XSBASE, domid, scope, trigger);
 	if (args) /* whenever no args are passed, "" is writen to XenStore */
 		iargs = args;
 
 	dprintf(D_L1, "Watch %s\n", opath);
-	if (!xs_watch(xs, opath, XSTOKEN)) {
+	if (!xs_watch(xs, opath, XSTRIGGERTOKEN)) {
 		eprintf("Could not setup watch on %s\n", opath);
 		goto err_out;
 	}
 
 	/* send message */
-	dprintf(D_L0, "Write '%s' to %s\n", iargs, ipath);
-	if (!xs_write(xs, XBT_NULL, ipath, iargs, strlen(iargs))) {
-		eprintf("Could not write to XenStore entry %s: %s\n", ipath, strerror(errno));
+ retry_write:
+	dprintf(D_L1, "Initialize transaction for writing\n");
+	xts = xs_transaction_start(xs);
+	if (!xts) {
+		eprintf("Could not initialize transaction for writing");
 		goto err_unwatch;
+	}
+	dprintf(D_L0, "Write '%s' to %s\n", iargs, ipath);
+	if (!xs_write(xs, xts, ipath, iargs, strlen(iargs))) {
+		eprintf("Could not write to XenStore entry %s: %s\n", ipath, strerror(errno));
+		goto err_abort_xts;
+	}
+	errno = 0;
+	if (!xs_transaction_end(xs, xts, false)) {
+		if (errno != EAGAIN) {
+			eprintf("Could not finalize the transaction: %s\n", strerror(errno));
+			goto err_unwatch;
+		}
+		dprintf(D_L0, "Restart of write transaction requested\n");
+		goto retry_write;
 	}
 
 	/* wait for reply */
 	dprintf(D_L0, "Wait for reply\n");
-	while(true) {
+	for (;;) {
 		dprintf(D_L1, "Wait for XenStore event on %s\n", opath);
-		wnum = 1;
-		wret = xs_read_watch(xs, &wnum);
-		if (wnum && wret) {
-			free(wret);
-			if (!ignores)
-				break; /* reply arrived */
-			--ignores;
-			continue;
-		}
+		vec = xs_read_watch(xs, &veclen);
+		if (!vec) {
+			if (errno == EAGAIN || errno == EINTR) {
+				dprintf(D_L1, "Signal ignored\n");
+				continue;
+			}
 
-		if (errno != EAGAIN && errno != EINTR && errno != 0) {
 			eprintf("Error while watching %s: %s\n", opath, strerror(errno));
 			goto err_unwatch;
 		}
+		dprintf(D_L1, " Event arrived: %s | %s\n",
+			vec[XS_WATCH_PATH], vec[XS_WATCH_TOKEN]);
+		cmp0 = strcmp(vec[XS_WATCH_TOKEN], XSTRIGGERTOKEN);
+		cmp1 = strcmp(vec[XS_WATCH_PATH], opath);
+		free(vec);
+		if (cmp0 != 0 || cmp1 != 0) {
+			/* some other event arrived */
+			dprintf(D_L1, " Uninteresting event ignored\n");
+			continue;
+		}
+		if (ignore) {
+			dprintf(D_L1, " Event ingored\n");
+			ignore--;
+			continue;
+		}
+		break; /* reply received */
 	}
 	dprintf(D_L1, "Reply received\n");
 
 	/* read reply */
+ retry_read:
+	dprintf(D_L1, "Initialize transaction for reading reply\n");
+	xts = xs_transaction_start(xs);
+	if (!xts) {
+		eprintf("Could not initialize a transaction");
+		goto err_unwatch;
+	}
 	dprintf(D_L1, "Read %s\n", opath);
 	reply = (char *) xs_read(xs, XBT_NULL, opath, &len);
+	dprintf(D_L1, "Finalize transaction\n");
+	if (!xs_transaction_end(xs, xts, false)) {
+		if (errno != EAGAIN) {
+			eprintf("Could not finalize the transaction: %s\n", strerror(errno));
+			goto err_unwatch;
+		}
+		dprintf(D_L0, "Restart of read transaction requested\n");
+		goto retry_read;
+	}
 	if (!reply) {
 		eprintf("Could not read XenStore entry %s: %s\n", opath, strerror(errno));
-	        goto err_out;
+	        goto err_unwatch;
         }
 
 	dprintf(D_L1, "Unwatch %s\n", opath);
-	xs_unwatch(xs, opath, XSTOKEN); /* ignore failures */
+	xs_unwatch(xs, opath, XSTRIGGERTOKEN); /* ignore failures */
 	return reply;
 
+ err_abort_xts:
+	dprintf(D_L1, "Abort transaction\n");
+        while (!xs_transaction_end(xs, xts, true) && errno == EAGAIN)
+		dprintf(D_L0, "Restart of transaction requested\n");
  err_unwatch:
 	dprintf(D_L1, "Unwatch %s\n", opath);
-	xs_unwatch(xs, opath, XSTOKEN); /* ignore failures */
+	xs_unwatch(xs, opath, XSTRIGGERTOKEN); /* ignore failures */
  err_out:
 	return NULL;
 }
 
 int main(int argc, char **argv)
 {
-	struct xs_handle *xs_lock;
-	struct xs_handle *xs_com; /* work around for event queue:
-	                           * if we would use the same handle for
-	                           * everything, on the subsequent read_watches
-	                           * we get more events fired */
+	struct xs_handle *xs_com;
 	struct args args;
 	char *reply;
 	int ret;
@@ -472,17 +562,19 @@ int main(int argc, char **argv)
 
 	/* establish connection to xenstore */
 	dprintf(D_L1, "Connect to XenStore daemon\n");
-	xs_lock = xs_open(0);
-	if (!xs_lock)
-		dief("Could not establish connection to XenStore daemon\n");
 	xs_com = xs_open(0);
 	if (!xs_com)
 		dief("Could not establish connection to XenStore daemon\n");
 	if (cancel)
 		goto err_close_xs;
 
+	/* check if trigger is available */
+	ret = ctldir_has_trigger(xs_com, args.domid, args.scope, args.trigger);
+	if (ret < 0)
+		goto err_unlock;
+
 	/* try to get lock */
-	ret = ctldir_lock(xs_lock, args.domid, args.scope, args.nowait);
+	ret = ctldir_lock(xs_com, args.domid, args.scope, args.nowait);
 	if (ret < 0) { /* error happened */
 		dief("Failed to request lock\n");
 	} else if (ret == 0) { /* lock is held already */
@@ -492,11 +584,6 @@ int main(int argc, char **argv)
 		goto err_unlock;
 
 	/* -------------------------------------------------------------- */
-	/* check if trigger is available */
-	ret = ctldir_has_trigger(xs_com, args.domid, args.scope, args.trigger);
-	if (ret <= 0)
-		goto err_unlock;
-
 	/* trigger and wait for its reply (can not be canceled) */
 	reply = ctldir_trigger(xs_com, args.domid, args.scope, args.trigger, args.args);
 	if (!reply)
@@ -506,20 +593,18 @@ int main(int argc, char **argv)
 	/* -------------------------------------------------------------- */
 
 	/* unlock ctldir */
-	ret = ctldir_unlock(xs_lock, args.domid, args.scope);
+	ret = ctldir_unlock(xs_com, args.domid, args.scope);
 	if (!ret)
 		dief("Could not unlock \n");
 
 	xs_close(xs_com);
-	xs_close(xs_lock);
 	release_args(&args);
 	exit(EXIT_SUCCESS);
 
  err_unlock:
-	ctldir_unlock(xs_lock, args.domid, args.scope); /* ignore errors */
+	ctldir_unlock(xs_com, args.domid, args.scope); /* ignore errors */
  err_close_xs:
 	xs_close(xs_com);
-	xs_close(xs_lock);
  err_out:
 	exit(EXIT_FAILURE);
 }

@@ -1,20 +1,62 @@
 /*
- * Simple hash table implementation for MiniOS and POSIX
+ * Simple hash table implementation
  *
- * Copyright(C) 2013-204 NEC Laboratories Europe. All rights reserved.
- *                       Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, or the BSD license below:
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
-#ifdef __MINIOS__
+#if defined(__MINIOS__)
+#include <target/sys.h>
 #include <mini-os/os.h>
 #include <mini-os/types.h>
 #include <mini-os/xmalloc.h>
+#elif defined(__KERNEL__)
+#include <target/sys.h>
+#include <linux/types.h>
+#include <target/stubs.h>
+#include <asm/bug.h>
 #else
 #include <stdlib.h>
 #include <string.h>
+
+#define target_free(p) free(p)
+#define target_malloc(a, l) malloc(l)
 #endif
 
 #ifndef MIN_ALIGN
-#define MIN_ALIGN 8
+#define MIN_ALIGN ((size_t) 8)
 #endif
 
 #include "htable.h"
@@ -60,11 +102,7 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 	printf("ht_size  = %lu B\n", ht_size);
 #endif
 	/* allocate main htable struct */
-#ifdef __MINIOS__
-	ht = _xmalloc(ht_size, align);
-#else
-	ht = malloc(ht_size);
-#endif
+	ht = target_malloc(align, ht_size);
 	if (!ht) {
 		errno = ENOMEM;
 		goto err_out;
@@ -82,11 +120,7 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
 
 	/* allocate buckets */
 	for (i = 0; i < nb_bkts; ++i) {
-#ifdef __MINIOS__
-		bkt = _xmalloc(bkt_size, align);
-#else
-		bkt = malloc(bkt_size);
-#endif
+		bkt = target_malloc(align, bkt_size);
 		if (!bkt) {
 			errno = ENOMEM;
 			goto err_free_bkts;
@@ -118,18 +152,10 @@ struct htable *alloc_htable(uint32_t nb_bkts, uint32_t el_per_bkt, uint8_t hlen,
  err_free_bkts:
 	for (i = 0; i < nb_bkts; ++i) {
 		if (ht->b[i]) {
-#ifdef __MINIOS__
-			xfree(ht->b[i]);
-#else
-			free(ht->b[i]);
-#endif
+			target_free(ht->b[i]);
 		}
 	}
-#ifdef __MINIOS__
-	xfree(ht);
-#else
-	free(ht);
-#endif
+	target_free(ht);
  err_out:
 	return NULL;
 }
@@ -140,16 +166,8 @@ void free_htable(struct htable *ht)
 
 	for (i = 0; i < ht->nb_bkts; ++i) {
 		if (ht->b[i]) {
-#ifdef __MINIOS__
-			xfree(ht->b[i]);
-#else
-			free(ht->b[i]);
-#endif
+			target_free(ht->b[i]);
 		}
 	}
-#ifdef __MINIOS__
-	xfree(ht);
-#else
-	free(ht);
-#endif
+	target_free(ht);
 }

@@ -1,8 +1,37 @@
 /*
- * Simon's HashFS (SHFS) for Mini-OS
+ * MicroShell Tools for Simple hash filesystem (SHFS)
  *
- * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
- *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 #include <stdio.h>
 
@@ -49,10 +78,16 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 			strncpy(str_mime, hentry->f_attr.mime, sizeof(hentry->f_attr.mime));
 
 		/* hash */
-		if (shfs_vol.hlen <= 32)
-			fprintf(cio, "%-64s ", str_hash);
+		if (shfs_vol.hlen <= 8)
+			fprintf(cio, "?%-16s ", str_hash);
+		else if (shfs_vol.hlen <= 16)
+			fprintf(cio, "?%-32s ", str_hash);
+		else if (shfs_vol.hlen <= 32)
+			fprintf(cio, "?%-64s ", str_hash);
+		else if (shfs_vol.hlen <= 48)
+			fprintf(cio, "?%-96s ", str_hash);
 		else
-			fprintf(cio, "%-128s ", str_hash);
+			fprintf(cio, "?%-128s ", str_hash);
 
 		/* loc, size */
 		if (SHFS_HENTRY_ISLINK(hentry))
@@ -71,11 +106,11 @@ static int shcmd_shfs_ls(FILE *cio, int argc, char *argv[])
 		/* ltype, mime */
 		if (SHFS_HENTRY_ISLINK(hentry)) {
 			switch(hentry->l_attr.type) {
-			case SHFS_LTYPE_RELACLONE_MPEG:
-				fprintf(cio, "%5s ", "rlmpg");
+			case SHFS_LTYPE_RAW:
+				fprintf(cio, "%5s ", "raw");
 				break;
-			case SHFS_LTYPE_ABSCLONE:
-				fprintf(cio, "%5s ", "abscl");
+			case SHFS_LTYPE_AUTO:
+				fprintf(cio, "%5s ", "auto");
 				break;
 			default: /* SHFS_LTYPE_REDIRECT */
 				fprintf(cio, "%5s ", "redir");
@@ -155,11 +190,11 @@ static int shcmd_shfs_file(FILE *cio, int argc, char *argv[])
 				argv[i], strsbuf, shfs_fio_link_rport(f), strlbuf);
 
 			switch (shfs_fio_link_type(f)) {
-			case SHFS_LTYPE_RELACLONE_MPEG:
-				fprintf(cio, "relative clone (MPEG)");
+			case SHFS_LTYPE_RAW:
+				fprintf(cio, "relative clone (raw)");
 				break;
-			case SHFS_LTYPE_ABSCLONE:
-				fprintf(cio, "clone");
+			case SHFS_LTYPE_AUTO:
+				fprintf(cio, "relative clone (autodetect)");
 				break;
 			default: /* SHFS_LTYPE_REDIRECT */
 				fprintf(cio, "redirect");
@@ -530,10 +565,15 @@ int register_shfs_tools(void)
 		ctldir_register_shcmd(cd, "remount", shcmd_shfs_remount);
 		ctldir_register_shcmd(cd, "flush", shcmd_shfs_flush_cache);
 		ctldir_register_shcmd(cd, "prefetch", shcmd_shfs_prefetch_cache);
+		ctldir_register_shcmd(cd, "shfs-info", shcmd_shfs_info);
+		ctldir_register_shcmd(cd, "cache-info", shcmd_shfs_cache_info);
+		ctldir_register_shcmd(cd, "ls", shcmd_shfs_ls);
+		ctldir_register_shcmd(cd, "df", shcmd_shfs_dumpfile);
 	}
 #endif
 
 	/* shell commands (ignore errors) */
+#ifdef HAVE_SHELL
 #ifdef CAN_DETECT_BLKDEVS
 	shell_register_cmd("lsbd", shcmd_lsbd);
 #endif
@@ -550,6 +590,7 @@ int register_shfs_tools(void)
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
 #ifdef SHFS_CACHE_INFO
 	shell_register_cmd("cache-info", shcmd_shfs_cache_info);
+#endif
 #endif
 
 	return 0;

@@ -140,6 +140,7 @@ low_level_init(struct netif *netif)
     }
   }
 #endif /* Linux */
+  netif_set_link_up(netif);
 
   sprintf(buf, IFCONFIG_BIN IFCONFIG_ARGS,
            ip4_addr1(&(netif->gw)),

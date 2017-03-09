@@ -36,6 +36,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <limits.h>
+#include <inttypes.h>
 
 #define LWIP_TIMEVAL_PRIVATE 0
 
@@ -71,7 +72,7 @@ typedef unsigned long mem_ptr_t;
 #endif
 
 /* Compiler hints for packing structures */
-#define PACK_STRUCT_FIELD(x) x
+#define PACK_STRUCT_FIELD(_x) _x
 #define PACK_STRUCT_STRUCT __attribute__((packed))
 #define PACK_STRUCT_BEGIN
 #define PACK_STRUCT_END
@@ -80,13 +81,13 @@ typedef unsigned long mem_ptr_t;
 #include <stdio.h>
 #include <stdlib.h>
 /* Plaform specific diagnostic output */
-#define LWIP_PLATFORM_DIAG(x)	do {printf x;} while(0)
+#define LWIP_PLATFORM_DIAG(_x)	do {printf _x;} while(0)
 
 #ifdef LWIP_UNIX_EMPTY_ASSERT
-#define LWIP_PLATFORM_ASSERT(x)
+#define LWIP_PLATFORM_ASSERT(_x)
 #else
-#define LWIP_PLATFORM_ASSERT(x) do {printf("Assertion \"%s\" failed at line %d in %s\n", \
-                                     x, __LINE__, __FILE__); fflush(NULL); abort();} while(0)
+#define LWIP_PLATFORM_ASSERT(_x) do {printf("Assertion \"%s\" failed at line %d in %s\n", \
+                                     _x, __LINE__, __FILE__); fflush(NULL); abort();} while(0)
 #endif
 
 #define LWIP_RAND() ((u32_t)rand())

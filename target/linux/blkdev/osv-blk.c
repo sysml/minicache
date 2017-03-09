@@ -1,3 +1,39 @@
+/*
+ * OSv block I/O glue
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ *
+ */
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -32,12 +68,9 @@ struct blkdev *_open_bd_list = NULL;
 int blkdev_id_parse(const char *id, blkdev_id_t *out)
 {
   int ival, ret;
-
-  /* get absolute path of file */
-  if (realpath(id, *out) == NULL) {
-    printd("Could not resolve path %s\n", id);
-    return -errno;
-  }
+  strcpy(*out, id);
+  if (!*out)
+    return -ENOMEM;
   return 0;
 }
 
@@ -79,43 +112,22 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
   }  
 
   blkdev_id_cpy(bd->dev, id);
-  bd->fd = open(bd->dev, mode & (O_RDWR | O_WRONLY));
-  if (bd->fd < 0) {
-    printd("Could not open %s\n", bd->dev);
+  err = device_open(bd->dev, mode & (O_RDWR | O_WRONLY), &bd->fd);
+  if (err != 0) {
+    printd("Could not open %s: %s\n", bd->dev, strerror(err));
     goto err_free_bd;
   }
-
-  if (fstat(bd->fd, &bd->fd_stat) == -1) {
-    printd("Could not retrieve stats from %s\n", bd->dev);
-    goto err_close_fd;
-  }
-  if (!S_ISBLK(bd->fd_stat.st_mode) && !S_ISREG(bd->fd_stat.st_mode)) {
-    printd("%s is not a block device or a regular file\n", bd->dev);
+  if (!(bd->fd->flags & D_BLK)) {
+    printd("%s is not a block device\n", bd->dev);
     errno = ENOTBLK;
     goto err_close_fd;
   }
 
   /* get device sector size in bytes */
-  bd->ssize = bd->fd_stat.st_blksize;
-  printd("%s has a block size of %"PRIu32" bytes\n", bd->dev, bd->ssize);
+  bd->ssize = 512;
+  /* get device size in sectors */
+  bd->size = bd->fd->size / bd->ssize;
 
-  /* get device size in bytes */
-  if (S_ISBLK(bd->fd_stat.st_mode)) {
-    err = ioctl(bd->fd, BLKGETSIZE64, &bd->size);
-    if (err) {
-      unsigned long size32;
-
-      printd("BLKGETSIZE64 failed. Trying BLKGETSIZE\n");
-      err = ioctl(bd->fd, BLKGETSIZE, &size32);
-      if (err) {
-	printd("Could not query device size from %s\n", bd->dev);
-	goto err_close_fd;
-      }
-      bd->size = ((uint64_t) size32) / bd->ssize;
-    }
-  } else {
-    bd->size = ((uint64_t) bd->fd_stat.st_size) / bd->ssize;
-  }
   printd("%s has a size of %"PRIu64" bytes\n", bd->dev, (uint64_t) (bd->size * bd->ssize));
 
   bd->reqpool = alloc_simple_mempool(MAX_REQUESTS, sizeof(struct _blkdev_req));
@@ -140,7 +152,7 @@ struct blkdev *open_blkdev(blkdev_id_t id, int mode)
  err_free_reqpool:
   free_mempool(bd->reqpool);
  err_close_fd:
-  close(bd->fd);
+  device_close(bd->fd);
  err_free_bd:
   free(bd);
  err:
@@ -162,7 +174,7 @@ void close_blkdev(struct blkdev *bd)
     /* TODO: check for enqueued IO */
 
     free_mempool(bd->reqpool);
-    close(bd->fd);
+    device_close(bd->fd);
     free(bd);
   }
 }
@@ -174,13 +186,18 @@ static inline void _blkdev_finalize_req(struct _blkdev_req *req)
 
   robj = req->p_obj;
 
-  printd("Finalizing request %p\n", req);
-  ret = (aio_return(&req->aiocb) == req->aiocb.aio_nbytes) ? 0 : -1;
+  printd("Finalizing request %p (bio %p)\n", req, req->bio);
+  ret = (req->bio->bio_flags & BIO_ERROR) ? -EIO : 0;
+  destroy_bio(req->bio);
+  req->bio = NULL;
+
   if (req->cb)
     req->cb(ret, req->cb_argp); /* user callback */
 
   mempool_put(robj);
 }
+
+extern int bio_isdone(struct bio *bio);
 
 void blkdev_poll_req(struct blkdev *bd)
 {
@@ -191,9 +208,10 @@ void blkdev_poll_req(struct blkdev *bd)
   while (req) {
     req_next = req->_next;
     
-    printd("Checking request %p for completion\n", req);
-    if (aio_error(&req->aiocb) != EINPROGRESS) {
-      /* aio has completed
+    printd("Checking request %p (bio %p) for completion\n", req, req->bio);
+    //ret = bio_wait(bio);
+    if (bio_isdone(req->bio)) {
+      /* io has completed
        * dequeue it from list and finalize it */
       if (req->_next)
 	req->_next->_prev = req->_prev;
@@ -203,12 +221,13 @@ void blkdev_poll_req(struct blkdev *bd)
 	req->_prev->_next = req->_next;
       else
 	bd->reqq_head = req->_next;
-      
+
       _blkdev_finalize_req(req);
     }
 
     req = req_next;
   }
+  //printd("Done with checking for completion\n");
 }
 
 void _blkdev_sync_io_cb(int ret, void *argp)

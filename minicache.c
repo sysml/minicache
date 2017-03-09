@@ -1,3 +1,39 @@
+/*
+ * MiniCache Initialization & Event Loop
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ */
+
 #include <target/sys.h>
 #include <target/netdev.h>
 
@@ -19,12 +55,16 @@
 #include <lwip/ip_frag.h>
 #include <lwip/init.h>
 #include <lwip/stats.h>
+#ifdef CONFIG_LWIP_IPDEV
+#include <lwip/ip.h>
+#endif
 
 #include "likely.h"
 #include "mempool.h"
 #include "http.h"
 #ifdef HAVE_SHELL
 #include "shell.h"
+#include "shell_extras.h"
 #endif
 #include "shfs.h"
 #include "shfs_tools.h"
@@ -66,29 +106,18 @@
 
 /* boot time tracing helper */
 #ifdef TRACE_BOOTTIME
-#ifndef __MINIOS__
-#define TT_DECLARE(var) struct timeval (var) = { 0 }
-#define TT_START(var) gettimeofday(&(var), NULL)
-#define TT_END(var) \
-  do {						\
-    struct timeval now;			\
-						\
-    gettimeofday(&now, NULL);			\
-    TV_SUB(&(var), &now, &(var));		\
-  } while(0)
-#define TT_PRINT(desc, var)			\
-  printk(" %-32s: %ld.%06lds\n",		\
-    (desc), (var).tv_sec, (var).tv_usec);
-#else /*__MINIOS__ */
 #define TT_DECLARE(var) uint64_t (var) = 0
-#define TT_START(var) do { (var) = NOW(); } while(0)
-#define TT_END(var) do { (var) = (NOW() - (var)); } while(0)
+#define TT_START(var) do { (var) = target_now_ns(); } while(0)
+#define TT_END(var) do { (var) = (target_now_ns() - (var)); } while(0)
 #define TT_PRINT(desc, var)			\
   printk(" %-32s: %"PRIu64".%06"PRIu64"s\n",		\
 	 (desc),				\
 	 (var) / 1000000000l,			\
 	 ((var) / 1000l) % 1000000l);
-#endif /*__MINIOS__ */
+
+#ifdef CONFIG_AUTOMOUNT
+extern uint64_t shfs_tt_vbdopen;
+#endif
 #else /* TRACE_BOOTTIME */
 #define TT_DECLARE(var) while(0) {}
 #define TT_START(var) while(0) {}
@@ -146,6 +175,84 @@ static inline void minder_print(void)
 }
 #endif /* CONFIG_MINDER_PRINT */
 
+#ifdef CONFIG_DEBUG_PRINT
+#define DEBUG_INTERVAL 1000
+
+#if LWIP_STATS_DISPLAY
+#include <lwip/stats.h>
+#endif
+static inline void debug_print(void)
+{
+    static unsigned int debug_step = 0;
+    static int sys_cfd = -1;
+    static FILE *sys_cio;
+#if LWIP_STATS_DISPLAY && MEMP_STATS
+    char * memp_names[] = {
+#define LWIP_MEMPOOL(name,num,size,desc) desc,
+#include <lwip/memp_std.h>
+    };
+    s16_t i;
+#endif
+
+    /* open system in/out device on first call */
+    if (unlikely(sys_cfd < 0)) {
+#ifdef __MINIOS__
+        sys_cfd = open("/var/log/", O_RDWR); /* workaround to
+					      * access stdin/stdout */
+	if (sys_cfd < 0) {
+            printk("Could not open sysin/sysout\n");
+	    return;
+        }
+	sys_cio = fdopen(sys_cfd, "r+");
+#else
+	sys_cfd = 0;
+	sys_cio = stdin; /* FIXME */
+#endif
+    }
+
+    printk("DEBUG[%u] --->>>\n", debug_step++);
+#if LWIP_STATS_DISPLAY
+#if LINK_STATS
+    printk("lwip.link.drop:   %"STAT_COUNTER_F"\n", lwip_stats.link.drop);
+    printk("lwip.link.memerr: %"STAT_COUNTER_F"\n", lwip_stats.link.memerr);
+    printk("lwip.link.err:    %"STAT_COUNTER_F"\n", lwip_stats.link.err);
+#endif
+#if IP_STATS
+    printk("lwip.ip.drop:     %"STAT_COUNTER_F"\n", lwip_stats.ip.drop);
+    printk("lwip.ip.memerr:   %"STAT_COUNTER_F"\n", lwip_stats.ip.memerr);
+    printk("lwip.ip.err:      %"STAT_COUNTER_F"\n", lwip_stats.ip.err);
+#endif
+#if TCP_STATS
+    printk("lwip.tcp.drop:    %"STAT_COUNTER_F"\n", lwip_stats.tcp.drop);
+    printk("lwip.tcp.memerr:  %"STAT_COUNTER_F"\n", lwip_stats.tcp.memerr);
+    printk("lwip.tcp.err:     %"STAT_COUNTER_F"\n", lwip_stats.tcp.err);
+#endif
+#if MEMP_STATS
+    for (i = 0; i < MEMP_MAX; i++) {
+      printk("lwip.memp.%s.err: %"U32_F"\n", memp_names[i], lwip_stats.memp[i].err);
+    }
+#endif
+#endif /* LWIP_STATS_DISPLAY */
+
+#if SHFS_CACHE_STATS
+    printk("shfs.cache.hit:      %"PRIu32"\n", shfs_cache_stat_get(hit));
+    printk("shfs.cache.hit+wait: %"PRIu32"\n", shfs_cache_stat_get(hitwait));
+    printk("shfs.cache.rdahead:  %"PRIu32"\n", shfs_cache_stat_get(rdahead));
+    printk("shfs.cache.miss:     %"PRIu32"\n", shfs_cache_stat_get(miss));
+    printk("shfs.cache.blank:    %"PRIu32"\n", shfs_cache_stat_get(blank));
+    printk("shfs.cache.evict:    %"PRIu32"\n", shfs_cache_stat_get(evict));
+    printk("shfs.cache.memerr:   %"PRIu32"\n", shfs_cache_stat_get(memerr));
+    printk("shfs.cache.iosuc:    %"PRIu32"\n", shfs_cache_stat_get(iosuc));
+    printk("shfs.cache.ioerr:    %"PRIu32"\n", shfs_cache_stat_get(ioerr));
+#endif /* SHFS_CACHE_STATS */
+
+#ifdef HTTP_INFO
+    shcmd_http_info(sys_cio, 0, NULL);
+#endif
+    printk("---<<<\n");
+}
+#endif /* CONFIG_DEBUG_PRINT */
+
 #define MAX_NB_STATIC_ARP_ENTRIES 6
 
 /**
@@ -154,11 +261,13 @@ static inline void minder_print(void)
 struct mcargs {
     int             dhclient;
     struct eth_addr mac;
-    struct ip_addr  ip;
-    struct ip_addr  mask;
-    struct ip_addr  gw;
-    struct ip_addr  dns0;
-    struct ip_addr  dns1;
+    ip4_addr_t      ip;
+    ip4_addr_t      mask;
+    ip4_addr_t      gw;
+#if LWIP_DNS
+    ip4_addr_t      dns0;
+    ip4_addr_t      dns1;
+#endif
     unsigned int    nb_http_sess;
 
     int             bd_detect;
@@ -173,7 +282,7 @@ struct mcargs {
 
     /* static arp entries can only be added if DHCP is disabled */
     struct {
-	    struct ip_addr  ip;
+	    ip4_addr_t ip;
 	    struct eth_addr mac;
     } sarp_entry[MAX_NB_STATIC_ARP_ENTRIES];
     unsigned int    nb_sarp_entries;
@@ -203,7 +312,7 @@ static int parse_args_setval_cut(char delimiter, char **out_presnip, char **out_
 	return -1; /* delimiter not found */
 }
 
-static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *out_mask, const char *buf)
+static int parse_args_setval_ipv4cidr(ip4_addr_t *out_ip, ip4_addr_t *out_mask, const char *buf)
 {
 	int ip0, ip1, ip2, ip3;
 	int rprefix;
@@ -233,7 +342,7 @@ static int parse_args_setval_ipv4cidr(struct ip_addr *out_ip, struct ip_addr *ou
 	return 0;
 }
 
-static int parse_args_setval_ipv4(struct ip_addr *out, const char *buf)
+static int parse_args_setval_ipv4(ip4_addr_t *out, const char *buf)
 {
 	int ip0, ip1, ip2, ip3;
 
@@ -288,8 +397,10 @@ static int parse_args(int argc, char *argv[])
     IP4_ADDR(&args.ip,   192, 168, 128, 124);
     IP4_ADDR(&args.mask, 255, 255, 255, 252);
     IP4_ADDR(&args.gw,     0,   0,   0,   0);
+#if LWIP_DNS
     IP4_ADDR(&args.dns0,   0,   0,   0,   0);
     IP4_ADDR(&args.dns1,   0,   0,   0,   0);
+#endif
     args.nb_bds = 0;
     args.stats_bd = 0; /* disable stats bd */
 #ifdef CAN_DETECT_BLKDEVS
@@ -300,13 +411,16 @@ static int parse_args(int argc, char *argv[])
     args.dhclient = 1; /* dhcp as default */
     args.startup_delay = 0;
     args.no_ctldir = 0;
-    args.nb_http_sess = 500;
-#if ((100 + 4) > MEMP_NUM_TCP_PCB)
-    #error "MEMP_NUM_TCP_PCB has to be set at least to 104"
+    args.nb_http_sess = CONFIG_LWIP_NUM_TCPCON;
+#if (!MEMP_MEM_MALLOC) && ((CONFIG_LWIP_NUM_TCPCON) < (MEMP_NUM_TCP_PCB))
+    #error "MEMP_NUM_TCP_PCB has to be a least CONFIG_LWIP_NUM_TCPCON"
 #endif
     args.nb_sarp_entries = 0;
     while ((opt = getopt(argc, argv,
-                         "s:i:g:d:b:hc:a:"
+                         "s:i:g:b:hc:a:"
+#if LWIP_DNS
+                         "d:e:"
+#endif
 #ifdef SHFS_STATS
                          "x:"
 #endif
@@ -335,6 +449,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
               }
               break;
+#if LWIP_DNS
          case 'd': /* dns0 */
 	      ret = parse_args_setval_ipv4(&args.dns0, optarg);
 	      if (ret < 0) {
@@ -349,6 +464,7 @@ static int parse_args(int argc, char *argv[])
 	           return -1;
               }
               break;
+#endif
          case 'a': /* static arp entry */
 	      if (args.nb_sarp_entries == (MAX_NB_STATIC_ARP_ENTRIES - 1)) {
 		   printk("At most %d static ARP entries can be specified\n",
@@ -412,9 +528,9 @@ static int parse_args(int argc, char *argv[])
 #endif
          case 'c': /* number of http connections */
 	      ret = parse_args_setval_int(&ival, optarg);
-	      if (ret < 0 || ival < 1 || ival > MEMP_NUM_TCP_PCB - 4) {
+	      if (ret < 0 || ival < 1 || ival > CONFIG_LWIP_NUM_TCPCON) {
 		      printk("at most %u http connections supported\n",
-		             MEMP_NUM_TCP_PCB - 4);
+		             CONFIG_LWIP_NUM_TCPCON);
 	           return -1;
 	      }
 	      args.nb_http_sess = ival;
@@ -517,6 +633,9 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
     uint64_t ts_minder = 0;
 #endif /* CONFIG_MINDER_PRINT */
+#ifdef CONFIG_DEBUG_PRINT
+    uint64_t ts_debug = 0;
+#endif /* CONFIG_DEBUG_PRINT */
     TT_DECLARE(tt_boot);
     TT_DECLARE(tt_netifadd);
     TT_DECLARE(tt_lwipinit);
@@ -547,7 +666,7 @@ int main(int argc, char *argv[])
     printk("%61s\n", ""CONFIG_BANNER_VERSION"");
 #endif
     printk("\n");
-    printk("Copyright(C) 2013-2015 NEC Europe Ltd.\n");
+    printk("Copyright(C) 2013-2017 NEC Europe Ltd., NEC Corporation.\n");
     printk("Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
@@ -588,34 +707,6 @@ int main(int argc, char *argv[])
 #endif
 
     /* -----------------------------------
-     * detect available block devices
-     * ----------------------------------- */
-#ifdef CAN_DETECT_BLKDEVS
-    if (args.bd_detect) {
-	    printk("Detecting block devices...\n");
-	    TT_START(tt_bddetect);
-	    args.nb_bds = detect_blkdevs(args.bd_id, sizeof(args.bd_id));
-	    TT_END(tt_bddetect);
-    }
-#endif
-
-    /* -----------------------------------
-     * filesystem initialization & automount
-     * ----------------------------------- */
-    printk("Loading SHFS...\n");
-    init_shfs();
-#ifdef CONFIG_AUTOMOUNT
-    if (args.nb_bds) {
-	    printk("Automount cache filesystem...\n");
-	    TT_START(tt_automount);
-	    ret = mount_shfs(args.bd_id, args.nb_bds);
-	    TT_END(tt_automount);
-	    if (ret < 0)
-		    printk("Warning: Could not find or mount a cache filesystem\n");
-    }
-#endif
-
-    /* -----------------------------------
      * lwIP initialization
      * ----------------------------------- */
     printk("Starting networking...\n");
@@ -630,13 +721,21 @@ int main(int argc, char *argv[])
     /* -----------------------------------
      * network interface initialization
      * ----------------------------------- */
+    printk("Initialize network interface: ");
+    if (args.dhclient)
+      printk("DHCP...\n");
+    else
+      printk("%u.%u.%u.%u netmask %u.%u.%u.%u gw %u.%u.%u.%u...\n",
+             ip4_addr1(&args.ip),   ip4_addr2(&args.ip),   ip4_addr3(&args.ip),   ip4_addr4(&args.ip),
+	     ip4_addr1(&args.mask), ip4_addr2(&args.mask), ip4_addr3(&args.mask), ip4_addr4(&args.mask),
+	     ip4_addr1(&args.gw),   ip4_addr2(&args.gw),   ip4_addr3(&args.gw),   ip4_addr4(&args.gw));
     TT_START(tt_netifadd);
     /* NOTE: IP-level devices are currently only
      * supported in non-threaded env */
 #ifdef CONFIG_LWIP_NOTHREADS
 #ifdef CONFIG_LWIP_IPDEV
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
-                      target_netif_init, ip_input);
+                      target_netif_init, ip4_input);
 #else
     niret = netif_add(&netif, &args.ip, &args.mask, &args.gw, NULL,
                       target_netif_init, ethernet_input);
@@ -706,16 +805,50 @@ int main(int argc, char *argv[])
     }
 
     /* -----------------------------------
+     * detect available block devices
+     * ----------------------------------- */
+#ifdef CAN_DETECT_BLKDEVS
+    if (args.bd_detect) {
+	    printk("Detecting block devices...\n");
+	    TT_START(tt_bddetect);
+	    args.nb_bds = detect_blkdevs(args.bd_id, sizeof(args.bd_id));
+	    TT_END(tt_bddetect);
+    }
+#endif
+
+    /* -----------------------------------
+     * filesystem initialization & automount
+     * ----------------------------------- */
+    printk("Loading SHFS...\n");
+    init_shfs();
+#ifdef CONFIG_AUTOMOUNT
+    if (args.nb_bds) {
+	    printk("Automount cache filesystem...\n");
+	    TT_START(tt_automount);
+	    ret = mount_shfs(args.bd_id, args.nb_bds);
+	    TT_END(tt_automount);
+	    if (ret < 0)
+		    printk("Warning: Could not find or mount a cache filesystem\n");
+    }
+#endif
+
+    /* -----------------------------------
      * service initialization
      * ----------------------------------- */
 #ifdef HAVE_SHELL
     printk("Starting shell...\n");
     init_shell(0, 4); /* no local session + 4 telnet sessions */
+#ifdef HAVE_CTLDIR
+    register_shell_extras(cd); /* Note: cd might be NULL */
+#else
+    register_shell_extras();
+#endif
 #endif
     printk("Starting HTTP server (max number of connections: %u)...\n",
            args.nb_http_sess);
     init_http(args.nb_http_sess,
-              args.nb_http_sess + args.nb_http_sess / 2);
+              args.nb_http_sess << 1); /* nb reqs have to be at least double to
+					* ensure all connections can be used simultaneously */
 
     /* add custom commands to the shell */
 #ifdef HAVE_SHELL
@@ -797,10 +930,13 @@ int main(int argc, char *argv[])
     TT_PRINT("lwip initialization", tt_lwipinit);
     TT_PRINT("vif addition", tt_netifadd);
     if (args.bd_detect)
-	    TT_PRINT("virtual block device detection", tt_bddetect);
+	    TT_PRINT("vbd detection", tt_bddetect);
 #ifdef CONFIG_AUTOMOUNT
-    if (args.nb_bds)
+    if (args.nb_bds) {
+	    tt_automount -= shfs_tt_vbdopen;
+	    TT_PRINT("vbd open", shfs_tt_vbdopen);
 	    TT_PRINT("file system mount time", tt_automount);
+    }
 #endif
 #ifdef SHFS_STATS
     if (args.stats_bd)
@@ -859,7 +995,7 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_LWIP_NOTHREADS */
 
 #if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
-        ts_now  = NSEC_TO_MSEC(NOW());
+        ts_now  = NSEC_TO_MSEC(target_now_ns());
 	ts_till = UINT64_MAX;
 #endif
 #ifdef CONFIG_LWIP_NOTHREADS
@@ -878,7 +1014,10 @@ int main(int argc, char *argv[])
 #ifdef CONFIG_MINDER_PRINT
         TIMED(ts_now, ts_till, ts_minder,  MINDER_INTERVAL,  minder_print());
 #endif /* CONFIG_MINDER_PRINT */
-#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT
+#ifdef CONFIG_DEBUG_PRINT
+        TIMED(ts_now, ts_till, ts_debug,  DEBUG_INTERVAL,  debug_print());
+#endif /* CONFIG_DEBUG_PRINT */
+#if defined CONFIG_LWIP_NOTHREADS || defined CONFIG_MINDER_PRINT || defined CONFIG_DEBUG_PRINT
         ts_to = ts_till - ts_now;
 #endif
 

@@ -1,9 +1,39 @@
 /*
- * MicroShell (µSh) for Mini-OS
+ * MicroShell (µSh)
  *
- * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
- *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
+
 #if defined linux || defined __OSV__
 #define USE_FOPENCOOKIE
 #endif
@@ -88,6 +118,11 @@ typedef int err_t;
        __a < __b ? __a : __b; })
 #endif
 
+#ifndef min3
+#define min3(a, b, c) \
+    min(min((a), (b)), (c))
+#endif
+
 struct shell {
     struct tcp_pcb *tpcb;
     struct timeval ts_start;
@@ -157,31 +192,19 @@ static struct shell *sh = NULL; /* will be initialized first */
 
 static int shcmd_info(FILE *cio, int argc, char *argv[]);
 static int shcmd_help(FILE *cio, int argc, char *argv[]);
-static int shcmd_echo(FILE *cio, int argc, char *argv[]);
 static int shcmd_xargs(FILE *cio, int argc, char *argv[]);
 static int shcmd_sexec(FILE *cio, int argc, char *argv[]);
 static int shcmd_clear(FILE *cio, int argc, char *argv[]);
-static int shcmd_time(FILE *cio, int argc, char *argv[]);
 static int shcmd_repeat(FILE *cio, int argc, char *argv[]);
+static int shcmd_time(FILE *cio, int argc, char *argv[]);
 static int shcmd_uptime(FILE *cio, int argc, char *argv[]);
-static int shcmd_date(FILE *cio, int argc, char *argv[]);
 static int shcmd_who(FILE *cio, int argc, char *argv[]);
 static int shcmd_exit(FILE *cio, int argc, char *argv[]);
 #ifdef SHELL_DEBUG
 static int shcmd_args(FILE *cio, int argc, char *argv[]);
 #endif
-#ifdef __MINIOS__
-static int shcmd_free(FILE *cio, int argc, char *argv[]);
-#endif
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-static int shcmd_mallinfo(FILE *cio, int argc, char *argv[]);
-#endif
-#ifdef HAVE_LWIP
-static int shcmd_ifconfig(FILE *cio, int argc, char *argv[]);
-#if LWIP_STATS_DISPLAY
-static int shcmd_lwipstats(FILE *cio, int argc, char *argv[]);
-#endif
-#endif
+static int shcmd_date(FILE *cio, int argc, char *argv[]);
+static int shcmd_echo(FILE *cio, int argc, char *argv[]);
 
 static err_t shlsess_accept(void);
 static void  shlsess_close (struct shell_sess *sess);
@@ -252,18 +275,6 @@ int init_shell(unsigned int en_lsess, unsigned int nb_rsess)
     shell_register_cmd("repeat", shcmd_repeat);
     shell_register_cmd("uptime", shcmd_uptime);
     shell_register_cmd("date",   shcmd_date);
-#ifdef __MINIOS__
-    shell_register_cmd("free",   shcmd_free);
-#endif
-#if defined HAVE_LIBC && !(defined __MINIOS__ && defined CONFIG_ARM)
-    shell_register_cmd("mallinfo",shcmd_mallinfo);
-#endif
-#ifdef HAVE_LWIP
-    shell_register_cmd("ifconfig",shcmd_ifconfig);
-#if LWIP_STATS_DISPLAY
-    shell_register_cmd("lwip-stats",shcmd_shcmd_lwipstats);
-#endif
-#endif
 #ifdef SHELL_DEBUG
     shell_register_cmd("args",   shcmd_args);
 #endif
@@ -732,47 +743,66 @@ retry:
 #ifdef USE_FOPENCOOKIE
 static ssize_t shrsess_cio_write(void *argp, const char *buf, size_t len)
 #else
-static int shrsess_cio_write(void *argp, const char *buf, int len)
+static int shrsess_cio_write(void *argp, const char *buf, size_t len)
 #endif
 {
     struct shell_sess *sess = argp;
+    struct tcp_pcb *pcb = sess->tpcb;
+    register size_t l, s;
     err_t err = ERR_OK;
-    int i = 0;
-    uint16_t avail, sendlen;
+    u16_t slen;
 
-    printd("%s: Sending %d bytes to client...\n", sess->name, len);
-    while (i < len) {
-	    while((avail = tcp_sndbuf(sess->tpcb)) < 1) {
-		    if (sess->state == SSS_CLOSING ||
-		        sess->state == SSS_KILLING)
-			    return (ssize_t) len;
+    s = 0;
+    l = len;
+    err = ERR_OK;
 
-		    /* flush tcp buffer and retry it later */
-		    tcp_output(sess->tpcb);
-		    schedule();
+    if (sess->state == SSS_CLOSING ||
+	sess->state == SSS_KILLING)
+      return (ssize_t) len;
 
-		    if (sess->state == SSS_CLOSING ||
-		        sess->state == SSS_KILLING)
-			    return (ssize_t) len;
-	    }
+ try_next:
+    slen = (u16_t) min3(l, tcp_sndbuf(pcb), UINT16_MAX);
+    if (slen == 0)
+      goto out;
+    printd("%s: Sending %d bytes to client...\n", sess->name, slen);
 
-	    sendlen = min(avail, (uint16_t) (len - i));
-	    err = tcp_write(sess->tpcb, buf + i, sendlen, TCP_WRITE_FLAG_COPY);
-	    if (err == ERR_MEM) {
-		    /* retry later because of high memory pressure */
-		    schedule();
-
-		    if (sess->state == SSS_CLOSING ||
-		        sess->state == SSS_KILLING)
-			    return (ssize_t) len;
-		    continue;
-	    }
-	    i += sendlen;
-	    tcp_output(sess->tpcb);
+ try_again:
+    printd("tcp_write(buf=@%p, slen=%"PRIu16", left=%"PRIu64", sndbuf=%"PRIu32", sndqueuelen=%"PRIu16")\n",
+	   buf, slen, l, (u32_t) tcp_sndbuf(pcb), (u16_t) tcp_sndqueuelen(pcb));
+    err = tcp_write(pcb, buf, slen, TCP_WRITE_FLAG_COPY | (l > 0 ? TCP_WRITE_FLAG_MORE : 0x0));
+    if (unlikely(err == ERR_MEM)) {
+      if (slen <= 1 || !tcp_sndbuf(pcb) ||
+		    (tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN)) {
+	/* retry later because of high memory pressure */
+	goto out;
+      } else {
+	printd("tcp_write returned memory error, retry with half send length\n", err);
+	slen >>= 1; /* l /= 2 */
+	goto try_again;
+      }
     }
-    printd("%s: Sending done (%d bytes)\n", sess->name, len);
+    if (likely(err == ERR_OK)) {
+      s += slen;
+      l -= slen;
+      if (l > 0) {
+	buf = (const void *) ((uintptr_t) buf + slen);
+	goto try_next;
+      }
+    }
+ out:
+    if (s < len) {
+      printd("Sent %"PRIu64"/%"PRIu64" bytes, try again later\n", (uint64_t) s, (uint64_t) len);
+      schedule(); /* TODO: block & unblock */
 
-    return len;
+      if (sess->state == SSS_CLOSING ||
+	  sess->state == SSS_KILLING)
+	return (ssize_t) len;
+      goto try_next;
+    }
+
+    tcp_output(pcb);
+    printd("Sent %"PRIu64"/%"PRIu64" bytes\n", (uint64_t) s, (uint64_t) len);
+    return (ssize_t) s;
 }
 
 static err_t shrsess_accept(void *argp, struct tcp_pcb *new_tpcb, err_t err)
@@ -1184,26 +1214,32 @@ static int shcmd_repeat(FILE *cio, int argc, char *argv[])
     /* run a shell command multiple times */
     int ret = 0;
     int32_t cmdi;
-    unsigned int arg_times, arg_delay;
+    unsigned int arg_times, arg_delay, arg_clear;
     int do_delay = 0;
 
-    if (argc <= 3)
+    if (argc <= 4)
 	goto usage;
     if (sscanf(argv[1], "%u", &arg_times) != 1)
         goto usage;
     if (sscanf(argv[2], "%u", &arg_delay) != 1)
 	goto usage;
-    cmdi = shell_get_cmd_index(argv[3]);
+    if (sscanf(argv[3], "%u", &arg_clear) != 1)
+	goto usage;
+
+    cmdi = shell_get_cmd_index(argv[4]);
     if (cmdi < 0) {
-        fprintf(cio, "%s: command not found\n", argv[3]);
+        fprintf(cio, "%s: command not found\n", argv[4]);
         return 0;
     }
 
+    if (arg_times != 0 && arg_clear)
+        shcmd_clear(cio, 0, NULL);
     while (arg_times != 0 && ret >= 0 && ret != SH_CLOSE) {
 	if (do_delay)
 	    msleep(arg_delay);
-	shcmd_clear(cio, 0, NULL);
-	ret = sh->cmd_func[cmdi](cio, argc - 3, &argv[3]);
+	if (arg_clear && (arg_times % arg_clear == 0))
+	    shcmd_clear(cio, 0, NULL);
+	ret = sh->cmd_func[cmdi](cio, argc - 4, &argv[4]);
 	fflush(cio);
 	do_delay = 1;
 	--arg_times;
@@ -1211,7 +1247,7 @@ static int shcmd_repeat(FILE *cio, int argc, char *argv[])
     return ret;
 
  usage:
-    fprintf(cio, "Usage: %s [times] [delay-ms] [command] [[args]]...\n", argv[0]);
+    fprintf(cio, "Usage: %s [times] [delay-ms] [clear] [command] [[args]]...\n", argv[0]);
     return -1;
 }
 
@@ -1228,205 +1264,4 @@ static int shcmd_args(FILE *cio, int argc, char *argv[])
     }
     return 0;
 }
-#endif
-
-#if defined __MINIOS__
-#include <mini-os/mm.h>
-
-static int shcmd_free(FILE *cio, int argc, char *argv[])
-{
-    uint64_t base;
-    char mode = 'm';
-
-    /* parsing */
-    base = 1;
-    if (argc == 2) {
-	    if (strcmp(argv[1], "-k") == 0)
-		    base = 1024;
-	    else if (strcmp(argv[1], "-m") == 0)
-		    base = 1024 * 1024;
-	    else if (strcmp(argv[1], "-g") == 0)
-		    base = 1024 * 1024 * 1024;
-	    else if (strcmp(argv[1], "-p") == 0)
-		    mode = 'p';
-	    else if (strcmp(argv[1], "-u") == 0)
-		    mode = 'u';
-	    else
-		    goto usage;
-    } else if (argc > 2) {
-	    goto usage;
-    }
-
-    /* output */
-    switch (mode) {
-    case 'u': /* base units */
-        fprintf(cio, "Page size: %5lu KiB\nStack size: %4lu KiB\n",
-                PAGE_SIZE / 1024,
-                STACK_SIZE / 1024);
-        break;
-
-    case 'p': /* pages */
-        do {
-	    uint64_t total_p     = arch_mem_size() >> PAGE_SHIFT;
-	    uint64_t free_p      = mm_free_pages();
-	    uint64_t reserved_p  = arch_reserved_mem() >> PAGE_SHIFT;
-	    uint64_t allocated_p = mm_total_pages() - free_p;
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-	    uint64_t heap_p      = mm_heap_pages();
-	    allocated_p       -= heap_p; /* excludes heap pages from page allocator */
-#endif
-
-	    fprintf(cio, "       ");
-	    fprintf(cio, "%12s ", "total");
-	    fprintf(cio, "%12s ", "reserved");
-	    fprintf(cio, "%12s ", "allocated");
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12s ", "heap");
-#endif
-	    fprintf(cio, "%12s\n", "free");
-
-	    fprintf(cio, "Pages: ");
-	    fprintf(cio, "%12"PRIu64" ", total_p);
-	    fprintf(cio, "%12"PRIu64" ", reserved_p);
-	    fprintf(cio, "%12"PRIu64" ", allocated_p);
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12"PRIu64" ", heap_p);
-#endif
-	    fprintf(cio, "%12"PRIu64"\n", free_p);
-        } while(0);
-        break;
-    default: /* mem */
-        do {
-	    uint64_t total_s     = arch_mem_size();
-	    uint64_t free_s      = mm_free_pages() << PAGE_SHIFT;
-	    uint64_t other_s     = arch_reserved_mem();
-	    uint64_t text_s      = ((uint64_t) &_erodata - (uint64_t) &_text);  /* text and read only data sections */
-	    uint64_t data_s      = ((uint64_t) &_edata - (uint64_t) &_erodata); /* rw data section */
-	    uint64_t bss_s       = ((uint64_t) &_end - (uint64_t) &_edata); /* bss section */
-	    uint64_t allocated_s = (mm_total_pages() - mm_free_pages()) << PAGE_SHIFT;
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-	    uint64_t heap_s      = mm_heap_pages() << PAGE_SHIFT;
-	    allocated_s       -= heap_s; /* excludes heap pages from page allocator */
-#endif
-	    other_s -= text_s + data_s + bss_s;
-
-	    fprintf(cio, "       ");
-	    fprintf(cio, "%12s ", "total");
-	    fprintf(cio, "%12s ", "text");
-	    fprintf(cio, "%12s ", "data");
-	    fprintf(cio, "%12s ", "bss");
-	    fprintf(cio, "%12s ", "other");
-	    fprintf(cio, "%12s ", "allocated");
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12s ", "heap");
-#endif
-	    fprintf(cio, "%12s\n", "free");
-
-	    fprintf(cio, "Mem:   ");
-	    fprintf(cio, "%12"PRIu64" ", total_s / base);
-	    fprintf(cio, "%12"PRIu64" ", text_s / base);
-	    fprintf(cio, "%12"PRIu64" ", data_s / base);
-	    fprintf(cio, "%12"PRIu64" ", bss_s / base);
-	    fprintf(cio, "%12"PRIu64" ", other_s / base);
-	    fprintf(cio, "%12"PRIu64" ", allocated_s / base);
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-	    fprintf(cio, "%12"PRIu64" ", heap_s / base);
-#endif
-	    fprintf(cio, "%12"PRIu64"\n", free_s /base);
-        } while(0);
-        break;
-    }
-    return 0;
-
- usage:
-    fprintf(cio, "%s [[-k|-m|-g|-p|-u]]\n", argv[0]);
-    return -1;
-}
-#endif
-
-#if defined HAVE_LIBC && !defined CONFIG_ARM
-static int shcmd_mallinfo(FILE *cio, int argc, char *argv[])
-{
-    struct mallinfo minfo;
-    minfo = mallinfo();
-
-    fprintf(cio, " Total space allocated from system:        %12lu B\n", minfo.arena);
-    fprintf(cio, " Number of non-inuse chunks:               %12lu\n", minfo.ordblks);
-    fprintf(cio, " Number of mmapped regions:                %12lu\n", minfo.hblks);
-    fprintf(cio, " Total space in mmapped regions:           %12lu B\n", minfo.hblkhd);
-    fprintf(cio, " Total allocated space:                    %12lu B\n", minfo.uordblks);
-    fprintf(cio, " Total non-inuse space:                    %12lu B\n", minfo.fordblks);
-    fprintf(cio, " Top-most, releasable space (malloc_trim): %12lu B\n", minfo.keepcost);
-    fprintf(cio, " Average size of non-inuse chunks:         %12lu B\n", minfo.fordblks / minfo.ordblks);
-
-    return 0;
-}
-#endif
-
-#ifdef HAVE_LWIP
-static int shcmd_ifconfig(FILE *cio, int argc, char *argv[])
-{
-	/* prints available interfaces */
-	struct netif *netif;
-	int is_up;
-	uint8_t flags;
-
-	for (netif = netif_list; netif != NULL; netif = netif->next) {
-		is_up = netif_is_up(netif);
-		flags = netif->flags;
-
-		/* name + mac */
-		fprintf(cio, "%c%c %c      ",
-		        (netif->name[0] ? netif->name[0] : ' '),
-		        (netif->name[1] ? netif->name[1] : ' '),
-		        (netif == netif_default ? '*' : ' '));
-		fprintf(cio, "HWaddr %02x:%02x:%02x:%02x:%02x:%02x\n",
-		        netif->hwaddr[0], netif->hwaddr[1],
-		        netif->hwaddr[2], netif->hwaddr[3],
-		        netif->hwaddr[4], netif->hwaddr[5]);
-		/* flags + mtu */
-		fprintf(cio, "          ");
-		if (flags & NETIF_FLAG_UP)
-			fprintf(cio, "UP ");
-		if (flags & NETIF_FLAG_BROADCAST)
-			fprintf(cio, "BROADCAST ");
-		if (flags & NETIF_FLAG_ETHARP)
-			fprintf(cio, "ARP ");
-		if (flags & NETIF_FLAG_ETHERNET)
-			fprintf(cio, "ETHERNET ");
-		if (netif->dhcp)
-			fprintf(cio, "DHCP ");
-		fprintf(cio, "MTU:%u\n", netif->mtu);
-	        /* ip addr */
-		if (is_up) {
-			fprintf(cio, "          inet addr:%u.%u.%u.%u",
-			        ip4_addr1(&netif->ip_addr),
-			        ip4_addr2(&netif->ip_addr),
-			        ip4_addr3(&netif->ip_addr),
-			        ip4_addr4(&netif->ip_addr));
-			fprintf(cio, " Mask:%u.%u.%u.%u",
-			        ip4_addr1(&netif->netmask),
-			        ip4_addr2(&netif->netmask),
-			        ip4_addr3(&netif->netmask),
-			        ip4_addr4(&netif->netmask));
-			fprintf(cio, " Gw:%u.%u.%u.%u\n",
-			        ip4_addr1(&netif->gw),
-			        ip4_addr2(&netif->gw),
-			        ip4_addr3(&netif->gw),
-			        ip4_addr4(&netif->gw));
-		}
-	}
-	return 0;
-}
-
-#if LWIP_STATS_DISPLAY
-#include <lwip/stats.h>
-
-static int shcmd_lwipstats(FILE *cio, int argc, char *argv[])
-{
-	stats_display();
-	fprintf(cio, "lwIP stats dumped to system output\n");
-	return 0;
-}
-#endif
 #endif

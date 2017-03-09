@@ -1,8 +1,50 @@
+/*
+ * Fast HTTP Server Implementation for SHFS volumes
+ *
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
+ */
+
 #ifndef _HTTP_DATA_H_
 #define _HTTP_DATA_H_
 
+#ifndef CACHELINE_SIZE
+#define CACHELINE_SIZE 64
+#endif
+
 static const char _http_sep[] = "\r\n";
 static const size_t _http_sep_len = sizeof(_http_sep) - 1;
+#define _http_ftr _http_sep
+#define _http_ftr_len _http_sep_len
 
 static const char __http_shdr00[] = "HTTP/0.9 200\r\n";
 static const char __http_shdr01[] = "HTTP/0.9 206\r\n";
@@ -40,6 +82,8 @@ static const char __http_shdr32[] = "Expires: Thu, 1 Jan 1970 00:00:00 GMT\r\nPr
 static const char __http_shdr33[] = "Server: "HTTP_SERVER_AGENT"\r\n";
 static const char __http_shdr34[] = "Accept-ranges: bytes\r\n";
 static const char __http_shdr35[] = "Transfer-encoding: chunked\r\n";
+static const char __http_shdr36[] = "User-Agent: "HTTP_SERVER_AGENT"\r\n";
+static const char __http_shdr37[] = "Cache-control: no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0\r\n";
 
 static const char * const _http_shdr[] = {
 	__http_shdr00, __http_shdr01, __http_shdr02, __http_shdr03, __http_shdr04,
@@ -49,7 +93,7 @@ static const char * const _http_shdr[] = {
 	__http_shdr20, __http_shdr21, __http_shdr22, __http_shdr23, __http_shdr24,
 	__http_shdr25, __http_shdr26, __http_shdr27, __http_shdr28, __http_shdr29,
 	__http_shdr30, __http_shdr31, __http_shdr32, __http_shdr33, __http_shdr34,
-	__http_shdr35
+	__http_shdr35, __http_shdr36, __http_shdr37
 };
 static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr00) - 1, sizeof(__http_shdr01) - 1,
@@ -69,7 +113,8 @@ static const size_t _http_shdr_len[] = {
 	sizeof(__http_shdr28) - 1, sizeof(__http_shdr29) - 1,
 	sizeof(__http_shdr30) - 1, sizeof(__http_shdr31) - 1,
 	sizeof(__http_shdr32) - 1, sizeof(__http_shdr33) - 1,
-	sizeof(__http_shdr34) - 1, sizeof(__http_shdr35) - 1
+	sizeof(__http_shdr34) - 1, sizeof(__http_shdr35) - 1,
+	sizeof(__http_shdr36) - 1, sizeof(__http_shdr37) - 1
 };
 
 /* Indexes into _http_shdr */
@@ -109,6 +154,8 @@ static const size_t _http_shdr_len[] = {
 #define HTTP_SHDR_SERVER         33 /* Server agent */
 #define HTTP_SHDR_ACC_BYTERANGE  34 /* Accept-ranges: bytes */
 #define HTTP_SHDR_ENC_CHUNKED    35 /* Transfer-Encoding: chunked */
+#define HTTP_SHDR_USERAGENT      36 /* User agent */
+#define HTTP_SHDR_NOSTORE        37 /* No store */
 
 #define HTTP_SHDR_DEFAULT_TYPE   HTTP_SHDR_PLAIN
 
@@ -132,14 +179,17 @@ static const size_t _http_shdr_len[] = {
 #define HTTP_SHDR_503(major, minor) \
 	(((major) < 1) ? HTTP09_SHDR_503 : (((minor) < 1) ? HTTP10_SHDR_503 : HTTP11_SHDR_503))
 
-static const char __http_dhdr00[] = "Content-type: ";
-static const char __http_dhdr01[] = "Content-length: ";
+static const char __http_dhdr00[] = "Content-type";
+static const char __http_dhdr01[] = "Content-length";
 static const char __http_dhdr02[] = "Content-range: bytes ";
-static const char __http_dhdr03[] = "Retry-after: ";
-static const char __http_dhdr04[] = "Location: ";
+static const char __http_dhdr03[] = "Retry-after";
+static const char __http_dhdr04[] = "Location";
+static const char __http_dhdr05[] = "Host";
+static const char __http_dhdr06[] = "Icy-metadata";
 
 static const char * const _http_dhdr[] = {
-	__http_dhdr00, __http_dhdr01, __http_dhdr02, __http_dhdr03, __http_dhdr04
+	__http_dhdr00, __http_dhdr01, __http_dhdr02, __http_dhdr03,
+	__http_dhdr04, __http_dhdr05, __http_dhdr06
 };
 
 #define HTTP_DHDR_MIME            0 /* content-type */
@@ -147,6 +197,8 @@ static const char * const _http_dhdr[] = {
 #define HTTP_DHDR_RANGE           2 /* content-range */
 #define HTTP_DHDR_RETRY           3 /* retry-after */
 #define HTTP_DHDR_LOCATION        4 /* location */
+#define HTTP_DHDR_HOST            5 /* host */
+#define HTTP_DHDR_ICYMETADATA     6 /* Icy-metadata */
 
 static const char _http_err404p[] = \
 	"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n"
@@ -188,44 +240,8 @@ static const char _http_err503p[] = \
 	"</body></html>\r\n";
 static const uint64_t _http_err503p_len = sizeof(_http_err503p) - 1;
 
-#ifdef HTTP_TESTFILE
-static const char _http_testfile[] = \
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*   52 bytes */
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  104 bytes */
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  208 bytes */
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  416 bytes */
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"  /*  832 bytes */
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"; /* 1456 bytes */
-#ifdef HTTP_TESTFILE_LEN
-#if (HTTP_TESTFILE_LEN > 1456)
-#error "Testfile length too large (maximum is 1456 bytes)"
-#endif
-static const uint64_t _http_testfile_len = HTTP_TESTFILE_LEN;
-#else
-static const uint64_t _http_testfile_len = sizeof(_http_testfile) - 1;
-#endif
+#ifdef HTTP_TESTFILES
+static const char _http_testfile[65536] __attribute__((aligned(CACHELINE_SIZE))) = { 0xff };
 #endif
 
 #endif /* _HTTP_DATA_H_ */

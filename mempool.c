@@ -1,13 +1,48 @@
-
 /*
- * Simple memory pool implementation for MiniOS
+ * Simple memory pool implementation
  *
- * Copyright(C) 2013 NEC Laboratories Europe. All rights reserved.
- *                   Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
+
 #include <target/sys.h>
 #include <errno.h>
-#include <mempool.h>
+
+#include "mempool.h"
+
+#ifdef MEMPOOL_DEBUG
+#define ENABLE_DEBUG
+#endif
+#include "debug.h"
 
 #define MIN_ALIGN 8 /* minimum alignment of data structures within the mempool (64-bits) */
 
@@ -21,125 +56,165 @@
   #define POWER_OF_2(x)   ((0 != x) && (0 == (x & (x-1))))
 #endif
 
-static inline uint32_t log2(uint32_t v)
-{
-  uint32_t i = 0;
-
-  while (v) {
-	v >>= 1;
-	i++;
-  }
-  return (i - 1);
-}
-
 /* Return size, increased to alignment with align. Copied from xmalloc.c */
 static inline size_t align_up(size_t size, size_t align)
 {
   return (size + align - 1) & ~(align - 1);
 }
 
-struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp, size_t obj_private_len)
+struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
+					 size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+					 void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+					 void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+					 void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp)
 {
-  struct mempool *p = NULL;
-  struct mempool_obj *o_ptr;
-  uintptr_t o_offset;
-  size_t h_size ,o_size;
-  size_t o_data_offset;
-  size_t struct_mempool_size, struct_mempool_obj_size;
+  struct mempool *p;
+  struct mempool_obj *obj;
+  size_t h_size, p_size, m_size, o_size;
+  size_t pool_size, data_size;
   uint32_t i;
 
   if (obj_data_align)
 	ASSERT(POWER_OF_2(obj_data_align));
+  obj_data_align = max(obj_data_align, MIN_ALIGN);
 
-  obj_private_len         = align_up(obj_private_len, MIN_ALIGN);
-  struct_mempool_size     = align_up(sizeof(struct mempool), MIN_ALIGN);
-  struct_mempool_obj_size = align_up(sizeof(struct mempool_obj), MIN_ALIGN);
-  obj_headroom            = align_up(obj_headroom, MIN_ALIGN);
-  obj_data_align          = max(obj_data_align, MIN_ALIGN);
+  printd("ALLOC:"
+         " nb_objs = %"PRIu32","
+         " obj_size = %"PRIu64","
+         " obj_data_align = %"PRIu64","
+         " obj_headroom = %"PRIu64","
+         " obj_tailroom = %"PRIu64","
+         " obj_private_len = %"PRIu64","
+         " sep_obj_data = %s\n",
+	 nb_objs,
+	 obj_size,
+	 (uint64_t) obj_data_align,
+	 (uint64_t) obj_headroom,
+	 (uint64_t) obj_tailroom,
+	 (uint64_t) obj_private_len,
+	 sep_obj_data ? "TRUE" : "FALSE");
 
-  /* calculate size of mempool header */
-  h_size = align_up(struct_mempool_size, obj_data_align);
-  o_data_offset = struct_mempool_obj_size + obj_private_len + obj_headroom;
-  /* add initial padding to header to move beginning of obj->data of the first pool object to alignment */
-  h_size = align_up(h_size + o_data_offset, obj_data_align) - o_data_offset;
+  /* calculate private data sizes */
+  h_size         = sizeof(struct mempool); /* header length  */
+  m_size         = align_up(sizeof(struct mempool_obj), MIN_ALIGN);
+  p_size         = m_size + obj_private_len; /* private length */
 
-  /* calculate final object size */
-  o_size =  struct_mempool_obj_size;
-  o_size += obj_private_len;
-  o_size += obj_headroom;
-  o_size += obj_size;
-  o_size += obj_tailroom;
-  /* add padding to objects to keep beginning of object data area aligned for all subsequent objects */
-  o_size = align_up(o_size, obj_data_align);
-
-  /* allocate pool */
-  p = target_malloc(max(PAGE_SIZE, obj_data_align), h_size + (o_size * nb_objs));
-  if (!p) {
-	errno = ENOMEM;
-	goto error;
+  /* calculate object sizes */
+  if (sep_obj_data) {
+    obj_headroom = align_up(obj_headroom, obj_data_align);
+    o_size       = align_up(obj_headroom + obj_size + obj_tailroom, obj_data_align);
+    obj_tailroom = o_size - obj_headroom - obj_size;
+  } else {
+    obj_headroom = align_up(p_size + obj_headroom, obj_data_align) - p_size;
+    o_size       = align_up(p_size + obj_headroom + obj_size + obj_tailroom, obj_data_align);
+    obj_tailroom = o_size - obj_headroom - obj_size - p_size;
   }
 
-  /* setup meta data */
-  p->nb_objs            = nb_objs;
-  p->obj_size           = obj_size;
-  p->obj_headroom       = obj_headroom;
-  p->obj_tailroom       = obj_tailroom;
-  p->obj_data_offset    = o_data_offset; /* default offset of obj_data to the base of the object */
-  p->obj_private_len    = obj_private_len;
-  p->obj_init_func      = obj_init_func;
-  p->obj_init_func_argp = obj_init_func_argp;
+  /* allocate memory */
+  if (sep_obj_data) {
+    h_size = align_up(h_size, MIN_ALIGN);
+    p_size = align_up(p_size, MIN_ALIGN);
+    o_size = align_up(o_size, obj_data_align);
+    pool_size = h_size + nb_objs * p_size;
+    data_size = nb_objs * o_size;
+
+    p = target_malloc(MIN_ALIGN, pool_size);
+    if (!p) {
+        errno = ENOMEM;
+        goto error;
+    }
+    p->obj_data_area = target_malloc(obj_data_align, data_size);
+    if (!p) {
+        errno = ENOMEM;
+        goto error_free_p;
+    }
+  } else {
+    h_size = align_up(h_size, obj_data_align);
+    o_size = align_up(o_size, obj_data_align);
+    pool_size = h_size + nb_objs * o_size;
+    data_size = 0;
+
+    p = target_malloc(obj_data_align, pool_size);
+    if (!p) {
+        errno = ENOMEM;
+        goto error;
+    }
+    p->obj_data_area = NULL; /* no extra object data area*/
+  }
 
   /* initialize pool management */
-  p->free_objs = alloc_ring(1 << (log2(nb_objs) + 1));
-  if (!p->free_objs)
-	goto error_free_p;
+  p->nb_objs            = nb_objs;
+  p->nb_free_objs       = nb_objs;
+  p->obj_size           = obj_size;
+  p->pool_size          = pool_size + data_size;
+  p->obj_headroom       = obj_headroom;
+  p->obj_tailroom       = obj_tailroom;
+  p->obj_pick_func      = obj_pick_func;
+  p->obj_pick_func_argp = obj_pick_func_argp;
+  p->obj_put_func       = obj_put_func;
+  p->obj_put_func_argp  = obj_put_func_argp;
+  dlist_init_head(p->free_objs);
 
-  /* initialize object skeletons and add them to pool management */
-  o_offset = (uintptr_t) p + h_size;
-  for (i = 0; i < nb_objs; i++) {
-	o_ptr           = (struct mempool_obj *) (o_offset + (i * o_size));
-	o_ptr->p_ref    = p;
-	if (obj_private_len)
-	  o_ptr->private = (void *)((uintptr_t) o_ptr + struct_mempool_obj_size);
-	else
-	  o_ptr->private = NULL;
+  printd("pool @ %p, len: %"PRIu64":\n"
+         "  nb_objs:             %"PRIu32"\n"
+         "  obj_size:            %"PRIu64"\n"
+         "  obj_headroom:        %"PRIu64"\n"
+         "  obj_tailroom:        %"PRIu64"\n"
+         "  obj_data_area:       %p (len: %"PRIu64")\n",
+         p, pool_size,
+         p->nb_objs,
+         p->obj_size,
+         p->obj_headroom,
+         p->obj_tailroom,
+         p->obj_data_area,
+         data_size);
 
-	ring_enqueue(p->free_objs, o_ptr); /* never fails */
+  /* initialize objects and add them to pool management */
+  for (i = 0, obj = (struct mempool_obj *)(((uintptr_t) p) + h_size);
+       i < nb_objs;
+       ++i,   obj = (struct mempool_obj *)(((uintptr_t) obj) + (sep_obj_data ? (p_size) : (o_size)))) {
+    obj->p_ref = p;
+
+    if (sep_obj_data)
+      obj->base  = (void *) (((uintptr_t) p->obj_data_area) + i * o_size);
+    else
+      obj->base  = (void *) (((uintptr_t) obj) + p_size);
+
+    if (obj_private_len)
+      obj->private = (void *) (((uintptr_t) obj) + m_size);
+    else
+      obj->private = NULL;
+
+    mempool_reset_obj(obj);
+
+    if (obj_init_func)
+      obj_init_func(obj, obj_init_func_argp);
+
+    dlist_append(obj, p->free_objs, flst);
+
+#ifdef ENABLE_DEBUG
+    if (i < 3) { /* in order to avoid flooding: print details only of first three objects */
+      printd("obj%"PRIu32" @ %p:\n"
+             "  p_ref:               %p\n"
+             "  private:             %p (len: %"PRIu64")\n"
+             "  base:                %p\n"
+             "  left bytes headroom: %"PRIu64"\n"
+             "  data:                %p (len: %"PRIu64")\n"
+             "  left bytes tailroom: %"PRIu64"\n",
+             i, obj,
+             obj->p_ref,
+             obj->private,
+             (uint64_t) (m_size + obj_private_len),
+             obj->base,
+             (uint64_t) obj->lhr,
+             obj->data,
+             (uint64_t) obj->len,
+             (uint64_t) obj->ltr);
+    }
+    if (i == 3)
+             printd("etc\n");
+#endif
   }
-
-#ifdef MEMPOOL_DEBUG
-  /*
-   * Prints a memory pool allocation summary
-   */
-  printf("memory pool resides at %p with %llu kbytes for %llu objects (object size: %llu B->%llu B; object data alignment: %llu B)\n", p, (h_size + (o_size * nb_objs)) / 1024, nb_objs, obj_size, o_size, obj_data_align);
-  printf("pool management ring resides at %p and can hold %llu object references\n", p->free_objs, p->free_objs->size);
-  printf("                      +--------------------+\n");
-  printf(             "%018p -> |   struct mempool   | 0x%06llx\n", p, struct_mempool_size);
-  if(h_size - struct_mempool_size)
-	printf("                      | / / / / / / / / / /| 0x%06llx\n", h_size - struct_mempool_size);
-
-  for (i = 0; i<nb_objs; i++){
-	o_ptr = (struct mempool_obj *)(o_offset + (i * o_size));
-	o_ptr->data = (void *)((uintptr_t) o_ptr + p->obj_data_offset);
-	printf("                      +--------------------+\n", o_ptr);
-	printf(             "%018p -> | struct mempool_obj | 0x%06llx\n", o_ptr, struct_mempool_obj_size);
-	if (p->obj_private_len)
-	  printf(             "%018p -> |    obj_private     | 0x%06llx\n", o_ptr->private, p->obj_private_len);
-	if (p->obj_headroom) {
-	  printf("                      |- - - - - - - - - - |\n");
-	  printf(             "%018p -> |      HEADROOM      | 0x%06llx\n", (void *)((uintptr_t) o_ptr->data - p->obj_headroom), p->obj_headroom);
-	}
-	printf("                      |- - - - - - - - - - |\n");
-	printf(             "%018p -> |       OBJECT       | 0x%06llx\n", o_ptr->data, p->obj_size);
-	if (p->obj_tailroom) {
-	  printf("                      |- - - - - - - - - - |\n");
-	  printf(             "%018p -> |      TAILROOM      | 0x%06llx\n", (void *)((uintptr_t) o_ptr->data + p->obj_size), p->obj_tailroom);
-	}
-	if (o_size - p->obj_tailroom - p->obj_size - p->obj_headroom - p->obj_private_len - struct_mempool_obj_size)
-	  printf("                      | / / / / / / / / / /| 0x%06llx\n", o_size - p->obj_tailroom - p->obj_size - p->obj_headroom - p->obj_private_len - struct_mempool_obj_size);
-  }
-  printf("                      +--------------------+\n");
-#endif /* MEMPOOL_DEBUG */
 
   return p;
 
@@ -149,11 +224,53 @@ struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data
   return NULL;
 }
 
+struct mempool *alloc_enhanced_mempool2(size_t pool_size,
+					 size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+					 void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+					 void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+					 void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp)
+{
+  size_t h_size, p_size, m_size, o_size;
+  uint32_t nb_objs = 0;
+
+  /* calculate private data sizes */
+  h_size         = sizeof(struct mempool); /* header length  */
+  m_size         = align_up(sizeof(struct mempool_obj), MIN_ALIGN);
+  p_size         = m_size + obj_private_len; /* private length */
+
+  if (pool_size < h_size) {
+    errno = EINVAL;
+    return NULL;
+  }
+  pool_size   -= h_size;
+
+  /* calculate object sizes */
+  if (sep_obj_data) {
+    obj_headroom = align_up(obj_headroom, obj_data_align);
+    o_size       = align_up(obj_headroom + obj_size + obj_tailroom, obj_data_align);
+    obj_tailroom = o_size - obj_headroom - obj_size;
+
+    /* convert pool_size -> nb_objs */
+    nb_objs      = pool_size / (p_size + o_size + sizeof(void *));
+  } else {
+    obj_headroom = align_up(p_size + obj_headroom, obj_data_align) - p_size;
+    o_size       = align_up(p_size + obj_headroom + obj_size + obj_tailroom, obj_data_align);
+    obj_tailroom = o_size - obj_headroom - obj_size - p_size;
+
+    /* convert pool_size -> nb_objs */
+    nb_objs      = pool_size / (o_size + sizeof(void *));
+  }
+
+  return alloc_enhanced_mempool(nb_objs, obj_size, obj_data_align, obj_headroom, obj_tailroom, obj_private_len, sep_obj_data,
+				obj_init_func, obj_init_func_argp, obj_pick_func, obj_pick_func_argp, obj_put_func, obj_put_func_argp);
+}
+
 void free_mempool(struct mempool *p)
 {
   if (p) {
-	BUG_ON(ring_count(p->free_objs) != p->nb_objs); /* some objects of this pool may be still in use */
-	free_ring(p->free_objs);
+	BUG_ON(p->nb_free_objs != p->nb_objs); /* some objects of this pool may be still in use */
+	if (p->obj_data_area)
+	  target_free(p->obj_data_area);
 	target_free(p);
   }
 }

@@ -1,14 +1,44 @@
 /*
- * Simple HashFS (SHFS) for Mini-OS
+ * Simple hash filesystem (SHFS)
  *
- * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
- *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
  *
- * This file implements the hash-table based file table
- * It is basically a wrapper for htable.c/.h
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 #ifndef _SHFS_BTABLE_H_
 #define _SHFS_BTABLE_H_
+/*
+ * This file implements the hash-table based file table.
+ * It basically provides wrappers of htable.c/.h for SHFS.
+ */
 
 #ifdef __SHFS_TOOLS__
 #include <semaphore.h>
@@ -46,6 +76,13 @@ struct shfs_bentry {
 #ifdef SHFS_STATS
 	struct shfs_el_stats hstats;
 #endif /* SHFS_STATS */
+
+	void *cookie; /* shfs_fio: upper layer software can attach cookies to open files */
+#ifdef __KERNEL__
+	/* Inode number allocated for this file */
+	int ino;
+#endif
+
 #endif
 };
 
@@ -66,6 +103,39 @@ static inline struct shfs_bentry *shfs_btable_lookup(struct htable *bt, hash512_
 	return NULL;
 }
 
+#ifdef SHFS_OPENBYNAME
+/*
+ * Unfortunately, opening by name ends up in an
+ * expensive search algorithm: O(n^2)
+ */
+static inline struct shfs_bentry *shfs_btable_lookup_byname(struct htable *bt,
+							    void **htchunks,
+							    const char *name)
+{
+	struct htable_el *el;
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	size_t name_len;
+
+	name_len = strlen(name);
+	foreach_htable_el(bt, el) {
+		bentry = el->private;
+		hentry = (struct shfs_hentry *)
+			(((uint8_t *) (htchunks[bentry->hentry_htchunk]))
+			+ bentry->hentry_htoffset);
+
+		if (name_len > sizeof(hentry->name))
+			continue;
+
+		if (strncmp(name, hentry->name, sizeof(hentry->name)) == 0) {
+			/* we found it - hooray! */
+			return bentry;
+		}
+	}
+	return NULL;
+}
+#endif
+
 /**
  * Searches and allocates an according bucket entry for a given hash value
  */
@@ -78,7 +148,7 @@ static inline struct shfs_bentry *shfs_btable_addentry(struct htable *bt, hash51
 	return NULL;
 }
 
-#ifndef __MINIOS__
+#if (!defined(__MINIOS__) && !defined(__KERNEL__))
 /**
  * Deletes an entry from table
  */

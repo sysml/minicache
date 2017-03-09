@@ -1,18 +1,49 @@
 /*
- * Simon's HashFS (SHFS) for Mini-OS
+ * Simple hash filesystem (SHFS)
  *
- * Copyright(C) 2013-2014 NEC Laboratories Europe. All rights reserved.
- *                        Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
 #ifndef _SHFS_DEFS_H_
 #define _SHFS_DEFS_H_
 
+#ifndef __KERNEL__
 #include <sys/types.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
 #include <inttypes.h>
+#endif
 #include "hash.h"
 
 #ifdef __SHFS_TOOLS__
@@ -146,9 +177,9 @@ struct shfs_hdr_config {
 #define SHFS_EFLAG_LINK      0x4
 
 /* l_attr.type */
-#define SHFS_LTYPE_REDIRECT       0x0
-#define SHFS_LTYPE_ABSCLONE       0x1
-#define SHFS_LTYPE_RELACLONE_MPEG 0x2
+#define SHFS_LTYPE_REDIRECT  0x0
+#define SHFS_LTYPE_RAW       0x1
+#define SHFS_LTYPE_AUTO      0x2
 
 struct shfs_hentry {
 	hash512_t          hash; /* hash digest */
@@ -292,11 +323,13 @@ static inline void shfshost_copy(struct shfs_host *dst, const struct shfs_host *
 	}
 }
 
+#ifndef __KERNEL__
 static inline uint64_t gettimestamp_s(void)
 {
 	struct timeval now;
 	gettimeofday(&now, NULL);
 	return (uint64_t) now.tv_sec;
 }
+#endif
 
 #endif /* _SHFS_DEFS_H_ */

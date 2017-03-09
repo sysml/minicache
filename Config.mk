@@ -60,7 +60,7 @@ CONFIG_CTLDIR_NOCHMOD		?= y
 ######################################
 ## Misc
 ######################################
-CONFIG_TESTSUITE		?= y
+CONFIG_TESTSUITE		?= n
 
 ######################################
 ## Debugging options
@@ -69,5 +69,9 @@ CONFIG_HTABLE_DEBUG		?= n
 CONFIG_MEMPOOL_DEBUG		?= n
 CONFIG_SHFS_DEBUG		?= n
 CONFIG_SHFS_CACHE_DEBUG		?= n
+CONFIG_SHFS_CACHE_DISABLE	?= n
+CONFIG_SHFS_CACHE_STATS	?= y
 CONFIG_HTTP_DEBUG		?= n
+CONFIG_HTTP_DEBUG_SESSIONSTATES	?= n
 CONFIG_HTTP_DEBUG_PRINTACCESS	?= n
+CONFIG_CTLDIR_DEBUG		?= n

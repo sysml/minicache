@@ -1,16 +1,46 @@
 /*
- * Simple memory pool implementation for MiniOS
+ * Simple memory pool implementation
  *
- * Copyright(C) 2013 NEC Laboratories Europe. All rights reserved.
- *                   Simon Kuenzer <simon.kuenzer@neclab.eu>
+ * Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>
+ *
+ *
+ * Copyright (c) 2013-2017, NEC Europe Ltd., NEC Corporation All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THIS HEADER MAY NOT BE EXTRACTED OR MODIFIED IN ANY WAY.
  */
+
 #ifndef _MEMPOOL_H_
 #define _MEMPOOL_H_
 
 #include <stdint.h>
 #include <errno.h>
-#include <ring.h>
 
+#include "dlist.h"
 #include "likely.h"
 
 /*
@@ -20,7 +50,9 @@
  *          || struct mempool_obj ||
  *          ||                    ||
  *          || - -private area- - ||
- *          ++--------------------++\
+ *          ++--------------------++
+ *
+ * *base -> +----------------------+\
  *          |      HEAD ROOM       | |
  *          |   ^              ^   |  > lhr
  * *data ->/+---|--------------|---+/
@@ -38,14 +70,19 @@
  *
  * If an align is passed to the memory pool allocator, the beginning of
  * the object data area (regardingless to head- and tailroom) will be aligned.
+ *
+ * NOTE: this object meta data should never be changed other than by
+ *       functions and macros defined by this header file
  */
 struct mempool_obj {
-  struct mempool *p_ref; /* ptr to depending mempool (DO NOT CHANGE!) */
+  struct mempool *p_ref; /* ptr to depending mempool */
+  void *private;         /* ptr to private meta data area */
+  void *base;            /* ptr to data base */
+  void *data;            /* ptr to current data */
   size_t lhr;            /* left headroom space */
   size_t ltr;            /* left tailroom space */
   size_t len;            /* length of data area */
-  void *data;            /* ptr to data area */
-  void *private;         /* ptr to private meta data area (DO NOT CHANGE!) */
+  dlist_el(flst);        /* element of mempool list for free objects */
 };
 
 /*
@@ -74,24 +111,64 @@ struct mempool_obj {
  *          v                      v
  */
 struct mempool {
-  uint32_t nb_objs;
+  dlist_head(free_objs);
+  void (*obj_pick_func)(struct mempool_obj *, void *);
+  void *obj_pick_func_argp;
   size_t obj_size;
   size_t obj_headroom;
   size_t obj_tailroom;
-  size_t obj_data_offset;
-  size_t obj_private_len;
-  void (*obj_init_func)(struct mempool_obj *, void *);
-  void *obj_init_func_argp;
-  struct ring *free_objs;
+  void (*obj_put_func)(struct mempool_obj *, void *);
+  void *obj_put_func_argp;
+  uint32_t nb_objs;
+  uint32_t nb_free_objs;
+  size_t pool_size;
+  void *obj_data_area; /* points to data allocation when sep_obj_data = 1 */
 };
 
 /*
- * Callback obj_init_func will be called while objects are picked from this memory pool
+ * Callback obj_init_func will be called while objects are initialized for this memory pool
  *  void obj_init_func(struct mempool_obj *obj, void *argp)
+ * Callback obj_pick_func will be called whenever objects are picked from this memory pool
+ *  void obj_pick_func(struct mempool_obj *obj, void *argp)
+ * Callback obj_put_func will be called whenever objects are put back to this memory pool
+ *  void obj_put_func(struct mempool_obj *obj, void *argp)
+ * split_obj_data (bool) defines if object data shall be splitted from meta data allocation.
+ *  Depending on the object data alignments, this might be more memory space efficient
  */
-struct mempool *alloc_mempool(uint32_t nb_objs, size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp, size_t obj_private_len);
-#define alloc_simple_mempool(nb_objs, obj_size) alloc_mempool((nb_objs), (obj_size), 0, 0, 0, NULL, NULL, 0)
+struct mempool *alloc_enhanced_mempool(uint32_t nb_objs,
+  size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+  void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+  void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+  void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp);
+#define alloc_mempool(nb_objs, obj_size, obj_data_align, obj_headroom, obj_tailroom, obj_pick_func, obj_pick_func_argp, obj_private_len) \
+  alloc_enhanced_mempool((nb_objs), (obj_size), (obj_data_align), (obj_headroom), (obj_tailroom), (obj_private_len), 0, NULL, NULL, (obj_pick_func), (obj_pick_func_argp), NULL, NULL)
+#define alloc_simple_mempool(nb_objs, obj_size) \
+  alloc_enhanced_mempool((nb_objs), (obj_size), 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL)
+
+/* mempool allocation variant where final pool memory size can be specified
+ * is specified instead by number of objects
+ * Note: the actual allocation size might still less or slightly more because of alignments */
+struct mempool *alloc_enhanced_mempool2(size_t pool_size,
+  size_t obj_size, size_t obj_data_align, size_t obj_headroom, size_t obj_tailroom, size_t obj_private_len, int sep_obj_data,
+  void (*obj_init_func)(struct mempool_obj *, void *), void *obj_init_func_argp,
+  void (*obj_pick_func)(struct mempool_obj *, void *), void *obj_pick_func_argp,
+  void (*obj_put_func)(struct mempool_obj *, void *), void *obj_put_func_argp);
+#define alloc_mempool2(pool_size, obj_size, obj_data_align, obj_headroom, obj_tailroom, obj_pick_func, obj_pick_func_argp, obj_private_len) \
+  alloc_enhanced_mempool2((pool_size), (obj_size), (obj_data_align), (obj_headroom), (obj_tailroom), (obj_private_len), 0, NULL, NULL, (obj_pick_func), (obj_pick_func_argp), NULL, NULL)
+#define alloc_simple_mempool2(pool_size, obj_size) \
+  alloc_enhanced_mempool2((pool_size), (obj_size), 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL)
+
 void free_mempool(struct mempool *p);
+
+#define mempool_reset_obj(obj)						  \
+  do {									  \
+    struct mempool *_p = (obj)->p_ref;					  \
+    (obj)->len = _p->obj_size;						  \
+    (obj)->lhr = _p->obj_headroom;					  \
+    (obj)->ltr = _p->obj_tailroom;					  \
+    (obj)->data = (void *) (((uintptr_t) (obj)->base) + _p->obj_headroom); \
+    dlist_init_el((obj), flst); \
+  } while(0)
 
 /*
  * Pick an object from a memory pool
@@ -100,17 +177,21 @@ void free_mempool(struct mempool *p);
 static inline struct mempool_obj *mempool_pick(struct mempool *p)
 {
   struct mempool_obj *obj;
-  obj = ring_dequeue(p->free_objs);
-  if (unlikely(!obj))
+
+  if (p->nb_free_objs == 0)
 	return NULL;
 
-  /* initialize object size */
-  obj->len = p->obj_size;
-  obj->lhr = p->obj_headroom;
-  obj->ltr = p->obj_tailroom;
-  obj->data = (void *)((uintptr_t) obj + p->obj_data_offset);
-  if (p->obj_init_func)
-	p->obj_init_func(obj, p->obj_init_func_argp);
+  /* get object from free list */
+  obj = dlist_first_el(p->free_objs, struct mempool_obj);
+  dlist_unlink(obj, p->free_objs, flst);
+  p->nb_free_objs--;
+
+  /* initialize object */
+  mempool_reset_obj(obj);
+
+  /* call user's callback */
+  if (p->obj_pick_func)
+	p->obj_pick_func(obj, p->obj_pick_func_argp);
   return obj;
 }
 
@@ -121,31 +202,46 @@ static inline int mempool_pick_multiple(struct mempool *p, struct mempool_obj *o
 {
   uint32_t i;
 
-  if (unlikely(ring_dequeue_multiple(p->free_objs, (void **) objs, count) < 0))
+  if (p->nb_free_objs < count)
 	return -1;
+  p->nb_free_objs -= count;
 
   for (i=0; i<count; i++) {
-	/* initialize object size */
-	objs[i]->len = p->obj_size;
-	objs[i]->lhr = p->obj_headroom;
-	objs[i]->ltr = p->obj_tailroom;
-	objs[i]->data = (void *)((uintptr_t) objs[i] + p->obj_data_offset);
-	if (p->obj_init_func)
-	  p->obj_init_func(objs[i], p->obj_init_func_argp);
+        /* get object from free list */
+        objs[i] = dlist_first_el(p->free_objs, struct mempool_obj);
+        dlist_unlink(objs[i], p->free_objs, flst);
+
+	/* initialize object */
+	mempool_reset_obj(objs[i]);
   }
+
+  /* call user's callback */
+  if (p->obj_pick_func)
+	for (i=0; i<count; i++)
+	  p->obj_pick_func(objs[i], p->obj_pick_func_argp);
   return 0;
 }
 
-#define mempool_free_count(p) ring_count((p)->free_objs)
+#define mempool_free_count(p) ((p)->nb_free_objs)
+
+#define mempool_nb_objs(p) ((p)->nb_objs)
+
+#define mempool_size(p) ((p)->pool_size)
 
 /*
  * Put an object back to its depending memory pool.
  * This is like free() for memory pool objects
  */
-//#define mempool_put(obj) ring_enqueue((obj)->p_ref->free_objs, obj);
 static inline void mempool_put(struct mempool_obj *obj)
 {
-  ring_enqueue(obj->p_ref->free_objs, obj); /* never fails on right usage because pool's ring can hold all of it's object references */
+  struct mempool *p = obj->p_ref;
+
+  dlist_prepend(obj, p->free_objs, flst);
+  p->nb_free_objs++;
+
+  /* call user's callback */
+  if (p->obj_put_func)
+	p->obj_put_func(obj, p->obj_put_func_argp);
 }
 
 /*
@@ -154,8 +250,24 @@ static inline void mempool_put(struct mempool_obj *obj)
  */
 static inline void mempool_put_multiple(struct mempool_obj *objs[], uint32_t count)
 {
-  if (likely(count > 0))
-	ring_enqueue_multiple(objs[0]->p_ref->free_objs, (void **) objs, count);
+  struct mempool *p;
+  uint32_t i;
+
+  if (unlikely(count == 0))
+    return;
+
+  p = objs[0]->p_ref;
+
+  /* call user's callback */
+  if (p->obj_put_func) {
+	for (i=0; i<count; i++)
+		p->obj_put_func(objs[i], p->obj_put_func_argp);
+  }
+
+  for (i=0; i<count; i++)
+          dlist_prepend(objs[i], p->free_objs, flst);
+
+  p->nb_free_objs += count;
 }
 
 /*
@@ -210,6 +322,8 @@ static inline int mempool_obj_append(struct mempool_obj *obj, ssize_t len)
  * because obj->data is a reference to the head of your struct
  * that is located in the data field. It is not the head of the
  * struct itself.
+ * In case you enable sep_obj_data, obj->data even points to a complete
+ * different memory location.
  *
  * If you need to back reference to the memory pool container,
  * it is recommended to add reference to it in your struct definition.
