@@ -5,9 +5,9 @@ What is MiniCache?
 ------------------
 
 MiniCache is a content cache/web server based on Mini-OS. It follows the
-minimalistic and single-purpose VM idea. MiniCache servers files via HTTP,
-provides a tiny telnet shell server (µShell) for management, and comes with
-SHFS (Simple Hash Filesystem) support.
+minimalistic and single-purpose VM idea, alias Unikernel. MiniCache servers
+files via HTTP, provides a tiny telnet shell server (µShell) for management,
+and comes with an object store system called SHFS (Simple Hash Filesystem).
 
 
 Building MiniCache
@@ -24,10 +24,6 @@ It will be used to store all required sources and builds for MiniCache.
 I recommend to add this export line to your shell profile (e.g., via .bashrc if
 you are using bash).
 
-Note: For ARM builds, please add also the following environment variable:
-
-    CROSS_COMPILE=arm-linux-gnueabihf-
-
 
 ### Download and Build Xen (here: 4.4)
 Please follow Xen's build instructions - it should be something like the
@@ -36,20 +32,12 @@ following:
     git clone git://xenbits.xen.org/xen.git
     cd xen
     git checkout stable-4.4
-    make dist-xen
+    ./configure
+    make xen tools
     cd ..
 
 Note: If Xen is not installed on your system yet, please install it as well.
 You might need to restart your computer.
-Note: For ARM builds you might need different Xen sources (e.g., https://github.com/talex5/xen.git)
-or you might have to use a different branch. We recommend to use Xen from talex5 repository:
-
-    git clone https://github.com/talex5/xen.git
-    cd xen
-    git checkout stable-4.4
-    make dist-xen XEN_TARGET_ARCH=arm32 CROSS_COMPILE=$CROSS_COMPILE CONFIG_EARLY_PRINTK=sun7i
-    cd ..
-
 After that, please ensure that you set the following environment variables set
 (I also recommend to add this to your shell profile):
 
@@ -57,31 +45,13 @@ After that, please ensure that you set the following environment variables set
 
 
 ### Download dependencies
-The toolchain is required to comile and link the MiniCache VM binary. A
-toolchain for lightweightIP 1.4.1 (or newer) is required.
+Our toolchain is required to comile and link the MiniCache VM binary:
 
-    git clone git@repos:oss/toolchain.git
-    cd toolchain
-    git checkout skuenzer/lwip-latest
-    cd ..
+    git clone git@github.com:cnplab/toolchain.git
 
-Note: Please checkout the branch skuenzer/lwip-latest-arm32 when you build for ARM.
+Also, Mini-OS, the base OS for MiniCache, is required:
 
-Next, download lightweightIP with GSO support.
-
-    git clone git@repos:skuenzer/lwip.git
-    cd toolchain
-    git checkout skuenzer/gso
-    cd ..
-
-Also, Mini-OS, the base OS for MiniCache, is required.
-
-    git clone git@repos:oss/mini-os.git
-    cd mini-os
-    git checkout skuenzer/edge-x86
-    cd ..
-
-Note: Please checkout the branch skuenzer/edge-arm32 when you build for ARM.
+    git clone git@github.com:cnplab/mini-os.git
 
 After that, please ensure that you set the following environment variables
 (I also recommend to add this to your shell profile):
@@ -95,34 +65,14 @@ Please follow the build procedure as described in 'toolchain/README'.
 In principle it should be:
 
     cd toolchain
-    make; make cross-lwip-git
+    make
     cd ..
-
-For ARM it should be
-
-    cd toolchain
-    make cross-lwip-git XEN_TARGET_ARCH=arm32
-    cd ..
-
-
-### Download and Build Cosmos (optional)
-Cosmos can be used to instiate the MiniCache VM faster than with the standard Xen tools (e.g., xl).
-
-    git clone https://github.com/cnplab/cosmos.git
-
-Please follow the build procedure as described in 'cosmos/README.md'.
-I recommend to build cosmos with 'xl'.
-
-Additionally, I recommend to link the cosmos binary to a directory that is
-included in the command search of your shell:
-
-    ls -sv $WORKSPACE/cosmos/build/bin/cosmos /usr/local/bin/
 
 
 ### Download and Build MiniCache
 #### Clone the MiniCache repository
 
-    git clone git@repos:skuenzer/minicache.git
+    git clone git@github.com:cnplab/minicache.git
     cd minicache
 
 #### Configure (optional)
@@ -135,56 +85,99 @@ configuration file (do not change this one).
 
     make
 
-Note: If you want to build for ARM, call the following make command instead:
+Note: Building for different targets than mini-os can be achieved by
+specifying the ```TARGET``` variable to make (see ```Makefile```).
 
-    make ARCH=arm32
-
-Note: Multi-threaded building (-j option) is not working properly at the moment.
 
 #### Build SHFS Tools
 The SHFS tools are required to create and maintain SHFS filesystems.
-Please read 'shfs-tools/README.md' for more details.
+Please read ```shfs-tools/README.md``` for more details.
 
 
 ### Getting Started
-In order to boot MiniCache, create a Xen VM configuration file. You can use the
-following example as a basis (her for x86):
 
-    #!/usr/local/bin/cosmos load
+#### Create a Xen Guest Configuration
+In order to boot MiniCache, create a Xen guest configuration file. You can use the
+following example as a basis and save it under ```minicache.cfg```:
 
-    kernel        = './build/minicache_x86_64'
-    builder       = 'linux'
+    kernel        = 'build/minicache_x86_64'
     vcpus         = '1'
-    memory        = '32'
+    memory        = '64'
 
     name          = 'minicache'
+    extra         = '-i 192.168.0.2/24 -g 192.168.0.1 -d 192.168.0.1 -b 51712'
 
     vif           = [ 'mac=00:16:3e:ba:be:12,bridge=virbr0' ]
 
     # Here, one FS image and 3 RAM-based drives
-    disk          = [ 'file:/root/workspace/minicache/demofs.img,xvda,w',
-                      'phy:/dev/ram15,xvdd,w' ]
+    disk          = [ 'file:/root/workspace/minicache/demofs.img,xvda,w' ]
 
-Thanks to Cosmos (when build with xl), you can set the executable bit to
-this file and instantiate the VM like a regular binary that is executed
-in Domain-0. The parameters are passed as kernel parameters to the image:
+For now, just a single VIF is supported by MiniCache but you can assign
+multiple virtual disks. Use ```phy:/path/to/dev'``` when you use a block
+device as virtual disk and ```file:/path/to/image'``` when you use an
+image file.
+The `extra` option in the configuration specifies the parameters
+that you pass to the guest. Possible options for MiniCache are listed
+in the last paragraph.
 
-    chmod a+x minicache
-    ./minicache -i 192.168.0.2/24 -g 192.168.0.1 -d 192.168.0.1
+#### Create a Filesystem
+Creating a filesystem for MiniCache can be done with ```shfs_mkfs```
+and ```shfs_admin```. In the following we will create a filesystem image
+file with the files in the ```demofs/``` directory:
 
-Otherwise, use the `extra` option in the Xen Domain configuration file to
-specify the kernel parameters:
+First we create an empty image file (with 128 MB disk size):
 
-    extra         = '-i 192.168.0.2/24 -g 192.168.0.1 -d 192.168.0.1'
+    dd if=/dev/zero of=demofs.img bs=1M count=128
 
-...and launch the VM with xl:
+Then we format it with SHFS:
 
-    xl create -c minicache
+    shfs-tools/shfs_mkfs demofs.img
+    
+Afterwards, we copy some files to it:
+ 
+    shfs-tools/shfs_admin -a demofs/index.html  -m text/html    demofs.img
+    shfs-tools/shfs_admin -a demofs/logo.png    -m image/png    demofs.img
+    shfs-tools/shfs_admin -a demofs/favicon.ico -m image/x-icon demofs.img
+
+When the copying is done, we should mark ```index.html``` as the default
+file. For this purpose we need to figure out what is the current hash digest
+for this file (since file names are actually hash digest in SHFS).
+This can be done by using the integrated ls command of ```shfs_admin```:
+
+    shfs-tools/shfs_admin -l demofs.img
+
+Remember the corresping digest and pass it to the set-default command
+of ```shfs_admin```:
+
+    shfs-tools/shfs_admin -d 1e833c10400fd4cd5acf6cf73764a35d66eb68f627a332e129b246ca39df1e55 demofs.img
+
+When you list the filesystem content again, this file should have the
+flag ```D``` set.
+
+#### Boot the VM
+The VM is booted with the xl command:
+
+    xl create -c minicache.cfg
+
+
+When your networking setup is correct, you should be able now to see
+the demo page in a browser.
+
+    http://192.168.0.2/
+
+You should also be able to use telnet to login to the embedded shell
+of MiniCache:
+
+    telnet 192.168.0.2
+
+...and ping should work, too:
+
+    ping 192.168.0.2
 
 
 ### MiniCache Parameters
 
-    -s [sec]               Startup delay in seconds (default is 0)
+    -s [sec]               Start-up delay in seconds (default is 0)
     -i [IPv4/Route prefix] Host IP address in CIDR notation
                            (if not specified, DHCP client is enabled)
     -g [IPv4]              Gateway IP address
