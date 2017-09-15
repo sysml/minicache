@@ -47,11 +47,11 @@ After that, please ensure that you set the following environment variables set
 ### Download dependencies
 Our toolchain is required to comile and link the MiniCache VM binary:
 
-    git clone git@github.com:cnplab/toolchain.git
+    git clone git://github.com/sysml/toolchain.git
 
 Also, Mini-OS, the base OS for MiniCache, is required:
 
-    git clone git@github.com:cnplab/mini-os.git
+    git clone git://github.com/sysml/mini-os.git
 
 After that, please ensure that you set the following environment variables
 (I also recommend to add this to your shell profile):
@@ -72,7 +72,7 @@ In principle it should be:
 ### Download and Build MiniCache
 #### Clone the MiniCache repository
 
-    git clone git@github.com:cnplab/minicache.git
+    git clone git://github.com/sysml/minicache.git
     cd minicache
 
 #### Configure (optional)
