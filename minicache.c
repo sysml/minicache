@@ -666,7 +666,7 @@ int main(int argc, char *argv[])
     printk("%61s\n", ""CONFIG_BANNER_VERSION"");
 #endif
     printk("\n");
-    printk("Copyright(C) 2013-2017 NEC Europe Ltd., NEC Corporation.\n");
+    printk("Copyright(C) 2013-2020 NEC Laboratories Europe GmbH\n");
     printk("Authors: Simon Kuenzer <simon.kuenzer@neclab.eu>\n");
     printk("\n");
 #endif
