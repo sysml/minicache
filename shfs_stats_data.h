@@ -45,7 +45,7 @@
                                     per default with 0%, 50%, 100% */
   #else
    #if SHFS_STATS_HTTP_DPCR < 2
-    #warn "DPCR value has to be >= 2, disabling download progress counters"
+    #warning "DPCR value has to be >= 2, disabling download progress counters"
     #undef SHFS_STATS_HTTP_DPC /* disable download progress counters */
    #endif
   #endif
