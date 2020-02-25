@@ -194,3 +194,5 @@ of MiniCache:
                            (see: ctltrigger)
     -x [VBD ID]            Device for stats export
     -c [num]               Max. number of simultaneous HTTP connections
+    -P                     Prefetch: Read all SHFS entries to the
+                            cache after boot completed

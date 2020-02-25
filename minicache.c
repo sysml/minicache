@@ -277,6 +277,7 @@ struct mcargs {
     blkdev_id_t     stats_bd_id;
 
     int             no_ctldir;
+    int             prefetch;
 
     unsigned int    startup_delay;
 
@@ -416,8 +417,9 @@ static int parse_args(int argc, char *argv[])
     #error "MEMP_NUM_TCP_PCB has to be a least CONFIG_LWIP_NUM_TCPCON"
 #endif
     args.nb_sarp_entries = 0;
+    args.prefetch = 0;
     while ((opt = getopt(argc, argv,
-                         "s:i:g:b:hc:a:"
+                         "s:i:g:b:hc:a:P"
 #if LWIP_DNS
                          "d:e:"
 #endif
@@ -496,6 +498,9 @@ static int parse_args(int argc, char *argv[])
 	      free(postsnip);
 	      free(presnip);
 	      args.nb_sarp_entries++;
+              break;
+         case 'P': /* prefetch */
+	      args.prefetch = 1;
               break;
          case 'b': /* virtual block device (specified manually to skip detection) */
               if (blkdev_id_parse(optarg, &ibd) < 0) {
@@ -950,6 +955,14 @@ int main(int argc, char *argv[])
 #endif /* TRACE_BOOTTIME */
 #ifdef CONFIG_MINDER_PRINT
     printk("\n");
+#endif
+
+#ifdef __MINIOS__
+    /* -----------------------------------
+     * Prefetch data to cache (after 250ms)
+     * ----------------------------------- */
+    if (args.prefetch)
+	    shfs_prefetch_bgnd(250);
 #endif
 
     /* -----------------------------------

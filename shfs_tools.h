@@ -57,6 +57,7 @@ int register_shfs_tools(void);
  */
 #ifdef __MINIOS__
 void uuid_unparse(const uuid_t uu, char *out);
+int shfs_prefetch_bgnd(unsigned int delay_ms);
 #endif
 void hash_unparse(const hash512_t h, uint8_t hlen, char *out);
 

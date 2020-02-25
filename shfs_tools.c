@@ -495,6 +495,70 @@ static int shcmd_shfs_prefetch_cache(FILE *cio, int argc, char *argv[])
 	return ret;
 }
 
+static int shcmd_shfs_prefetch_all_cache(FILE *cio, int argc, char *argv[])
+{
+	struct htable_el *el;
+	struct shfs_bentry *bentry;
+	struct shfs_hentry *hentry;
+	char str_hash[(shfs_vol.hlen * 2) + 2];
+	int ret = 0;
+	char *sub_argv[2];
+
+	down(&shfs_mount_lock);
+	if (!shfs_mounted)
+		goto out;
+
+	sub_argv[0] = "";
+	sub_argv[1] = NULL;
+
+	foreach_htable_el(shfs_vol.bt, el) {
+		bentry = el->private;
+		hentry = (struct shfs_hentry *)
+			((uint8_t *) shfs_vol.htable_chunk_cache[bentry->hentry_htchunk]
+			 + bentry->hentry_htoffset);
+		str_hash[0] = '?';
+		str_hash[1] = '\0';
+		hash_unparse(*el->h, shfs_vol.hlen, str_hash + 1);
+
+		if (!SHFS_HENTRY_ISLINK(hentry)) {
+			fprintf(cio, "Prefetching %16s...\n", str_hash);
+			sub_argv[1] = str_hash;
+			ret = shcmd_shfs_prefetch_cache(cio, 2, sub_argv);
+			if (ret < 0)
+				goto out;
+		}
+	}
+ out:
+	up(&shfs_mount_lock);
+	return ret;
+}
+
+#ifdef __MINIOS__
+static void shfs_prefetch_thread(void *arg)
+{
+	int ret;
+	unsigned int delay_ms = (unsigned int) arg;
+
+	if (delay_ms)
+		msleep(delay_ms);
+
+	ret = shcmd_shfs_prefetch_all_cache(stdout, 0, NULL);
+	if (ret != 0)
+		printf("Prefetching of volume failed: %d\n", ret);
+}
+
+int shfs_prefetch_bgnd(unsigned int delay_ms)
+{
+	    struct thread *prefetch_bgnd;
+
+	    prefetch_bgnd = create_thread("prefetch_bgnd", shfs_prefetch_thread,
+					  (void *) delay_ms);
+	    if (!prefetch_bgnd)
+		    return -ENOMEM;
+	    return 0;
+}
+#endif
+
 static int shcmd_shfs_info(FILE *cio, int argc, char *argv[])
 {
 	unsigned int m;
@@ -587,6 +651,7 @@ int register_shfs_tools(void)
 	shell_register_cmd("cat", shcmd_shfs_cat);
 	shell_register_cmd("flush", shcmd_shfs_flush_cache);
 	shell_register_cmd("prefetch", shcmd_shfs_prefetch_cache);
+	shell_register_cmd("prefetch-all", shcmd_shfs_prefetch_all_cache);
 	shell_register_cmd("shfs-info", shcmd_shfs_info);
 #ifdef SHFS_CACHE_INFO
 	shell_register_cmd("cache-info", shcmd_shfs_cache_info);
