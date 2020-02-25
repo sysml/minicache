@@ -95,7 +95,9 @@ static inline uint32_t shfs_htcollison_order(void)
      * Note: the resulting number will be shrinked down the
      * closest power-of-2 value */
 #ifdef SHFS_CACHE_GROW
-#ifdef SHFS_CACHE_GROW_THRESHOLD
+#ifdef SHFS_CACHE_HTABLE_BUCKETORDER
+    return (SHFS_CACHE_HTABLE_BUCKETORDER);
+#elif defined SHFS_CACHE_GROW_THRESHOLD
     htlen   = (((mm_total_pages() << PAGE_SHIFT) - SHFS_CACHE_GROW_THRESHOLD) /
               shfs_vol.chunksize) / SHFS_CACHE_HTABLE_AVG_LIST_LENGTH_PER_ENTRY;
 #else
