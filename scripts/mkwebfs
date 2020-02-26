@@ -99,7 +99,7 @@ function get_mime() {
 	"xml")
 	    MIME="application/xml"
 	    ;;
-	"text"|"txt"|"md"|"asc")
+	"text"|"txt"|"md"|"asc"|"rst")
 	    MIME="text/plain"
 	    ;;
 	"rtf")
@@ -186,6 +186,13 @@ function get_mime() {
 	    ;;
 	"avi")
 	    MIME="video/avi"
+	    ;;
+	"ts")
+	    MIME="video/MP2T"
+	    ;;
+
+	"m3u8")
+	    MIME="application/x-mpegURL"
 	    ;;
 
 	"tar")
